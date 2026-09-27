@@ -462,7 +462,7 @@ export class Game {
         p.x += b.x - a.x; p.z += b.z - a.z;
       }
       const ax = input.axis();
-      const sp = ax.slow ? 6.5 : 13.5;
+      const sp = (ax.slow ? 6.5 : 13.5) * (ax.stick ? (this.settings.touchSens || 1) : 1);
       p.x += ax.x * sp * dt; p.z += ax.y * sp * dt;
       const b = this.boss;
       const zMin = (b && b.alive && !b.dying) ? Math.max(v.zTop + 5, b.z + 7) : v.zTop + 5;

@@ -87,7 +87,25 @@ button { font: inherit; color: inherit; }
   clip-path: polygon(50% 0, 62% 38%, 100% 70%, 100% 82%, 60% 74%, 58% 100%, 42% 100%, 40% 74%, 0 82%, 0 70%, 38% 38%); filter: drop-shadow(0 0 3px rgba(255,46,72,0.8)); }
 .icon-bomb { width: 15px; height: 15px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ffd27a, #ff7a1a 55%, #a33c00); display: grid; place-items: center;
   font: 700 9px var(--f-display); color: #3b1400; }
-.weapon { text-align: center; font: 600 10px var(--f-display); letter-spacing: 0.16em; color: var(--ink-dim); }
+.weapon { text-align: left; font: 600 10px var(--f-display); letter-spacing: 0.16em; color: var(--ink-dim); margin-bottom: 2px; }
+.weapon .pips { justify-content: flex-start; }
+/* virtual joystick: fixed at bottom centre (touch devices only) */
+#stick { position: absolute; left: 50%; bottom: calc(4px + var(--safe-b)); width: 176px; height: 164px; transform: translateX(-50%);
+  display: flex; align-items: flex-end; justify-content: center; padding-bottom: 10px; pointer-events: auto; touch-action: none; }
+body:not(.touch) #stick { display: none; }
+.stick-base { position: relative; width: 122px; height: 122px; border-radius: 50%; opacity: 0.62; transition: opacity 0.15s, border-color 0.15s;
+  border: 2px solid rgba(255, 255, 255, 0.3); box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.35);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.07) 0 34%, rgba(8, 10, 18, 0.42) 35% 100%); }
+.stick-dir { position: absolute; inset: 7px; border-radius: 50%; pointer-events: none;
+  background:
+    linear-gradient(rgba(255,255,255,0.45), rgba(255,255,255,0.45)) 50% 0 / 2px 8px no-repeat,
+    linear-gradient(rgba(255,255,255,0.45), rgba(255,255,255,0.45)) 50% 100% / 2px 8px no-repeat,
+    linear-gradient(rgba(255,255,255,0.45), rgba(255,255,255,0.45)) 0 50% / 8px 2px no-repeat,
+    linear-gradient(rgba(255,255,255,0.45), rgba(255,255,255,0.45)) 100% 50% / 8px 2px no-repeat; }
+.stick-knob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #ff9aa6, var(--crimson) 52%, #6e0612 100%);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.55), 0 0 16px rgba(255, 46, 72, 0.45), inset 0 -3px 6px rgba(0, 0, 0, 0.35); will-change: transform; }
+#stick.active .stick-base { opacity: 0.95; border-color: rgba(255, 140, 155, 0.75); }
 .weapon b { display: block; font-size: 12px; letter-spacing: 0.12em; color: var(--ink); }
 .pips { display: flex; gap: 2px; justify-content: center; margin-top: 3px; }
 .pips i { width: 7px; height: 4px; background: rgba(255,255,255,0.16); }
@@ -253,12 +271,13 @@ body.touch .kbd-only { display: none; }
       <div id="bossbar" hidden><div class="name"><span id="boss-name">ARCLIGHT</span><span>要塞</span></div><div class="track"><div class="fill" id="boss-fill"></div></div></div>
       <div class="hud-bottom">
         <div class="stock">
+          <div class="weapon" id="weapon"></div>
           <div class="icons" id="lives" aria-label="剩餘機數"></div>
           <div class="icons" id="bombs" aria-label="炸彈"></div>
         </div>
-        <div class="weapon" id="weapon"></div>
         <button id="btn-bomb" aria-label="炸彈">B<small id="bomb-count">3</small></button>
       </div>
+      <div id="stick" aria-label="移動搖桿"><div class="stick-base"><i class="stick-dir"></i><div class="stick-knob"></div></div></div>
     </div>
     <div id="hint" hidden></div>
     <div id="popups"></div>
@@ -290,8 +309,8 @@ body.touch .kbd-only { display: none; }
       <div class="panel">
         <h2>HOW TO PLAY<small>操作說明</small></h2>
         <div><h4>TOUCH 手機</h4><ul>
-          <li>手指按住畫面任一處拖曳，戰機就會同步移動（不必壓在戰機上）。</li>
-          <li>射擊全自動。右下角 <b>B</b> 鈕投下炸彈：清除敵彈、重創全畫面敵人，並短暫無敵。也可以用第二根手指在畫面上輕點一下投彈。</li>
+          <li>用畫面下方中央的搖桿移動：推得越遠飛得越快，輕推可微調位置。</li>
+          <li>射擊全自動。右下角 <b>B</b> 鈕投下炸彈：清除敵彈、重創全畫面敵人，並短暫無敵。</li>
         </ul></div>
         <div class="kbd-only"><h4>KEYBOARD 鍵盤</h4><ul>
           <li>方向鍵／WASD 移動，按住 Shift 慢速移動（精準閃避）；X 或空白鍵投彈；Esc／P 暫停。也支援手把。</li>
@@ -320,8 +339,8 @@ body.touch .kbd-only { display: none; }
           <button data-v="on">ON</button><button data-v="off">OFF</button></div></div>
         <div class="setting"><label>手機震動回饋</label><div class="seg" id="set-haptics" role="group" aria-label="手機震動回饋">
           <button data-v="on">ON</button><button data-v="off">OFF</button></div></div>
-        <div class="setting"><label>觸控靈敏度</label><div class="seg" id="set-touch" role="group" aria-label="觸控靈敏度">
-          <button data-v="1">1.0×</button><button data-v="1.3">1.3×</button><button data-v="1.6">1.6×</button></div></div>
+        <div class="setting"><label>搖桿速度</label><div class="seg" id="set-touch" role="group" aria-label="搖桿速度">
+          <button data-v="0.85">慢</button><button data-v="1">標準</button><button data-v="1.2">快</button></div></div>
         <button class="btn primary" data-act="back">OK<span>返回</span></button>
       </div>
     </section>

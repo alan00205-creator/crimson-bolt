@@ -72,7 +72,7 @@ export class UI {
     clearTimeout(this.hintTimer);
     h.className = '';
     h.innerHTML = touch
-      ? '<svg class="finger" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V10h.5V8.5a1.5 1.5 0 0 1 3 0V10h.5V9.5a1.5 1.5 0 0 1 3 0v5.8c0 3.4-2.4 6.2-5.8 6.2h-.6c-2 0-3.5-.8-4.7-2.4L4.6 14.6a1.4 1.4 0 0 1 2.1-1.8L9 15z" fill="currentColor"/></svg><span>在畫面任意處拖曳即可移動・射擊全自動</span>'
+      ? '<svg class="finger" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V10h.5V8.5a1.5 1.5 0 0 1 3 0V10h.5V9.5a1.5 1.5 0 0 1 3 0v5.8c0 3.4-2.4 6.2-5.8 6.2h-.6c-2 0-3.5-.8-4.7-2.4L4.6 14.6a1.4 1.4 0 0 1 2.1-1.8L9 15z" fill="currentColor"/></svg><span>用下方搖桿移動・射擊全自動</span>'
       : '<span>方向鍵／WASD 移動・按住 Shift 慢速移動・X 投彈・射擊全自動</span>';
     h.hidden = false;
     this.hintTimer = setTimeout(() => this.hideHint(true), 5200);

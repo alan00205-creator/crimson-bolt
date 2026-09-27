@@ -30,6 +30,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('crimsonbolt.' + k, JSON.stringify(v)); } catch (_) { /* ignore */ } },
 };
 const settings = Object.assign({ music: 0.7, sfx: 0.8, quality: 'auto', shake: !reducedMotion, haptics: true, touchSens: 1 }, store.get('settings', {}));
+if (![0.85, 1, 1.2].includes(settings.touchSens)) settings.touchSens = 1; // old drag-sensitivity values
 let hiScore = Number(store.get('hi', 0)) || 0;
 
 // ---------------------------------------------------------------------------------
@@ -83,6 +84,7 @@ async function boot() {
   shake = new Shake();
   view = new gameMod.View(camera, GROUND_Y);
   input = new Input(viewEl);
+  input.bindStick($('stick'), document.querySelector('#stick .stick-base'), document.querySelector('#stick .stick-knob'));
   game = new gameMod.Game({ scene, world, fx, audio, ui, models, view, shake, settings, GROUND_Y, LANES_X });
   game.onEvent = onGameEvent;
 
@@ -178,7 +180,7 @@ function resize() {
   renderer.setSize(W, H, false);
   if (composer) composer.setSize(W, H);
   // keep the jet clear of the bottom HUD (lives/weapon/bomb button) and the thumb
-  view.bottomPx = (isTouch ? 104 : 60) + (safeProbe.offsetHeight || 0);
+  view.bottomPx = (isTouch ? 158 : 60) + (safeProbe.offsetHeight || 0); // touch: stay above the joystick
   view.fit(W, H);
   if (isPortraitBlocked() && state === 'playing') pause();
 }
@@ -324,6 +326,7 @@ function startGame(loop = 1, keepScore = false) {
 function pause() {
   if (state !== 'playing') return;
   state = 'paused';
+  input.releaseStick();
   document.querySelectorAll('#pause [data-armed="1"]').forEach((b) => { b.dataset.armed = ''; restoreLabel(b); });
   ui.only('pause');
   audio.play('pause');

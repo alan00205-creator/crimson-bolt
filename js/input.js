@@ -1,4 +1,4 @@
-// input.js — keyboard, pointer (touch/mouse drag = relative movement) and gamepad.
+// input.js — keyboard, on-screen joystick (touch), mouse drag (desktop) and gamepad.
 export class Input {
   constructor(surface) {
     this.surface = surface;
@@ -9,7 +9,6 @@ export class Input {
     this.dragDX = 0; this.dragDY = 0; // accumulated px since last consume
     this.touches = new Map();
     this.usingTouch = false;
-    this.tap2 = null;
     this.dragTravel = 0; // total drag distance in px (used to retire the movement hint)
     this.pad = { x: 0, y: 0, bomb: false, pause: false, prevBomb: false, prevPause: false, prevStart: false, start: false };
     this.enabled = true;
@@ -36,23 +35,20 @@ export class Input {
       this.usingTouch = false;
     });
     window.addEventListener('keyup', (e) => { const a = map[e.code]; if (a) this.keys.delete(a); });
-    window.addEventListener('blur', () => { this.keys.clear(); this.touches.clear(); this.tap2 = null; this._endDrag(); });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) { this.touches.clear(); this.tap2 = null; this._endDrag(); } });
+    window.addEventListener('blur', () => { this.keys.clear(); this.touches.clear(); this._endDrag(); this.releaseStick(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { this.touches.clear(); this._endDrag(); this.releaseStick(); } });
 
     const s = this.surface;
     s.addEventListener('pointerdown', (e) => {
-      if (e.target.closest && e.target.closest('button, input, .panel')) return;
-      if (e.pointerType === 'touch') this.usingTouch = true;
+      if (e.target.closest && e.target.closest('button, input, .panel, #stick')) return;
+      // Touch/pen move the jet only through the joystick; the rest of the screen does nothing.
+      if (e.pointerType !== 'mouse') { this.usingTouch = true; this.edges.add('tap'); return; }
       if (this.dragId !== null && !this.touches.has(this.dragId)) this._endDrag(); // stale drag (lost pointerup)
       this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
       if (this.dragId === null) {
         this.dragId = e.pointerId;
         this.dragLast = { x: e.clientX, y: e.clientY };
         try { s.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-      } else if (e.pointerType === 'touch' && this.touches.size === 2) {
-        // second finger: a quick tap (not a resting grip at the screen edge) drops a bomb on release
-        const r = s.getBoundingClientRect();
-        if (e.clientX - r.left > 24 && r.right - e.clientX > 24) this.tap2 = { id: e.pointerId, t: performance.now(), x: e.clientX, y: e.clientY };
       }
       this.edges.add('tap');
     });
@@ -69,11 +65,6 @@ export class Input {
       this.dragLast.x = last.clientX; this.dragLast.y = last.clientY;
     });
     const end = (e) => {
-      const tap = this.tap2;
-      if (tap && e.pointerId === tap.id) {
-        if (e.type === 'pointerup' && performance.now() - tap.t < 300 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 16) this.edges.add('bomb');
-        this.tap2 = null;
-      }
       this.touches.delete(e.pointerId);
       if (e.pointerId === this.dragId) {
         // hand the drag over to a remaining finger, if any
@@ -96,6 +87,47 @@ export class Input {
     }, { passive: false });
   }
   _endDrag() { this.dragId = null; this.dragLast = null; }
+  // On-screen joystick. zone: the touch area; base: the ring; knob: the moving cap.
+  bindStick(zone, base, knob) {
+    const st = this.stick = { id: null, x: 0, y: 0, cx: 0, cy: 0, R: 48, zone, knob };
+    const move = (px, py) => {
+      let dx = px - st.cx, dy = py - st.cy;
+      const len = Math.hypot(dx, dy);
+      if (len > st.R) { dx *= st.R / len; dy *= st.R / len; }
+      this.dragTravel += Math.hypot(dx / st.R - st.x, dy / st.R - st.y) * st.R; // retires the movement hint
+      st.x = dx / st.R; st.y = dy / st.R;
+      knob.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
+    };
+    zone.addEventListener('pointerdown', (e) => {
+      if (st.id !== null) return;
+      e.preventDefault(); e.stopPropagation();
+      const r = base.getBoundingClientRect();
+      st.cx = r.left + r.width / 2; st.cy = r.top + r.height / 2; st.R = r.width * 0.4;
+      st.id = e.pointerId;
+      try { zone.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      zone.classList.add('active');
+      this.usingTouch = true;
+      move(e.clientX, e.clientY);
+    });
+    zone.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== st.id) return;
+      const list = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+      const last = list && list.length ? list[list.length - 1] : e;
+      move(last.clientX, last.clientY);
+    });
+    const up = (e) => { if (e.pointerId === st.id) this.releaseStick(); };
+    zone.addEventListener('pointerup', up);
+    zone.addEventListener('pointercancel', up);
+    zone.addEventListener('lostpointercapture', up);
+    zone.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+  releaseStick() {
+    const st = this.stick;
+    if (!st) return;
+    st.id = null; st.x = 0; st.y = 0;
+    st.knob.style.transform = '';
+    st.zone.classList.remove('active');
+  }
   get dragging() { return this.dragId !== null; }
   // Accumulated drag in client pixels since the last call.
   consumeDrag() { const d = { x: this.dragDX, y: this.dragDY }; this.dragDX = 0; this.dragDY = 0; return d; }
@@ -109,6 +141,17 @@ export class Input {
     if (x && y) { x *= Math.SQRT1_2; y *= Math.SQRT1_2; }
     if (Math.abs(this.pad.x) > Math.abs(x)) x = this.pad.x;
     if (Math.abs(this.pad.y) > Math.abs(y)) y = this.pad.y;
+    const st = this.stick;
+    if (st && st.id !== null) {
+      // dead zone + gentle curve: small pushes give fine control, full push gives full speed
+      const m = Math.hypot(st.x, st.y);
+      if (m > 0.1) {
+        const k = Math.min(1, (m - 0.1) / 0.9);
+        const c = (k * (0.3 + 0.7 * k)) / m;
+        return { x: st.x * c, y: st.y * c, slow: false, stick: true };
+      }
+      return { x: 0, y: 0, slow: false, stick: true };
+    }
     return { x, y, slow: this.keys.has('slow') };
   }
   pollGamepad() {

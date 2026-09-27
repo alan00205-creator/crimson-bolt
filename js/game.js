@@ -137,7 +137,7 @@ const EXTENDS = [300000, 1000000];
 const BK = { ORB: 0, BIG: 1, NEEDLE: 2, MINE: 3 };
 const B_RADIUS = [0.2, 0.36, 0.17, 0.4];
 const B_SIZE = [0.66, 1.08, 0.34, 1.2];
-const B_COLOR = [[1.5, 0.16, 0.75], [1.7, 0.55, 0.08], [1.3, 0.2, 1.4], [1.8, 0.25, 0.06]]; // saturated, lightly HDR
+const B_COLOR = [[1.5, 0.16, 0.75], [1.8, 0.42, 0.03], [1.3, 0.2, 1.4], [1.8, 0.25, 0.06]]; // saturated, lightly HDR
 
 // Player shot kinds
 const SK = { VULCAN: 0, LASER: 1, HOMING: 2, NUKE: 3 };

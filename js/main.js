@@ -447,7 +447,7 @@ function bindUI() {
       case 'back': audio.play('select'); ui.only(backTo); focusFirst(backTo); break;
       case 'resume': resume(); break;
       case 'restart': audio.play('confirm'); startGame(); break;
-      case 'quit': audio.play('select'); toTitle(); break;
+      case 'quit': audio.play('select'); if (game.score > 0) saveHi(); toTitle(); break;
       case 'retry': audio.play('confirm'); startGame(); break;
       case 'cont-yes': continueYes(); break;
       case 'cont-no': gameOver(); break;
@@ -477,7 +477,7 @@ function bindUI() {
   $('set-sfx').addEventListener('change', () => audio.play('item'));
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { if (state === 'playing') pause(); audio.suspend(); }
+    if (document.hidden) { if (state === 'playing') pause(); if (state === 'paused' && game.score > 0) saveHi(); audio.suspend(); }
     else if (state !== 'paused') audio.resume();
   });
   window.addEventListener('blur', () => { if (state === 'playing') pause(); });

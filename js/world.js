@@ -1269,8 +1269,17 @@ void main() {
 const WATER_FRAG = /* glsl */`
 uniform sampler2D uWave;
 uniform sampler2D uMask;
-uniform float uTime, uDM, uDN, uWaterRel, uCaps, uRelief, uSpark, uSheen;
+uniform vec3 uScroll;             // (time, d mod mask span, d mod noise span): vector fields, so
+uniform vec4 uLook;               // per-frame writes don't box doubles on the JS side
+uniform float uWaterRel;
 uniform vec3 uDeep, uShallow, uSky, uFoam, uGlint, uGlintDir, uInland;
+#define uTime uScroll.x
+#define uDM uScroll.y
+#define uDN uScroll.z
+#define uCaps uLook.x
+#define uRelief uLook.y
+#define uSpark uLook.z
+#define uSheen uLook.w
 varying vec3 vW;
 #include <fog_pars_fragment>
 void main() {
@@ -1399,10 +1408,13 @@ const TOD_SRC = [
 ];
 const TOD_COLS = ['sun', 'sky', 'gnd', 'fog', 'deep', 'shallow', 'wsky', 'foam', 'inland', 'glint', 'cLit', 'cShade', 'shadow'];
 const TOD_NUMS = ['sunI', 'hemiI', 'near', 'far', 'glintI', 'shA', 'shK', 'caps', 'cloud', 'relief', 'spark', 'sheen'];
+// indices into the interpolated numeric array (order of TOD_NUMS)
+const N_SUNI = 0, N_HEMII = 1, N_NEAR = 2, N_FAR = 3, N_GLINTI = 4, N_SHA = 5, N_CAPS = 7, N_CLOUD = 8,
+  N_RELIEF = 9, N_SPARK = 10, N_SHEEN = 11;
 const TOD = TOD_SRC.map((k) => {
-  const o = { d: k.d, gdir: new THREE.Vector3().fromArray(k.gdir).normalize() };
+  const o = { d: k.d, gdir: new THREE.Vector3().fromArray(k.gdir).normalize(), n: new Float64Array(TOD_NUMS.length) };
   for (const c of TOD_COLS) o[c] = new THREE.Color(k[c]);
-  for (const n of TOD_NUMS) o[n] = k[n];
+  for (let i = 0; i < TOD_NUMS.length; i++) { o[TOD_NUMS[i]] = k[TOD_NUMS[i]]; o.n[i] = k[TOD_NUMS[i]]; }
   return o;
 });
 function todShadowK(d) {
@@ -1428,7 +1440,7 @@ export class World {
   constructor({ scene, renderer = null, sun = null, hemi = null, quality = 'high' } = {}) {
     this.scene = scene; this.renderer = renderer; this.sun = sun; this.hemi = hemi;
     this.quality = quality === 'low' ? 'low' : 'high';
-    this._d = 0; this._t = 0; this._clock = 0;
+    this._d = 0; this._t = 0; this._clock = 0; this._todD = NaN;
     this.root = new THREE.Group();
     this.root.name = 'World';
     scene.add(this.root);
@@ -1447,15 +1459,15 @@ export class World {
     this._maskDirty = false;
 
     // shared uniforms
-    this.uDN = { value: 0 };
+    this.uDN = { value: new THREE.Vector2() };
     // land material: vertex colours × tiled atlas × world-space detail noise
     const landMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, map: this.tex.atlas, color: new THREE.Color(COL_SCALE, COL_SCALE, COL_SCALE) });
     landMat.onBeforeCompile = (sh) => {
       sh.uniforms.uNoise = { value: this.tex.noise };
       sh.uniforms.uDN = this.uDN;
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec2 tile;\nvarying vec2 vTile;\nvarying vec2 vStage;\nuniform float uDN;')
-        .replace('#include <project_vertex>', '#include <project_vertex>\n\tvTile = tile;\n\t{ vec4 cbw = modelMatrix * vec4(transformed, 1.0); vStage = vec2(cbw.x, uDN - cbw.z); }');
+        .replace('#include <common>', '#include <common>\nattribute vec2 tile;\nvarying vec2 vTile;\nvarying vec2 vStage;\nuniform vec2 uDN;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\n\tvTile = tile;\n\t{ vec4 cbw = modelMatrix * vec4(transformed, 1.0); vStage = vec2(cbw.x, uDN.x - cbw.z); }');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', '#include <common>\nvarying vec2 vTile;\nvarying vec2 vStage;\nuniform sampler2D uNoise;')
         .replace('#include <map_fragment>', /* glsl */`
@@ -1473,7 +1485,7 @@ export class World {
     diffuseColor.rgb *= (0.88 + 0.24 * cbN) * (0.93 + 0.14 * cbM);
   }`);
     };
-    landMat.customProgramCacheKey = () => 'crimson-bolt-land-v1';
+    landMat.customProgramCacheKey = () => 'crimson-bolt-land-v2';
     this.landMat = landMat;
     this.shadowMat = new THREE.MeshBasicMaterial({ color: 0x1a2432, transparent: true, opacity: 0.34, depthWrite: false });
     this.propMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
@@ -1497,6 +1509,7 @@ export class World {
     this._tod = {};
     for (const c of TOD_COLS) this._tod[c] = new THREE.Color();
     this._tod.gdir = new THREE.Vector3();
+    this._todN = new Float64Array(TOD_NUMS.length);
     this._sunDir = new THREE.Vector3(-14, 30, 10).normalize();
     this.stats = { builds: 0, lastBuildMs: 0, maxBuildMs: 0, maxSliceMs: 0, violations: 0, violationLog: [] };
     VIOL_LOG = this.stats.violationLog;
@@ -1512,8 +1525,8 @@ export class World {
   // ---------------------------------------------------------------------------
   _initWater() {
     const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
-      uWave: { value: null }, uMask: { value: null }, uTime: { value: 0 }, uDM: { value: 0 }, uDN: { value: 0 },
-      uWaterRel: { value: WATER_REL }, uCaps: { value: 0.5 }, uRelief: { value: 0.8 }, uSpark: { value: 0.6 }, uSheen: { value: 0.1 },
+      uWave: { value: null }, uMask: { value: null }, uScroll: { value: new THREE.Vector3() },
+      uWaterRel: { value: WATER_REL }, uLook: { value: new THREE.Vector4(0.5, 0.3, 0.5, 0.1) },
       uDeep: { value: new THREE.Color() }, uShallow: { value: new THREE.Color() }, uSky: { value: new THREE.Color() },
       uFoam: { value: new THREE.Color() }, uGlint: { value: new THREE.Color() }, uInland: { value: new THREE.Color() },
       uGlintDir: { value: new THREE.Vector3(0, 1, 0) },
@@ -1671,14 +1684,15 @@ export class World {
   }
 
   update(dt, speed) {
-    if (!(dt > 0) || dt === Infinity) dt = 0;
-    if (!(speed === speed) || speed === Infinity || speed === -Infinity) speed = 0;
+    dt = +dt; speed = +speed;         // never let a bad argument turn the distance into NaN
+    if (!(dt > 0) || !Number.isFinite(dt)) dt = 0;
+    if (!Number.isFinite(speed)) speed = 0;
     this._d += speed * dt;
     this._t += dt;
     this._clock += dt;               // never wraps: cloud drift and spinners
     if (this._t > TIME_WRAP) this._t -= TIME_WRAP;
     this._ensureChunks(false);
-    this._applyTod();
+    if (this._d !== this._todD) this._applyTod();   // lights/fog only change with distance
     this._place(dt);
   }
 
@@ -1687,19 +1701,20 @@ export class World {
     const d = this._d;
     const kLo = Math.floor((d - 22) / CHUNK), kHi = Math.floor((d + 46) / CHUNK) + 1;  // +1 = built ahead
     // release slots outside [kLo, kHi]
-    for (const ch of this.chunks) if (ch.k !== null && (ch.k < kLo || ch.k > kHi)) { ch.k = null; ch.phase = 0; ch.mesh.visible = false; ch.smesh.visible = false; ch.nspin = 0; }
+    const C = this.chunks;
+    for (let i = 0; i < C.length; i++) { const ch = C[i]; if (ch.k !== null && (ch.k < kLo || ch.k > kHi)) { ch.k = null; ch.phase = 0; ch.mesh.visible = false; ch.smesh.visible = false; ch.nspin = 0; } }
     // Chunks overlapping the view are built at once. The one ahead of the view is built in
     // three slices (ground, props, water mask + upload) on consecutive frames, and only on a
     // frame that did no other build — so a phone never pays for a whole chunk in one frame.
     let built = 0;
     for (let k = kLo; k <= kHi; k++) {
       let ch = null;
-      for (const c of this.chunks) if (c.k === k) { ch = c; break; }
+      for (let i = 0; i < C.length; i++) if (C[i].k === k) { ch = C[i]; break; }
       const needed = k < kHi || all;
       if (ch && ch.phase === 3) continue;
       if (!needed && built > 0) continue;
       if (!ch) {
-        for (const c of this.chunks) if (c.k === null) { ch = c; break; }
+        for (let i = 0; i < C.length; i++) if (C[i].k === null) { ch = C[i]; break; }
         if (!ch) break;
         this._begin(ch, k);
       }
@@ -1857,8 +1872,9 @@ export class World {
     const d = this._d;
     let water = false;
     let nr = 0, nt = 0;
-    const t = this._t;
-    for (const ch of this.chunks) {
+    const t = this._t, C = this.chunks;
+    for (let ci = 0; ci < C.length; ci++) {
+      const ch = C[ci];
       if (ch.k === null || ch.phase < 3) continue;
       const z = d - ch.k * CHUNK;
       ch.mesh.position.z = z; ch.smesh.position.z = z;
@@ -1887,11 +1903,9 @@ export class World {
     this.water.visible = water || biomeOf(d) === 'ocean' || biomeOf(d) === 'sea';
     // shader scroll uniforms
     const u = this.waterMat.uniforms;
-    u.uTime.value = t;
-    u.uDM.value = ((d % MASK_SPAN) + MASK_SPAN) % MASK_SPAN;
     const dn = ((d % NOISE_SPAN) + NOISE_SPAN) % NOISE_SPAN;
-    u.uDN.value = dn;
-    this.uDN.value = dn;
+    u.uScroll.value.set(t, ((d % MASK_SPAN) + MASK_SPAN) % MASK_SPAN, dn);
+    this.uDN.value.x = dn;
     this._updateClouds(dt);
   }
 
@@ -1900,18 +1914,18 @@ export class World {
     const cdist = d * 1.3 + this._clock * 0.35;
     const n = this.cloudN;
     const sy = GROUND_Y + L_SHADOW + 0.02;
-    const tod = this._tod;
+    const tod = this._todN[N_CLOUD], alpha = this.cloudAlpha;
     for (let i = 0; i < CLOUD_MAX; i++) {
       let z = cdist - c.cd[i];
       if (z > 34) { this._spawnCloud(i, cdist, -52); z = cdist - c.cd[i]; }
       const s = c.s[i];
-      let a = 0;
+      // alpha straight into the typed array (no Smi/double phi, no Math.min builtin call: both box
+      // doubles in V8's lower tiers). Stage position under the cloud ≈ d − z; fades in above the top.
+      alpha[i] = 0;
       if (i < n) {
-        const gd = d - z; // stage position under the cloud (roughly)
-        a = c.a[i] * CLOUD_BIOME[biomeOf(gd)] * tod.cloud;
-        a *= sstep(-60, -40, z);                 // fade in beyond the top edge
+        const v = c.a[i] * CLOUD_BIOME[biomeOf(d - z)] * tod * sstep(-60, -40, z);
+        alpha[i] = v < 0.55 ? v : 0.55;
       }
-      this.cloudAlpha[i] = Math.min(0.55, a);
       _q.setFromAxisAngle(_Y, c.r[i]);
       _s3.set(s, 1, s * c.sq[i]);
       _v3.set(c.x[i], c.y[i], z);
@@ -1925,41 +1939,42 @@ export class World {
     this.clouds.instanceMatrix.needsUpdate = true;
     this.cloudShadows.instanceMatrix.needsUpdate = true;
     this.cloudGeo.getAttribute('aAlpha').needsUpdate = true;
-    const bi = biomeOf(d);
-    this.cloudShadowMat.uniforms.uK.value = bi === 'city' || bi === 'ocean' || bi === 'sea' ? 0.16 : 0.32;
+    const bi = biomeOf(d), uk = this.cloudShadowMat.uniforms.uK;
+    const k = bi === 'city' || bi === 'ocean' || bi === 'sea' ? 0.16 : 0.32;
+    if (uk.value !== k) uk.value = k;
   }
 
   // ---------------------------------------------------------------------------
   _applyTod() {
     const d = this._d;
+    this._todD = d;
     let i = 0;
     while (i < TOD.length - 2 && d > TOD[i + 1].d) i++;
     const a = TOD[i], b = TOD[i + 1];
     const t = sstep(a.d, b.d, d);
-    const o = this._tod;
-    for (const c of TOD_COLS) o[c].copy(a[c]).lerp(b[c], t);
-    for (const n of TOD_NUMS) o[n] = lerp(a[n], b[n], t);
+    const o = this._tod, N = this._todN;
+    for (let j = 0; j < TOD_COLS.length; j++) { const c = TOD_COLS[j]; o[c].copy(a[c]).lerp(b[c], t); }
+    for (let j = 0; j < N.length; j++) N[j] = lerp(a.n[j], b.n[j], t);
     o.gdir.copy(a.gdir).lerp(b.gdir, t).normalize();
-    if (this.sun) { this.sun.color.copy(o.sun); this.sun.intensity = o.sunI; }
-    if (this.hemi) { this.hemi.color.copy(o.sky); this.hemi.groundColor.copy(o.gnd); this.hemi.intensity = o.hemiI; }
+    if (this.sun) { this.sun.color.copy(o.sun); this.sun.intensity = N[N_SUNI]; }
+    if (this.hemi) { this.hemi.color.copy(o.sky); this.hemi.groundColor.copy(o.gnd); this.hemi.intensity = N[N_HEMII]; }
     const fog = this.scene.fog;
-    if (fog) { fog.color.copy(o.fog); if (fog.isFog) { fog.near = o.near; fog.far = o.far; } }
+    if (fog) { fog.color.copy(o.fog); if (fog.isFog) { fog.near = N[N_NEAR]; fog.far = N[N_FAR]; } }
     this._bg.copy(o.fog);
     if (this.scene.background !== this._bg) this.scene.background = this._bg;
     const u = this.waterMat.uniforms;
     // water tint follows the light a little (dusk water is darker / warmer)
     u.uDeep.value.copy(o.deep); u.uShallow.value.copy(o.shallow); u.uSky.value.copy(o.wsky);
     u.uFoam.value.copy(o.foam); u.uInland.value.copy(o.inland);
-    u.uGlint.value.copy(o.glint).multiplyScalar(o.glintI);
+    u.uGlint.value.copy(o.glint).multiplyScalar(N[N_GLINTI]);
     u.uGlintDir.value.copy(o.gdir);
-    u.uCaps.value = o.caps;
-    u.uRelief.value = o.relief; u.uSpark.value = o.spark; u.uSheen.value = o.sheen;
+    u.uLook.value.set(N[N_CAPS], N[N_RELIEF], N[N_SPARK], N[N_SHEEN]);
     const cu = this.cloudMat.uniforms;
     cu.uLit.value.copy(o.cLit).multiplyScalar(0.93);
     cu.uShade.value.copy(o.cShade).multiplyScalar(0.78);
     this.cloudShadowMat.uniforms.uShade.value.copy(o.shadow);
     this.shadowMat.color.copy(o.shadow);
-    this.shadowMat.opacity = o.shA;
+    this.shadowMat.opacity = N[N_SHA];
   }
 
   // debugging / tooling -----------------------------------------------------------

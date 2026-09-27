@@ -107,7 +107,7 @@
     <div class="row">
       <button class="primary" id="auto">Auto test</button>
       <button id="vizall">Draw waveforms + spectrograms</button>
-      <span class="note" id="autonote">Renders everything offline (OfflineAudioContext, 44.1 kHz, volumes at 1.0 = worst case). Click a row to visualise it; each tile links the exact render as a WAV.</span>
+      <span class="note" id="autonote">Renders everything offline (OfflineAudioContext, 44.1 kHz, volumes at 1.0 = worst case). Scenarios call the module exactly as js/game.js does (vulcan every 75 ms, laser every frame, hits at vol 0.35 …). Click a row to visualise it; each tile links the exact render as a WAV.</span>
     </div>
     <div class="scroll"><table id="results"></table></div>
     <p id="summary"></p>
@@ -123,7 +123,7 @@
 import { audio, SFX_NAMES, MUSIC_TRACKS, __renderForTest, __renderBuffer, __songInfo } from '../js/audio.js';
 
 const $ = (id) => document.getElementById(id);
-const DUR = { shot: 0.5, laser: 0.5, hit: 0.5, graze: 0.5, lock: 0.5, select: 0.5, hitArmor: 0.8, vulcan: 5, laserBeam: 5, firefight: 8, gameplayLaser: 8,
+const DUR = { shot: 0.5, laser: 0.5, hit: 0.5, graze: 0.5, lock: 0.5, select: 0.5, hitArmor: 0.8, vulcan: 5, laserBeam: 5, firefight: 8, gameplayLaser: 8, runStart: 4, hitStream: 5, armorStream: 5,
   item: 0.8, missile: 1, pause: 1, confirm: 1.2, explodeS: 1.5, medal: 1.5, powerup: 1.5,
   oneup: 2, explodeM: 3, explodeL: 5, death: 5, warning: 4, stageStart: 3.5, bomb: 6, bossDown: 9 };
 const TRACK_SECONDS = 8;
@@ -197,7 +197,8 @@ async function runAuto() {
   const tbl = $('results');
   tbl.innerHTML = '<tr><th>name</th><th>kind</th><th>sec</th><th>peak</th><th>peak dBFS</th><th>pre-limiter</th><th>rms dBFS</th><th>NaN</th><th>render ms</th><th>ms / s</th><th>result</th></tr>';
   const jobs = [...SFX_NAMES.map((n) => [n, DUR[n] || 2]), ...MUSIC_TRACKS.map((t) => [t, TRACK_SECONDS]),
-    ['vulcan', 5], ['laserBeam', 5], ['firefight', 8], ['gameplay', 8], ['gameplayLaser', 8], ['stress', 6], ['stressRaw', 6]];
+    ['runStart', 4], ['vulcan', 5], ['laserBeam', 5], ['hitStream', 5], ['armorStream', 5], ['firefight', 8], ['gameplay', 8],
+    ['gameplayLaser', 8], ['stress', 6], ['stressRaw', 6]];
   let pass = 0;
   for (const [name, sec] of jobs) {
     const r = await __renderForTest(name, sec);
@@ -315,7 +316,7 @@ async function drawOne(name, sec, prepend) {
 }
 async function drawAll(list) {
   $('viz').innerHTML = '';
-  const names = list || [...SFX_NAMES, ...MUSIC_TRACKS, 'vulcan', 'laserBeam', 'gameplay', 'stress'];
+  const names = list || [...SFX_NAMES, ...MUSIC_TRACKS, 'runStart', 'vulcan', 'laserBeam', 'armorStream', 'gameplay', 'stress'];
   for (const n of names) await drawOne(n, MUSIC_TRACKS.includes(n) ? TRACK_SECONDS : n === 'stress' ? 6 : n === 'gameplay' ? 8 : (DUR[n] || 2));
   window.__vizDone = true;
 }

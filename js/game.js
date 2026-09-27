@@ -381,7 +381,7 @@ export class Game {
     const p = this.player;
     p.x = Math.sin(t * 0.45) * 2.4;
     p.z = this.view.zBottom - 9 + Math.sin(t * 0.7) * 0.8;
-    const bank = -Math.cos(t * 0.45) * 0.45;
+    const bank = Math.cos(t * 0.45) * 0.45;
     p.bank = lerp(p.bank, bank, 0.1);
     this.syncPlayerMesh(dt, true);
     this.fx.update(dt, this.GROUND_Y, 5.5);
@@ -456,7 +456,7 @@ export class Game {
     }
     const vx = (p.x - prevX) / Math.max(dt, 1e-4);
     const vz = (p.z - prevZ) / Math.max(dt, 1e-4);
-    p.bank = lerp(p.bank, clamp(-vx / 12, -1, 1), Math.min(1, dt * 10));
+    p.bank = lerp(p.bank, clamp(vx / 12, -1, 1), Math.min(1, dt * 10));
     p.thrust = lerp(p.thrust, clamp(0.55 - vz / 20, 0.25, 1), Math.min(1, dt * 8));
     this.syncPlayerMesh(dt, false);
   }
@@ -464,7 +464,7 @@ export class Game {
     const p = this.player, m = p.mesh, ud = m.userData;
     m.position.set(p.x, 0.15, p.z);
     m.rotation.set(0, 0, 0);
-    if (ud.setBank) ud.setBank(p.bank); else m.rotation.z = -p.bank * 0.6;
+    if (ud.setBank) ud.setBank(p.bank); else m.rotation.z = -p.bank * 0.6; // +bank = roll right
     if (ud.setThrust) ud.setThrust(attract ? 0.6 : p.thrust);
     if (ud.update) ud.update(dt, this.time);
     const blink = p.invuln > 0 && p.alive && !attract && Math.floor(this.time * 16) % 2 === 0;
@@ -766,13 +766,13 @@ export class Game {
   damageEnemy(e, dmg, fromBomb = false) {
     if (!e.alive || e.invuln) return;
     e.hp -= dmg;
-    e.flash = 1;
+    e.flash = e.maxHp > 60 ? 0.55 : 1; // big units: softer flash so rapid fire doesn't strobe
     if (e.hp <= 0) this.killEnemy(e, fromBomb);
   }
   damagePart(e, pt, dmg, fromBomb = false) {
     if (pt.dead || !e.alive) return;
     pt.hp -= dmg;
-    pt.flash = 1;
+    pt.flash = 0.45;
     if (pt.hp <= 0) {
       pt.dead = true;
       const u = pt.obj.userData;

@@ -206,7 +206,14 @@ function resize() {
   W = w; H = ih;
   stage.style.width = w + 'px';
   renderer.setSize(w, ih, false);
-  camera.aspect = w / ih; camera.updateProjectionMatrix();
+  camera.aspect = w / ih;
+  if (Q.get('cam') === 'game') {
+    // emulate the game's View.fit(): the camera backs off on narrow screens
+    const tanH = Math.tan(20 * Math.PI / 180) * camera.aspect;
+    const D = Math.min(66, Math.max(30, 8.4 / tanH + 3.42)), T = 20 * Math.PI / 180;
+    camera.position.set(0, D * Math.cos(T), -6 + D * Math.sin(T)); camera.lookAt(0, 0, -6);
+  }
+  camera.updateProjectionMatrix();
   if (composer) { composer.setSize(w, ih); bloom.setSize(w, ih); }
 }
 resize();

@@ -16,9 +16,25 @@
 // * Limiter: DynamicsCompressor (glue, -8 dB, 6:1) + trim that cancels its automatic make-up
 //   gain + a tanh soft clipper whose ceiling is 0.98: the final bus cannot exceed 1.0.
 // * Voice limiting: per-name minimum gap, per-name voice cap (oldest stolen), global
-//   polyphony cap with priority stealing, and density attenuation when one name piles up.
+//   polyphony cap with priority stealing, density attenuation when one name piles up, and
+//   streak attenuation (hits / armour pings fired as a sustained stream settle 5-7 dB lower).
 //   Finished voices are detached from the graph (onended / voice pool), so a long session
 //   never accumulates dead nodes.
+// * Mix: every SFX has a level in the SFX table, calibrated against the music at the game's
+//   default volumes AND the per-call vol js/game.js passes (hit 0.35, graze 0.4, …): weapons
+//   ~10 dB under the music, pickups at music level, explosions +2…+7 dB, bomb/death/boss
+//   kill as loud as the limiter allows. Checked on a phone-speaker proxy too (explosions
+//   carry a mid-band punch layer; the kick a "knock").
+// * 'laser' is a sustained voice: the game calls play('laser') every frame, and every call
+//   within 0.09 s keeps the same voice alive (no new nodes), so it is one steady beam.
+// * 'medal' snaps opts.pitch up to E G A B C D E, so the chain (pitch = step × 2) climbs a
+//   line that sits in the music's keys instead of a whole-tone run.
+// * 'stageStart' is locked to the stage theme's 16th grid (the game fires it together with
+//   music('stage')).
+// * init() without any user gesture on the page yet (e.g. a gamepad press seen in the game
+//   loop) returns false and waits for the first real gesture instead of creating a context
+//   the browser would refuse (and warn about). Sounds requested in the few hundred ms while a
+//   new context is still starting are kept, not dropped.
 // * Instruments are small subtractive/FM patches. The busiest ones (drums, FM bass, arps,
 //   bells, auto-fire and explosion SFX) are baked once into AudioBuffers at init, in the
 //   background, by running the very same patches on an OfflineAudioContext; until the bake
@@ -317,6 +333,8 @@ class Engine extends Synth {
     for (let i = 0; i < 32; i++) this.grave.push({ g: null, v: null, p: null, at: 0 });
     this.graveI = 0;
     this.last = Object.create(null);
+    this.heat = Object.create(null);
+    for (const k in SFX) this.heat[k] = 0;
     this.bus = { out: null, verb: null, dly: null };   // scratch bus handed to SFX synth functions
 
     // music
@@ -1073,14 +1091,15 @@ const FANFARE_PAD = [50, 57, 62, 65];
 
 // name → { gap: min seconds between starts, max: voices of this name, pri: steal priority,
 //          lv: mix level in dB, verb: reverb send (0..1), hold: sustained voice kept alive by
-//          repeated calls (seconds after the last call), bake: [variants, seconds] pre-rendered
+//          repeated calls (seconds after the last call), streak: [heat, k] attenuation of
+//          sustained streams (see playSfx), bake: [variants, seconds] pre-rendered
 //          at startup (frequent sounds; played back with ±jit semitones of random pitch) }
 const SFX = {
   shot:       { gap: 0.045, max: 3, pri: 1, lv: 10, bake: [2, 0.09], jit: 0.6 },
   laser:      { gap: 0.045, max: 1, pri: 2, lv: -14, hold: 0.09 },
   missile:    { gap: 0.06,  max: 4, pri: 2, lv: 6, bake: [1, 0.6], jit: 0.75 },
-  hit:        { gap: 0.04,  max: 4, pri: 1, lv: 10.5, bake: [2, 0.1], jit: 1 },
-  hitArmor:   { gap: 0.05,  max: 3, pri: 2, lv: 11, bake: [1, 0.3], jit: 0.75 },
+  hit:        { gap: 0.045, max: 4, pri: 1, lv: 10.5, bake: [2, 0.1], jit: 1, streak: [3, 0.1] },
+  hitArmor:   { gap: 0.08,  max: 2, pri: 2, lv: 11, bake: [1, 0.3], jit: 0.75, streak: [2, 0.2] },
   explodeS:   { gap: 0.025, max: 6, pri: 3, lv: 0, verb: 1, bake: [2, 1.1], jit: 1.5 },
   explodeM:   { gap: 0.04,  max: 5, pri: 4, lv: 1, verb: 1, bake: [1, 2.2], jit: 1.25 },
   explodeL:   { gap: 0.07,  max: 3, pri: 6, lv: 2, verb: 1, bake: [1, 3.4], jit: 1 },
@@ -1098,7 +1117,7 @@ const SFX = {
   pause:      { gap: 0.1,   max: 1, pri: 8, lv: 11.5 },
   bossDown:   { gap: 1.0,   max: 1, pri: 10, lv: 3, verb: 1 },
   stageStart: { gap: 0.5,   max: 1, pri: 9, lv: 2, verb: 1 },
-  graze:      { gap: 0.03,  max: 3, pri: 1, lv: 6.5, bake: [1, 0.18], jit: 1.5 },
+  graze:      { gap: 0.03,  max: 3, pri: 1, lv: 6.5, bake: [1, 0.18], jit: 1.5, streak: [2, 0.15] },
   lock:       { gap: 0.06,  max: 2, pri: 3, lv: 9, bake: [1, 0.26] },
 };
 for (const k in SFX) { SFX[k].fn = SFXFN[k]; SFX[k].lvg = Math.pow(10, (SFX[k].lv || 0) / 20); }
@@ -1817,10 +1836,19 @@ Object.assign(Engine.prototype, {
     if (slot.g) this.bury(slot, now + 0.3);
     const gv = this.grave;
     for (let i = 0; i < gv.length; i++) if (gv[i].g && gv[i].at <= now) this.drop(gv[i]);
+    // streak attenuation: a sound fired as a sustained stream (hits on a boss, armour pings)
+    // settles 5-7 dB lower than an isolated one, so a long fight doesn't grind
+    let sf = 1;
+    if (def.streak) {
+      const el = lt === undefined ? 1e9 : now - lt;
+      const h = (this.heat[name] || 0) * Math.exp(-(el > 0 ? el : 0) / 0.5) + 1;
+      this.heat[name] = h;
+      if (h > def.streak[0]) sf = 1 / (1 + (h - def.streak[0]) * def.streak[1]);
+    }
     this.last[name] = now;
 
     const stack = same < def.max ? same : def.max - 1;
-    const k = vol * def.lvg / (1 + 0.3 * stack);   // mix level; density attenuation for piles
+    const k = vol * def.lvg * sf / (1 + 0.3 * stack);   // mix level; density attenuation for piles
     const g = this.gain(k);
     const pn = this.out(g, this.sfxVol, pan);
     let vg = null;
@@ -1855,15 +1883,23 @@ Object.assign(Engine.prototype, {
   // keep a sustained voice alive for another `hold` seconds (no allocation)
   refresh(s, def, now) {
     const h = s.h, pr = h.env.gain;
+    if (!h.fixed && h.stopAt - now < 0.6) {
+      // re-calling stop() moves the stop time (last call wins, per spec). An engine that
+      // refuses gets the voice released just before its sources stop; the next call after
+      // that simply starts a fresh voice.
+      try {
+        for (let i = 0; i < h.srcs.length; i++) h.srcs[i].stop(now + 2);
+        h.stopAt = now + 2;
+      } catch (e) { h.fixed = true; }
+    }
+    const lim = h.fixed ? h.stopAt - 0.12 : Infinity;
+    if (now >= lim) return;                              // ending for good: let it
     pr.cancelScheduledValues(now);                       // drops the pending release
     if (now >= h.rel - 0.002) pr.setTargetAtTime(1, now, 0.01);   // already fading: swell back
-    h.rel = now + def.hold;
-    pr.setTargetAtTime(0, h.rel, 0.03);
-    s.end = h.rel + 0.2;
-    if (h.stopAt - now < 0.6) {
-      h.stopAt = now + 2;
-      for (let i = 0; i < h.srcs.length; i++) { try { h.srcs[i].stop(h.stopAt); } catch (e) { /* engine ended it */ } }
-    }
+    const cap = now + def.hold >= lim;
+    h.rel = cap ? lim : now + def.hold;
+    pr.setTargetAtTime(0, h.rel, cap ? 0.02 : 0.03);
+    s.end = cap ? lim + 0.1 : h.rel + 0.2;
   },
 
   drop(slot) {
@@ -2201,6 +2237,12 @@ async function renderOffline(name, seconds, o) {
   } else if (name === 'vulcan' || name === 'laserBeam') {
     kind = 'stress';
     weaponCues(X, PRE, seconds, name === 'laserBeam', cues);
+  } else if (name === 'hitStream' || name === 'armorStream') {
+    // laser bolts (29/s) pouring into the boss: every one calls hit (vol 0.35) or, on armour,
+    // hitArmor (vol 0.5), as game.js does
+    kind = 'stress';
+    const nm = name === 'hitStream' ? 'hit' : 'hitArmor', v = { vol: nm === 'hit' ? 0.35 : 0.5 };
+    for (let t = 0.05; t < seconds; t += 0.034) { const tt = PRE + t; cues.push([tt, () => X.playSfx(nm, v, tt)]); }
   } else if (name === 'calib') {
     // 0.1-amplitude sine straight into the master: measures the chain's small-signal gain
     kind = 'calib';
@@ -2326,7 +2368,8 @@ function weaponCues(X, P, seconds, laser, cues) {
 // track, or a scenario: 'stress' (30 explosions + bomb + shot spam over boss music via
 // play()), 'stressRaw' (same, bypassing voice limiting), 'gameplay' / 'gameplayLaser' (stage
 // music + a firefight exactly as game.js calls it), 'firefight' (the same without music),
-// 'vulcan' / 'laserBeam' (the weapon alone), 'runStart' (stageStart fanfare + stage music, as
+// 'vulcan' / 'laserBeam' (the weapon alone), 'hitStream' / 'armorStream' (29 hits/s into a
+// boss at the game's volumes), 'runStart' (stageStart fanfare + stage music, as
 // at the start of a run), 'calib' (small-signal gain of the master chain).
 export async function __renderForTest(nameOrTrack, seconds, opts) {
   const r = await renderOffline(nameOrTrack, seconds || 2, opts);

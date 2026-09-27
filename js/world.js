@@ -18,6 +18,12 @@
 //   • Low clouds (and their shadows) are an instanced layer at y≈−2 that scrolls ~30%
 //     faster than the ground. Radar dishes and wind-turbine rotors are instanced spinners.
 //   • Time of day (sun/hemi colours, fog, water and cloud tint) is keyed on distance.
+//     The sun's DIRECTION never changes (core fakes aircraft shadows with a fixed offset);
+//     the water glint uses its own "glint direction" so the sun path is on screen.
+//   • The chunk ahead of the view is built in three slices (ground / props / water mask)
+//     on consecutive frames, so no single frame pays for a whole chunk.
+//   • Every prop taller than 0.25 is self-checked against the clear zones and the height
+//     limit while it is emitted; world.info().violations must stay 0 (dev/world.html shows it).
 //
 // Rules this module guarantees (see CONTRACT.md):
 //   • nothing solid above y = −1.8;  • lanes x∈LANES_X±1 and cross roads (d≡20 mod 40,
@@ -44,6 +50,7 @@ export const CROSS_ROAD_PERIOD = 40;
 const CHUNK = 40;
 const SLOTS = 5;
 const LANE_HALF = 1.0, CROSS_HALF = 1.5;
+const COL_SCALE = 1.25, COL_Q = 255 / COL_SCALE;  // vertex colours up to 1.25 fit in a byte
 const CLEAR_FROM = 330, CLEAR_TO = 1240;   // lanes / cross roads guaranteed clear here
 const TALL = 0.25;                          // "taller than" threshold for the clear zones
 const MAX_H = 4.15;                         // nothing above GROUND_Y + 4.15 (= −1.85)
@@ -55,7 +62,10 @@ const NOISE_SPAN = 256;                     // world period of the detail-noise 
 const TIME_WRAP = 1000;                     // shader time wraps (all scroll speeds are k/1000)
 const CAP_HIGH = 96000, CAP_LOW = 60000;    // vertices per chunk
 const SH_CAP = 30000;                        // shadow vertices per chunk
-const CRAWLER = { d0: 570, d1: 700, x: 3.6 }; // mid-boss corridor (6 wide siege tank on lane 0)
+// mid-boss corridor: core's crawler (6×5) spawns at MIDBOSS_AT(590)+~40, sways x = ±3.2 (hull to
+// |x| 6.2) and can fight until ground d ≈ 755, then retreats to ≈ 775. Lanes cover |x| ≥ 4.5,
+// so clearing |x| < 4.6 over [570, 780] keeps its whole path free of anything tall.
+const CRAWLER = { d0: 570, d1: 780, x: 4.6 };
 
 // y layers above the ground for flat decals (relative to GROUND_Y)
 const L_BASE = 0.006, L_ROAD = 0.014, L_WALK = 0.02, L_MARK = 0.026, L_SHADOW = 0.046;
@@ -171,35 +181,50 @@ function riverD(x) { return RIVER_C + 3.0 * Math.sin(x * 0.14 + 0.4) + 1.1 * Mat
 function forestF(x, d) { return fbm(x * 0.075 + 11.3, d * 0.045 - 3.7); }
 function crossDist(d) { const m = ((d % CHUNK) + CHUNK) % CHUNK; return Math.abs(m - 20); }
 
-// islands in the open ocean (always |x| > 7 on land)
+// islands in the open ocean. Land always stays at |x| ≥ ISL_X: the contract allows islands only
+// at |x| > 7, and core sails gunboats (1.6 wide) along x = ±7, so keep a margin beyond 7.8.
+// Shapes are ellipses (sx across, sd along the flight direction) with a wobbly outline; land
+// reaches at most ~1.22·R·s from the centre (q < 0.98 at the widest wobble).
 const ISL = [];
+const ISL_X = 8.2;
 (function genIslands() {
+  // each flank of each chunk is filled with a run of islands and islets separated by channels,
+  // their centre-facing shores just outside ISL_X so the edges of the screen read as archipelago
   srand(9107);
-  let side = -1;
   for (let k = -2; k <= 6; k++) {
     const d0 = k * CHUNK;
-    const n = rand() < 0.55 ? 1 : 2;
-    for (let i = 0; i < n; i++, side = -side) {
-      const big = rand() < 0.35;
-      const R = big ? rr(4.6, 6.2) : rr(2.4, 3.8);
-      const x = side * (7.3 + R * 1.25 + rr(0, big ? 1.5 : 2.5));
-      const d = d0 + (n === 1 ? rr(R * 1.35 + 1, 40 - R * 1.35 - 1) : i === 0 ? rr(R * 1.35 + 1, 18) : rr(22, 40 - R * 1.35 - 1));
-      if (d > 262) continue;
-      ISL.push({ x, d, R, top: rr(0.5, big ? 1.4 : 0.9), p1: rr(0, TAU), p2: rr(0, TAU), k, big,
-        house: rand() < 0.35, light: big && rand() < 0.5 });
+    for (let side = -1; side <= 1; side += 2) {
+      let dc = d0 + rr(0, 4);
+      while (dc < d0 + CHUNK) {
+        const kind = rand();
+        const big = kind < 0.28, mid = !big && kind < 0.68;
+        const R = big ? rr(4.2, 5.6) : mid ? rr(2.6, 3.6) : rr(1.3, 2.1);
+        const sx = rr(0.8, 1.0), sd = big ? rr(1.0, 1.3) : rr(1.0, 1.5);
+        const m = R * sd * 1.25 + 0.3;                   // half-extent along d incl. the reef slope
+        const d = dc + m;
+        if (d + m > d0 + CHUNK || d > 262) break;
+        if (rand() < 0.2) { dc += rr(4, 9); continue; } // an open stretch
+        const x = side * (ISL_X + 1.22 * R * sx + rr(0.05, big ? 0.5 : 0.9));
+        ISL.push({ x, d, R, sx, sd, top: rr(0.5, big ? 1.35 : mid ? 0.95 : 0.55), p1: rr(0, TAU), p2: rr(0, TAU), k, big, mid,
+          house: mid && rand() < 0.45, light: big && rand() < 0.5, village: big && rand() < 0.65 });
+        dc = d + m + rr(0.5, 4);
+      }
     }
-    if (rand() < 0.4) side = -side;
   }
 })();
 
 function seaFloor(x, d) {
   let h = -2.6 + 1.3 * sstep(225, 305, d);        // shoaling toward the coast
-  const r = vnoise(x * 0.085 + 3.1, d * 0.085 - 7.7) * sstep(3, 8, Math.abs(x));
-  if (r > 0.66) h = Math.max(h, -2.6 + 1.8 * sstep(0.66, 0.88, r));  // reefs (always under water)
+  // coral shoals: always under water; only the ones off the flight lanes come up to the surf
+  const r = vnoise(x * 0.11 + 3.1, d * 0.11 - 7.7) * 0.7 + vnoise(x * 0.27 - 4.4, d * 0.27 + 1.9) * 0.3;
+  if (r > 0.62) {
+    const top = -1.0 + 0.42 * sstep(6.5, 9.5, Math.abs(x));
+    h = Math.max(h, -2.6 + (top + 2.6) * sstep(0.62, 0.8, r));
+  }
   return h;
 }
 function islandRho(I, x, d) {
-  const dx = x - I.x, dd = d - I.d;
+  const dx = (x - I.x) / I.sx, dd = (d - I.d) / I.sd;
   const a = Math.atan2(dd, dx);
   return Math.sqrt(dx * dx + dd * dd) / (I.R * (1 + 0.16 * Math.sin(3 * a + I.p1) + 0.09 * Math.sin(5 * a + I.p2)));
 }
@@ -214,8 +239,8 @@ function oceanH(x, d) {
   let h = seaFloor(x, d);
   for (let i = 0; i < ISL.length; i++) {
     const I = ISL[i];
-    const e = I.R * 2.2;
-    if (d < I.d - e || d > I.d + e || x < I.x - e || x > I.x + e) continue;
+    const ex = I.R * 2.0 * I.sx, ed = I.R * 2.0 * I.sd;
+    if (d < I.d - ed || d > I.d + ed || x < I.x - ex || x > I.x + ex) continue;
     const ih = islandH(I, x, d);
     if (ih > h) h = ih;
   }
@@ -226,7 +251,7 @@ function coastH(x, d) {
   let h;
   if (d >= s) h = Math.min(0, WATER_REL + 0.05 + (d - s) * 0.07);
   else h = Math.max(seaFloor(x, d), WATER_REL - (s - d) * 0.17);
-  if (x > HARBOR_X0 && d < HARBOR_D1 && d > 286) h = Math.min(h, -2.1);
+  if (x > HARBOR_X0 && d < HARBOR_D1 && d > s - 8) h = Math.min(h, lerp(h, -2.1, sstep(s - 8, s - 1, d) * sstep(HARBOR_X0, HARBOR_X0 + 1.5, x)));
   if (x > BW.x0 && d > BW.d0 && d < BW.d1) h = 0.1;
   return h;
 }
@@ -242,6 +267,7 @@ function inlandH(x, d) {
     const e = ex * ex + ed * ed;
     if (e < 1.7) h = Math.min(h, -1.1 * sstep(1.35, 0.8, e));
   }
+  if (d > CANAL_C - 2.2 && d < CANAL_C + 2.2 && Math.abs(d - CANAL_C) < 1.95) h = -1.1;
   if (d > 392 && d < 630) {
     const ax = Math.abs(x);
     if (ax > 8.2) {
@@ -259,6 +285,7 @@ function inlandH(x, d) {
   }
   return h;
 }
+const CANAL_C = 877;                            // city canal (between the 860 and 900 cross roads)
 function terrainH(x, d) {
   if (d < 240) return oceanH(x, d);
   if (d < 400) return d < 280 ? Math.max(oceanH(x, d), coastH(x, d)) : coastH(x, d);
@@ -346,7 +373,9 @@ function vtx(lx, y, ld, c, k, u, v) {
   BP[i] = FX + lx * FC - ld * FS;
   BP[i + 1] = y;
   BP[i + 2] = BZ0 - (FD + lx * FS + ld * FC);
-  BCOL[i] = c[0] * k; BCOL[i + 1] = c[1] * k; BCOL[i + 2] = c[2] * k;
+  // colours are stored as normalized bytes scaled by 1/COL_SCALE (the material colour undoes it)
+  const r = c[0] * k * COL_Q + 0.5, g = c[1] * k * COL_Q + 0.5, b = c[2] * k * COL_Q + 0.5;
+  BCOL[i] = r > 255 ? 255 : r; BCOL[i + 1] = g > 255 ? 255 : g; BCOL[i + 2] = b > 255 ? 255 : b;
   BU[j] = u; BU[j + 1] = v; BT[j] = TU; BT[j + 1] = TV;
   BN++;
 }
@@ -441,7 +470,6 @@ function ring(cx, cd, rx, rd, w, lay, c, segs = 24, str = 0, k = 1) {
     const cx2 = cx + ox1 * (rx + w), cd2 = cd + od1 * (rd + w) + s1, dx2 = cx + ox0 * (rx + w), dd2 = cd + od0 * (rd + w) + s0;
     fv(ax, y, ad, c, k); fv(dx2, y, dd2, c, k); fv(cx2, y, cd2, c, k);
     fv(ax, y, ad, c, k); fv(cx2, y, cd2, c, k); fv(bx, y, bd, c, k);
-    if (str && ((s0 > 0) !== (s1 > 0))) { /* seam handled by the sign flip */ }
   }
   if (str) {
     // fill the straights on both sides
@@ -600,24 +628,30 @@ function cone(cx, cd, r, h0, h1, segs, c, rot = 0) {
 }
 // lathe: rings (radius R[i], rel height H[i], shade K[i]) — R=0 makes an apex
 const LR = new Float32Array(8), LH = new Float32Array(8), LK = new Float32Array(8);
+const LCX = new Float32Array(17), LSN = new Float32Array(17), LLT = new Float32Array(16), LJ = new Float32Array(8 * 17);
+let LSEED = 0;
 function lathe(cx, cd, n, segs, c, rot, sx = 1, sd = 1, jitter = 0) {
   let top = 0, rm = 0;
   for (let i = 0; i < n; i++) { top = Math.max(top, LH[i]); rm = Math.max(rm, LR[i]); }
   checkTallRound(cx, cd, rm * Math.max(sx, sd) * (1 + jitter * 0.5), top);
   if (!room((n - 1) * segs * 6)) return;
   setTile(0);
+  // per-segment trig, light factor and per-vertex jitter, computed once
+  for (let i = 0; i <= segs; i++) { const a = rot + (i / segs) * TAU; LCX[i] = Math.cos(a); LSN[i] = Math.sin(a); }
+  for (let i = 0; i < segs; i++) LLT[i] = 0.86 + 0.14 * Math.cos(rot + ((i + 0.5) / segs) * TAU - 2.4);
+  LSEED = (LSEED + 7) & 1023;
+  for (let r = 0; r < n; r++) for (let i = 0; i <= segs; i++) LJ[r * 17 + i] = jitter ? 1 + (hash2(i % segs + LSEED, r + 7) - 0.5) * jitter : 1;
   for (let r = 0; r < n - 1; r++) {
     const ra = LR[r], rb = LR[r + 1], ya = GROUND_Y + LH[r], yb = GROUND_Y + LH[r + 1];
+    const ka = LK[r], kb = LK[r + 1];
     for (let i = 0; i < segs; i++) {
-      const a0 = rot + (i / segs) * TAU, a1 = rot + ((i + 1) / segs) * TAU;
-      const j0 = jitter ? 1 + (hash2(i, r + 7) - 0.5) * jitter : 1, j1 = jitter ? 1 + (hash2((i + 1) % segs, r + 7) - 0.5) * jitter : 1;
-      const jb0 = jitter ? 1 + (hash2(i, r + 8) - 0.5) * jitter : 1, jb1 = jitter ? 1 + (hash2((i + 1) % segs, r + 8) - 0.5) * jitter : 1;
-      const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
-      const lt = 0.86 + 0.14 * Math.cos((a0 + a1) * 0.5 - 2.4);
-      const ax = cx + c0 * ra * sx * j0, ad = cd + s0 * ra * sd * j0, bx = cx + c1 * ra * sx * j1, bd = cd + s1 * ra * sd * j1;
+      const lt = LLT[i];
+      const ja0 = LJ[r * 17 + i], ja1 = LJ[r * 17 + i + 1], jb0 = LJ[(r + 1) * 17 + i], jb1 = LJ[(r + 1) * 17 + i + 1];
+      const c0 = LCX[i], s0 = LSN[i], c1 = LCX[i + 1], s1 = LSN[i + 1];
+      const ax = cx + c0 * ra * sx * ja0, ad = cd + s0 * ra * sd * ja0, bx = cx + c1 * ra * sx * ja1, bd = cd + s1 * ra * sd * ja1;
       const ex = cx + c1 * rb * sx * jb1, ed = cd + s1 * rb * sd * jb1, fx = cx + c0 * rb * sx * jb0, fd = cd + s0 * rb * sd * jb0;
-      if (ra > 1e-4) { vtx(ax, ya, ad, c, LK[r] * lt, 0, 0); vtx(bx, ya, bd, c, LK[r] * lt, 0, 0); vtx(ex, yb, ed, c, LK[r + 1] * lt, 0, 0); }
-      if (rb > 1e-4) { vtx(ax, ya, ad, c, LK[r] * lt, 0, 0); vtx(ex, yb, ed, c, LK[r + 1] * lt, 0, 0); vtx(fx, yb, fd, c, LK[r + 1] * lt, 0, 0); }
+      if (ra > 1e-4) { vtx(ax, ya, ad, c, ka * lt, 0, 0); vtx(bx, ya, bd, c, ka * lt, 0, 0); vtx(ex, yb, ed, c, kb * lt, 0, 0); }
+      if (rb > 1e-4) { vtx(ax, ya, ad, c, ka * lt, 0, 0); vtx(ex, yb, ed, c, kb * lt, 0, 0); vtx(fx, yb, fd, c, kb * lt, 0, 0); }
     }
   }
 }
@@ -787,16 +821,16 @@ function tree(x, d, s = 1, kind = -1, base = 0) {
 }
 
 // house: box + hip or gable roof, local rect centred on (x, d) with rotation
-function house(x, d, w, l, h, rot, wallC, roofC, roofKind = 0, rh = 0) {
+function house(x, d, w, l, h, rot, wallC, roofC, roofKind = 0, rh = 0, base = 0) {
   frame(x, d, rot);
   plain();
   sideStyle(T_RESID, 1.2, 0.55);
-  box(-w / 2, -l / 2, w / 2, l / 2, 0, h, wallC, wallC, false);
+  box(-w / 2, -l / 2, w / 2, l / 2, base, base + h, wallC, wallC, false);
   plain();
   rh = rh || Math.min(w, l) * 0.42;
-  if (roofKind === 0) hip(-w / 2 - 0.06, -l / 2 - 0.06, w / 2 + 0.06, l / 2 + 0.06, h, rh, roofC);
-  else { topStyle(T_ROOF, 0.6, 0.5); gable(-w / 2 - 0.06, -l / 2 - 0.06, w / 2 + 0.06, l / 2 + 0.06, h, rh, roofC, l >= w); plain(); }
-  shadowBox(-w / 2, -l / 2, w / 2, l / 2, h + rh * 0.6);
+  if (roofKind === 0) hip(-w / 2 - 0.06, -l / 2 - 0.06, w / 2 + 0.06, l / 2 + 0.06, base + h, rh, roofC);
+  else { topStyle(T_ROOF, 0.6, 0.5); gable(-w / 2 - 0.06, -l / 2 - 0.06, w / 2 + 0.06, l / 2 + 0.06, base + h, rh, roofC, l >= w); plain(); }
+  shadowBox(-w / 2, -l / 2, w / 2, l / 2, h + rh * 0.6, base);
   frameId();
 }
 function car(x, d, rot, c) {
@@ -897,12 +931,12 @@ class Chunk {
     this.cap = cap;
     const g = new THREE.BufferGeometry();
     this.pos = new Float32Array(cap * 3);
-    this.col = new Float32Array(cap * 3);
+    this.col = new Uint8Array(cap * 3);
     this.uv = new Float32Array(cap * 2);
-    this.tile = new Float32Array(cap * 2);
-    const mk = (a, n) => { const b = new THREE.BufferAttribute(a, n); b.setUsage(THREE.DynamicDrawUsage); return b; };
+    this.tile = new Uint8Array(cap * 2);
+    const mk = (a, n, norm = false) => { const b = new THREE.BufferAttribute(a, n, norm); b.setUsage(THREE.DynamicDrawUsage); return b; };
     g.setAttribute('position', mk(this.pos, 3));
-    g.setAttribute('color', mk(this.col, 3));
+    g.setAttribute('color', mk(this.col, 3, true));
     g.setAttribute('uv', mk(this.uv, 2));
     g.setAttribute('tile', mk(this.tile, 2));
     g.setDrawRange(0, 0);
@@ -925,7 +959,7 @@ class Chunk {
     this.smesh.renderOrder = -3;
     this.smesh.visible = false;
 
-    this.k = null;
+    this.k = null; this.phase = 0; this.ms = 0;
     this.n = 0; this.sn = 0;
     this.hasWater = false;
     this.viol = 0;
@@ -979,46 +1013,61 @@ function makeNoiseTex() {
   }
   return dataTex(d, S, S);
 }
-// water: RG = slope, B = height, A = foam breakup noise
+// water: RG = height gradient (d/dx, d/dy; 0.5 = flat, ±0.5 ≈ ±3.5 rms), B = height, A = foam noise.
+// Directional spectrum: ~30 sharpened (peaky-crest) waves travelling up-right on screen within
+// ±45°, so the sea reads as wind-driven waves rather than isotropic noise. Integer wave numbers
+// keep the tile seamless.
 function makeWaveTex() {
   const S = 256;
   const hgt = new Float32Array(S * S);
   srand(77);
-  const W = [];
-  for (let i = 0; i < 12; i++) {
-    let kx, ky;
-    do { kx = Math.round(rr(-7, 7)); ky = Math.round(rr(-7, 7)); } while (kx * kx + ky * ky < 5);
-    W.push([kx, ky, 1 / Math.pow(Math.hypot(kx, ky), 1.35), rand() * TAU]);
+  const NW = 30, WK = new Float32Array(NW * 5);
+  const wind = Math.atan2(0.9, 0.42);
+  for (let n = 0; n < NW;) {
+    const k = rr(2.6, 15);
+    const a = wind + (rand() + rand() - 1) * 0.8;
+    const kx = Math.round(Math.cos(a) * k), ky = Math.round(Math.sin(a) * k);
+    if (kx * kx + ky * ky < 6) continue;
+    const o = n * 5;
+    WK[o] = kx; WK[o + 1] = ky; WK[o + 2] = Math.pow(Math.hypot(kx, ky), -1.3); WK[o + 3] = rand() * TAU; WK[o + 4] = 1.4 + rand() * 1.1;
+    n++;
   }
-  const n1 = tileNoise(S, 16, 78), n2 = tileNoise(S, 32, 79), n3 = tileNoise(S, 64, 80);
+  const n1 = tileNoise(S, 16, 78), n2 = tileNoise(S, 64, 80);
   let lo = Infinity, hi = -Infinity;
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const u = x / S, v = y / S;
     let h = 0;
-    for (const w of W) h += w[2] * Math.sin(TAU * (w[0] * u + w[1] * v) + w[3]);
+    for (let n = 0; n < NW; n++) {
+      const o = n * 5;
+      const s = 0.5 + 0.5 * Math.sin(TAU * (WK[o] * u + WK[o + 1] * v) + WK[o + 3]);
+      h += WK[o + 2] * (2 * Math.pow(s, WK[o + 4]) - 1);
+    }
     const i = y * S + x;
-    h = h * 0.55 + (n1[i] - 0.5) * 0.9 + (n2[i] - 0.5) * 0.45 + (n3[i] - 0.5) * 0.18;
+    h += (n1[i] - 0.5) * 0.22 + (n2[i] - 0.5) * 0.06;
     hgt[i] = h; lo = Math.min(lo, h); hi = Math.max(hi, h);
   }
   const foam = tileNoise(S, 32, 81), foam2 = tileNoise(S, 64, 82);
   const d = new Uint8Array(S * S * 4);
-  let gmax = 0;
   const gx = new Float32Array(S * S), gy = new Float32Array(S * S);
+  let ss = 0;
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const i = y * S + x;
     gx[i] = hgt[y * S + ((x + 1) % S)] - hgt[y * S + ((x + S - 1) % S)];
     gy[i] = hgt[((y + 1) % S) * S + x] - hgt[((y + S - 1) % S) * S + x];
-    gmax = Math.max(gmax, Math.abs(gx[i]), Math.abs(gy[i]));
+    ss += gx[i] * gx[i] + gy[i] * gy[i];
   }
+  const gs = 127 / (3.5 * Math.sqrt(ss / (2 * S * S)));
   for (let i = 0; i < S * S; i++) {
-    d[i * 4] = clamp(128 - (gx[i] / gmax) * 127, 0, 255);
-    d[i * 4 + 1] = clamp(128 - (gy[i] / gmax) * 127, 0, 255);
+    d[i * 4] = clamp(128 + gx[i] * gs, 0, 255);
+    d[i * 4 + 1] = clamp(128 + gy[i] * gs, 0, 255);
     d[i * 4 + 2] = clamp(((hgt[i] - lo) / (hi - lo)) * 255, 0, 255);
     d[i * 4 + 3] = clamp((foam[i] * 0.65 + foam2[i] * 0.35) * 255, 0, 255);
   }
   return dataTex(d, S, S);
 }
 // clouds: 4 variants in quadrants. R = density, G = light (lit from the sun side)
+// Each cloud is a cluster of soft gaussian billows, eroded by noise and mapped through a soft
+// saturation curve, so edges thin out gradually (wispy) instead of ending in a hard outline.
 function makeCloudTex() {
   const S = 256, H = 128;
   const d = new Uint8Array(S * S * 4);
@@ -1026,41 +1075,47 @@ function makeCloudTex() {
   srand(4242);
   for (let q = 0; q < 4; q++) {
     dens.fill(0);
-    // a few clusters of many small puffs → cumulus with a lumpy outline
-    const clusters = 3 + (q % 2);
-    for (let c = 0; c < clusters; c++) {
-      const ca = rand() * TAU, cr = rr(4, 22);
-      const ccx = 64 + Math.cos(ca) * cr * 1.3, ccy = 64 + Math.sin(ca) * cr * 0.7;
-      const n = 10 + ((rand() * 8) | 0);
+    // variants: 0 cumulus cluster, 1 long stratocumulus band, 2 broken puffs, 3 big cumulus
+    const ax = q === 1 ? 1.75 : q === 3 ? 1.2 : 1.3, ay = q === 1 ? 0.52 : q === 3 ? 0.9 : 0.8;
+    const lobes = q === 1 ? 6 : q === 2 ? 8 : q === 3 ? 5 : 4;
+    for (let c = 0; c < lobes; c++) {
+      const ca = rand() * TAU, cr = q === 2 ? rr(12, 33) : rr(0, 23);
+      const cx = 64 + Math.cos(ca) * cr * ax, cy = 64 + Math.sin(ca) * cr * ay;
+      const n = q === 2 ? 5 + ((rand() * 5) | 0) : 10 + ((rand() * 9) | 0);
+      const spread = q === 2 ? 9 : 18;
       for (let i = 0; i < n; i++) {
-        const a = rand() * TAU, rad = Math.sqrt(rand()) * 16;
-        const px = ccx + Math.cos(a) * rad * 1.3, py = ccy + Math.sin(a) * rad * 0.85;
-        const r = rr(6, 13) * (1 - Math.min(0.6, Math.hypot(px - 64, py - 64) / 90));
-        for (let y = Math.max(0, (py - r) | 0); y < Math.min(H, py + r + 1); y++) {
-          for (let x = Math.max(0, (px - r) | 0); x < Math.min(H, px + r + 1); x++) {
-            const t = 1 - ((x - px) ** 2 + (y - py) ** 2) / (r * r);
-            if (t > 0) dens[y * H + x] += t * t * 0.55;
-          }
+        const a = rand() * TAU, rad = Math.sqrt(rand()) * spread;
+        const px = cx + Math.cos(a) * rad * ax, py = cy + Math.sin(a) * rad * ay;
+        const fall = 1 - Math.min(0.7, Math.hypot((px - 64) / ax, (py - 64) / ay) / 62);
+        const r = (q === 2 ? rr(5, 10) : rr(6.5, 14)) * fall;
+        const kk = 1 / (r * r * 0.5), wgt = rr(0.45, 0.8), R = r * 2.3;
+        const y0 = Math.max(0, (py - R) | 0), y1 = Math.min(H - 1, (py + R) | 0);
+        const x0 = Math.max(0, (px - R) | 0), x1 = Math.min(H - 1, (px + R) | 0);
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+          const dx = x - px, dy = y - py;
+          dens[y * H + x] += wgt * Math.exp(-(dx * dx + dy * dy) * kk);
         }
       }
     }
-    // erode with noise, soft threshold, fade near the cell edge
-    const nz = tileNoise(H, 16, 900 + q), nz2 = tileNoise(H, 32, 950 + q);
+    // erode with noise, soft saturation, fade out well inside the cell
+    const nz = tileNoise(H, 8, 900 + q), nz2 = tileNoise(H, 16, 950 + q), nz3 = tileNoise(H, 32, 990 + q);
     for (let y = 0; y < H; y++) for (let x = 0; x < H; x++) {
       const i = y * H + x;
-      const edge = sstep(63, 44, Math.hypot(x - 64, (y - 64) * 1.15));
-      const e = dens[i] * (0.62 + 0.5 * nz[i] + 0.3 * nz2[i]);
-      const v = clamp((e - 0.08) / 1.4, 0, 1);
-      dens[i] = v * v * (3 - 2 * v) * edge;
+      const edge = sstep(63, 44, Math.hypot(x - 64, (y - 64) * 1.1));
+      const e = dens[i] * (0.45 + 0.55 * nz[i] + 0.35 * nz2[i] + 0.2 * nz3[i]) - 0.24;
+      dens[i] = e > 0 ? (1 - Math.exp(-e * 1.7)) * edge : 0;
     }
+    // light: optical depth toward the sun (screen lower-left = texture −x, −y)
     const ox = (q & 1) * H, oy = (q >> 1) * H;
     for (let y = 0; y < H; y++) for (let x = 0; x < H; x++) {
       const i = y * H + x;
       const s = dens[i];
-      // sun toward screen left/bottom → texture (−x, −y): brighter where density drops toward the sun
-      const xs = Math.max(0, x - 6), ys = Math.max(0, y - 4);
-      const toward = dens[ys * H + xs];
-      const light = clamp(0.62 + (s - toward) * 1.3 + s * 0.28, 0, 1);
+      let od = 0;
+      for (let k = 1; k <= 5; k++) {
+        const xs = x - k * 2.2, ys = y - k * 1.6;
+        if (xs >= 0 && ys >= 0) od += dens[((ys | 0) * H) + (xs | 0)];
+      }
+      const light = clamp(Math.exp(-od * 0.42) * (0.8 + 0.2 * s) + 0.12 * (1 - s), 0, 1);
       const o = ((oy + y) * S + ox + x) * 4;
       d[o] = clamp(s * 255, 0, 255);
       d[o + 1] = clamp(light * 255, 0, 255);
@@ -1164,7 +1219,7 @@ function makeAtlas() {
   put(T_HELI);
   // 11/12 runway numbers (full colour, white on asphalt)
   for (const [idx, txt] of [[T_R36, '36'], [T_R18, '18']]) {
-    fill('#3f4247'); grain(8);
+    fill('#6f6f6a'); grain(8);                      // = P.runway, so the digits sit on the runway itself
     t.fillStyle = '#dcdad2'; t.font = 'bold 96px sans-serif'; t.textAlign = 'center'; t.textBaseline = 'middle';
     t.save(); t.translate(IN / 2, IN / 2); t.scale(0.7, 1.12); t.fillText(txt, 0, 4); t.restore();
     put(idx);
@@ -1207,11 +1262,15 @@ void main() {
   gl_Position = projectionMatrix * mvPosition;
   #include <fog_vertex>
 }`;
+// Seamless scrolling: st.y wraps every NOISE_SPAN (256) stage units and uTime every TIME_WRAP
+// (1000 s). So every texture frequency along st.y is k/256 and every sine frequency along it is
+// 2πk/256; every texture drift speed is k/1000 per second and every sine speed 2πk/1000.
+// (A frequency that breaks this makes the whole sea visibly jump once per wrap.)
 const WATER_FRAG = /* glsl */`
 uniform sampler2D uWave;
 uniform sampler2D uMask;
-uniform float uTime, uDM, uDN, uWaterRel, uCaps;
-uniform vec3 uDeep, uShallow, uSky, uFoam, uGlint, uGlintDir, uSunDir, uInland;
+uniform float uTime, uDM, uDN, uWaterRel, uCaps, uRelief, uSpark, uSheen;
+uniform vec3 uDeep, uShallow, uSky, uFoam, uGlint, uGlintDir, uInland;
 varying vec3 vW;
 #include <fog_pars_fragment>
 void main() {
@@ -1220,50 +1279,61 @@ void main() {
   float h = (m.r - 0.5) * 4.0;
   float depth = max(uWaterRel - h, 0.0);
   float calm = m.b;
+  float open = 1.0 - calm;
   float t = uTime;
-  // two scrolling wave layers (+ a fine one on HIGH)
-  vec4 w1 = texture2D(uWave, st * (1.0 / 32.0) + vec2(0.012, 0.021) * t);
-  vec4 w2 = texture2D(uWave, vec2(st.y, -st.x) * (1.0 / 16.0) + vec2(-0.027, 0.011) * t);
-  vec2 g = (w1.xy - 0.5) + vec2(-(w2.y - 0.5), w2.x - 0.5) * 0.7;
+  // wave layers (gradients in stage space (d/dx, d/dd)): long swell, a chop rotated 36.87°
+  // (the 3-4-5 rotation keeps its st.y coefficients at k/256) and fine ripples on HIGH
+  vec4 w1 = texture2D(uWave, st * 0.03125 - vec2(0.009, 0.019) * t);
+  vec4 w2 = texture2D(uWave, vec2(dot(st, vec2(16.0, -12.0)), dot(st, vec2(12.0, 16.0))) * 0.00390625 - vec2(0.013, 0.024) * t);
+  vec2 g2 = (w2.xy - 0.5) * 2.0;
+  vec2 g = (w1.xy - 0.5) * 2.0 + vec2(g2.x * 0.8 + g2.y * 0.6, g2.y * 0.8 - g2.x * 0.6) * 0.75;
   float hgt = w1.b * 0.6 + w2.b * 0.4;
   float fn = w1.a * 0.6 + w2.a * 0.4;
 #ifndef LOW
-  vec4 w3 = texture2D(uWave, st * (1.0 / 7.0) + vec2(0.041, -0.033) * t);
-  g += (w3.xy - 0.5) * 0.55;
+  vec4 w3 = texture2D(uWave, st * 0.125 - vec2(0.017, 0.036) * t);
+  g += (w3.xy - 0.5) * 1.2;
   float fine = w3.b;
 #else
-  float fine = w1.b;
+  float fine = w2.b;
 #endif
-  float amp = mix(0.42, 0.18, calm) * mix(0.45, 1.0, smoothstep(0.05, 1.0, depth));
-  vec3 N = normalize(vec3(-g.x * amp, 1.0, g.y * amp));
-  vec3 V = normalize(cameraPosition - vW);
-  // body colour: shallow → deep, calm inland water is darker/greener
   float sh = smoothstep(0.0, 1.9, depth);
+  float amp = mix(1.0, 0.35, calm) * mix(0.3, 1.0, smoothstep(0.03, 0.9, depth));
+  // body colour: shallow → deep; calm inland water is darker/greener; slow large-scale patches
   vec3 col = mix(uShallow, uDeep, sh);
   col = mix(col, uInland, calm * 0.65);
-  // large, slow swell tint + wave relief
-  col *= 0.9 + 0.2 * hgt;
-  float lam = clamp(dot(N, uSunDir), 0.0, 1.0);
-  col *= 0.8 + 0.3 * lam;
-  float fres = pow(1.0 - max(dot(N, V), 0.0), 5.0);
-  col = mix(col, uSky, clamp(0.08 + fres * 2.0, 0.0, 0.45));
-  // sun glint: a smooth sheen from the mean surface + glitter from the wave facets inside it
-  vec3 G0 = vec3(-uGlintDir.x, uGlintDir.y, -uGlintDir.z);
-  float lobe = max(dot(G0, V), 0.0);
-  float sheen = pow(lobe, 56.0) * (0.35 + 1.1 * hgt * hgt) * 0.1;
-  float spark = 0.0;
+  float macro = texture2D(uWave, st * 0.0078125 - vec2(0.002, 0.004) * t).b;
+  col *= 0.92 + 0.16 * macro * open;
+  // long swell bands (open water only)
+  float swell = sin(st.y * 0.53996 + st.x * 0.18 + fn * 2.6 + t * 0.55292) * 0.5 + 0.5;
+  col *= 1.0 + (swell - 0.5) * 0.1 * open * sh;
+  // wave relief: facets tilted toward the sun (screen lower-left) are lit, the others shaded
+  float relief = dot(g, vec2(0.814, 0.581)) * amp;
+  col *= 1.0 + clamp(relief, -1.2, 1.2) * uRelief;
+  col = mix(col, uSky, 0.07 * amp);
+  // sun path: a soft sheen where the mean surface mirrors the glint direction, and glitter
+  // from the wave facets that mirror it (spread around that point by the wave slopes)
+  vec3 V = normalize(cameraPosition - vW);
+  vec3 Dv = V - vec3(-uGlintDir.x, uGlintDir.y, -uGlintDir.z);
+  float dq = Dv.y * Dv.y + Dv.z * Dv.z;
+  float lobe = exp(-Dv.x * Dv.x * 700.0 - dq * 9.0);          // soft path glow
+  float path = exp(-Dv.x * Dv.x * 1300.0 - dq * 10.0);        // where glitter may appear
+  float sheen = lobe * (0.35 + 0.65 * smoothstep(0.35, 0.8, hgt * 0.5 + fine * 0.5)) * uSheen;
+  vec3 N = normalize(vec3(-g.x * amp * 0.42, 1.0, g.y * amp * 0.42));
+  float s = max(dot(N, normalize(V + uGlintDir)), 0.0);
 #ifndef LOW
-  float s = max(dot(reflect(-uGlintDir, N), V), 0.0);
-  spark = pow(s, 1400.0) * 0.9 * smoothstep(0.8, 0.95, fine) * smoothstep(0.75, 0.95, lobe);
+  float spark = pow(s, 1300.0) * smoothstep(0.03, 0.5, path);
+#else
+  float spark = pow(s, 700.0) * smoothstep(0.03, 0.5, path) * 0.7;
 #endif
-  col += uGlint * (sheen + spark) * (1.0 - calm * 0.7);
-  // foam: shoreline, incoming bands, wakes, sparse whitecaps
+  col += uGlint * (sheen + spark * uSpark) * (1.0 - calm * 0.75);
+  // foam: shoreline, incoming surf bands, wakes, small crisp whitecaps on the crests
   float shoreLine = 1.0 - smoothstep(0.0, 0.08 + 0.14 * fn, depth);
-  float bands = smoothstep(0.7, 0.95, sin(depth * 7.0 - t * 1.5 + fn * 5.0) * 0.5 + 0.5)
+  float bands = smoothstep(0.7, 0.95, sin(depth * 7.0 - t * 1.50168 + fn * 5.0) * 0.5 + 0.5)
               * (1.0 - smoothstep(0.05, 0.6, depth)) * (1.0 - calm * 0.8) * smoothstep(0.35, 0.65, fn);
   float wake = m.g * smoothstep(0.3, 0.72, fn + m.g * 0.3);
-  float caps = smoothstep(0.84, 0.95, fine) * smoothstep(0.5, 0.78, fn) * uCaps * (1.0 - calm) * sh;
-  float foam = clamp(shoreLine * mix(0.8, 0.45, calm) + bands * 0.5 + wake * 0.7 + caps * 0.5, 0.0, 1.0);
+  float crest = fine * 0.55 + hgt * 0.45;
+  float caps = smoothstep(0.76, 0.82, crest) * smoothstep(0.52, 0.72, fn) * uCaps * open * sh;
+  float foam = clamp(shoreLine * mix(0.8, 0.45, calm) + bands * 0.5 + wake * 0.7 + caps * 0.6, 0.0, 1.0);
   col = mix(col, uFoam, foam);
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
@@ -1297,7 +1367,7 @@ void main() {
 #ifdef SHADOW
   gl_FragColor = vec4(uShade, a);
 #else
-  gl_FragColor = vec4(mix(uShade, uLit, c.g), a);
+  gl_FragColor = vec4(mix(uShade, uLit, smoothstep(0.15, 0.85, c.g)), a);
 #endif
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -1310,25 +1380,25 @@ void main() {
 const TOD_SRC = [
   { d: -60, sun: 0xffdcb8, sunI: 2.05, sky: 0xb7cbe6, gnd: 0x4a4038, hemiI: 1.05, fog: 0xa3b9cf, near: 44, far: 150,
     deep: 0x22485e, shallow: 0x2f777b, wsky: 0x7e9cb8, foam: 0xd7dfe0, inland: 0x3d5a55, glint: 0xffe2c2, glintI: 1.1, gdir: [0.13, 0.85, -0.5],
-    cLit: 0xf2ebe2, cShade: 0x8d9bb2, shadow: 0x1c2638, shA: 0.34, shK: 1.25, caps: 0.55, cloud: 1.0 },
+    cLit: 0xf2ebe2, cShade: 0x8d9bb2, shadow: 0x1c2638, shA: 0.34, shK: 1.25, caps: 0.55, cloud: 1.0, relief: 0.3, spark: 0.5, sheen: 0.12 },
   { d: 240, sun: 0xffeedb, sunI: 2.3, sky: 0xc2d6ef, gnd: 0x463e34, hemiI: 1.08, fog: 0xa8c1d8, near: 50, far: 158,
     deep: 0x1f4a61, shallow: 0x2e7f82, wsky: 0x83a4c2, foam: 0xdbe3e4, inland: 0x3d5b52, glint: 0xfff0dc, glintI: 1.0, gdir: [0.08, 0.86, -0.5],
-    cLit: 0xf7f4ee, cShade: 0x93a3b8, shadow: 0x1c2638, shA: 0.34, shK: 1.1, caps: 0.5, cloud: 0.9 },
+    cLit: 0xf7f4ee, cShade: 0x93a3b8, shadow: 0x1c2638, shA: 0.34, shK: 1.1, caps: 0.5, cloud: 0.9, relief: 0.3, spark: 0.48, sheen: 0.11 },
   { d: 500, sun: 0xfff5e8, sunI: 2.45, sky: 0xcddff5, gnd: 0x423c32, hemiI: 1.1, fog: 0xaac5dc, near: 56, far: 168,
     deep: 0x244d5f, shallow: 0x2f7478, wsky: 0x8aabc6, foam: 0xdde4e3, inland: 0x405c50, glint: 0xfff6ea, glintI: 0.9, gdir: [0.0, 0.92, -0.39],
-    cLit: 0xfaf8f4, cShade: 0x98a8bc, shadow: 0x1a2432, shA: 0.36, shK: 0.95, caps: 0.45, cloud: 0.72 },
+    cLit: 0xfaf8f4, cShade: 0x98a8bc, shadow: 0x1a2432, shA: 0.36, shK: 0.95, caps: 0.45, cloud: 0.72, relief: 0.28, spark: 0.5, sheen: 0.1 },
   { d: 790, sun: 0xffecd4, sunI: 2.4, sky: 0xc7d6ea, gnd: 0x453c31, hemiI: 1.07, fog: 0xb1c1d1, near: 54, far: 164,
     deep: 0x264a5c, shallow: 0x327274, wsky: 0x8ea8bf, foam: 0xdfe2de, inland: 0x425a4e, glint: 0xfff0dc, glintI: 0.9, gdir: [-0.08, 0.86, -0.5],
-    cLit: 0xfaf3ea, cShade: 0x9aa4b6, shadow: 0x1e2230, shA: 0.36, shK: 1.05, caps: 0.4, cloud: 0.5 },
+    cLit: 0xfaf3ea, cShade: 0x9aa4b6, shadow: 0x1e2230, shA: 0.36, shK: 1.05, caps: 0.4, cloud: 0.5, relief: 0.28, spark: 0.5, sheen: 0.1 },
   { d: 1090, sun: 0xffd3a4, sunI: 2.35, sky: 0xc4c4d8, gnd: 0x4a3c30, hemiI: 1.0, fog: 0xc0ae9c, near: 52, far: 160,
     deep: 0x2b4556, shallow: 0x3d6a6a, wsky: 0xa89aa5, foam: 0xe6dccf, inland: 0x4a5448, glint: 0xffd6a8, glintI: 1.1, gdir: [-0.1, 0.82, -0.56],
-    cLit: 0xffe2c6, cShade: 0x9a8ea4, shadow: 0x261d2e, shA: 0.38, shK: 1.35, caps: 0.45, cloud: 0.62 },
+    cLit: 0xffe2c6, cShade: 0x9a8ea4, shadow: 0x261d2e, shA: 0.38, shK: 1.35, caps: 0.45, cloud: 0.62, relief: 0.3, spark: 0.55, sheen: 0.12 },
   { d: 1275, sun: 0xff9f70, sunI: 1.85, sky: 0x8c84ad, gnd: 0x3b2a33, hemiI: 0.92, fog: 0x7a6a8c, near: 46, far: 150,
-    deep: 0x1d2d48, shallow: 0x2b4a5e, wsky: 0x6f6394, foam: 0xa89cb0, inland: 0x33404a, glint: 0xffb488, glintI: 1.3, gdir: [-0.08, 0.8, -0.6],
-    cLit: 0xffbf9f, cShade: 0x6a5a88, shadow: 0x1a1230, shA: 0.4, shK: 1.5, caps: 0.22, cloud: 0.78 },
+    deep: 0x223454, shallow: 0x2e4f63, wsky: 0x76699a, foam: 0xa89cb0, inland: 0x33404a, glint: 0xffb488, glintI: 1.05, gdir: [-0.08, 0.8, -0.6],
+    cLit: 0xf2c1b4, cShade: 0x5e5684, shadow: 0x1a1230, shA: 0.4, shK: 1.5, caps: 0.22, cloud: 0.78, relief: 0.32, spark: 0.6, sheen: 0.14 },
 ];
 const TOD_COLS = ['sun', 'sky', 'gnd', 'fog', 'deep', 'shallow', 'wsky', 'foam', 'inland', 'glint', 'cLit', 'cShade', 'shadow'];
-const TOD_NUMS = ['sunI', 'hemiI', 'near', 'far', 'glintI', 'shA', 'shK', 'caps', 'cloud'];
+const TOD_NUMS = ['sunI', 'hemiI', 'near', 'far', 'glintI', 'shA', 'shK', 'caps', 'cloud', 'relief', 'spark', 'sheen'];
 const TOD = TOD_SRC.map((k) => {
   const o = { d: k.d, gdir: new THREE.Vector3().fromArray(k.gdir).normalize() };
   for (const c of TOD_COLS) o[c] = new THREE.Color(k[c]);
@@ -1358,7 +1428,7 @@ export class World {
   constructor({ scene, renderer = null, sun = null, hemi = null, quality = 'high' } = {}) {
     this.scene = scene; this.renderer = renderer; this.sun = sun; this.hemi = hemi;
     this.quality = quality === 'low' ? 'low' : 'high';
-    this._d = 0; this._t = 0;
+    this._d = 0; this._t = 0; this._clock = 0;
     this.root = new THREE.Group();
     this.root.name = 'World';
     scene.add(this.root);
@@ -1379,7 +1449,7 @@ export class World {
     // shared uniforms
     this.uDN = { value: 0 };
     // land material: vertex colours × tiled atlas × world-space detail noise
-    const landMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, map: this.tex.atlas });
+    const landMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, map: this.tex.atlas, color: new THREE.Color(COL_SCALE, COL_SCALE, COL_SCALE) });
     landMat.onBeforeCompile = (sh) => {
       sh.uniforms.uNoise = { value: this.tex.noise };
       sh.uniforms.uDN = this.uDN;
@@ -1428,7 +1498,7 @@ export class World {
     for (const c of TOD_COLS) this._tod[c] = new THREE.Color();
     this._tod.gdir = new THREE.Vector3();
     this._sunDir = new THREE.Vector3(-14, 30, 10).normalize();
-    this.stats = { builds: 0, lastBuildMs: 0, maxBuildMs: 0, violations: 0, violationLog: [] };
+    this.stats = { builds: 0, lastBuildMs: 0, maxBuildMs: 0, maxSliceMs: 0, violations: 0, violationLog: [] };
     VIOL_LOG = this.stats.violationLog;
 
     this.setQuality(this.quality, true);
@@ -1443,10 +1513,10 @@ export class World {
   _initWater() {
     const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
       uWave: { value: null }, uMask: { value: null }, uTime: { value: 0 }, uDM: { value: 0 }, uDN: { value: 0 },
-      uWaterRel: { value: WATER_REL }, uCaps: { value: 0.5 },
+      uWaterRel: { value: WATER_REL }, uCaps: { value: 0.5 }, uRelief: { value: 0.8 }, uSpark: { value: 0.6 }, uSheen: { value: 0.1 },
       uDeep: { value: new THREE.Color() }, uShallow: { value: new THREE.Color() }, uSky: { value: new THREE.Color() },
       uFoam: { value: new THREE.Color() }, uGlint: { value: new THREE.Color() }, uInland: { value: new THREE.Color() },
-      uGlintDir: { value: new THREE.Vector3(0, 1, 0) }, uSunDir: { value: new THREE.Vector3(-14, 30, 10).normalize() },
+      uGlintDir: { value: new THREE.Vector3(0, 1, 0) },
     }]);
     uniforms.uWave.value = this.tex.wave;
     uniforms.uMask.value = this.tex.mask;
@@ -1521,6 +1591,7 @@ export class World {
       const pos = new Float32Array(cap * 3), col = new Float32Array(cap * 3), uv = new Float32Array(cap * 2), tl = new Float32Array(cap * 2);
       BP = pos; BCOL = col; BU = uv; BT = tl; BN = 0; BCAP = cap; BZ0 = 0; frameId();
       fn();
+      for (let i = 0; i < BN * 3; i++) col[i] /= COL_Q;
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(pos.slice(0, BN * 3), 3));
       g.setAttribute('color', new THREE.BufferAttribute(col.slice(0, BN * 3), 3));
@@ -1579,27 +1650,32 @@ export class World {
     this.cloudN = low ? 7 : CLOUD_MAX;
     this.cloudShadows.visible = !low;
     if (!force) {
-      for (const ch of this.chunks) ch.k = null;
+      for (const ch of this.chunks) { ch.k = null; ch.phase = 0; ch.mesh.visible = false; ch.smesh.visible = false; }
+      this._maskSlot.fill(-99999);
       this._ensureChunks(true);
     }
   }
 
   reset(distance = 0) {
+    distance = +distance;
+    if (!Number.isFinite(distance)) distance = 0;
     this._d = distance;
-    for (const ch of this.chunks) { ch.k = null; ch.mesh.visible = false; ch.smesh.visible = false; }
+    for (const ch of this.chunks) { ch.k = null; ch.phase = 0; ch.mesh.visible = false; ch.smesh.visible = false; }
     this._maskSlot.fill(-99999);
     this._ensureChunks(true);
     // scatter clouds over the whole view
-    const cdist = distance * 1.3;
+    const cdist = distance * 1.3 + this._clock * 0.35;   // same frame as _updateClouds
     for (let i = 0; i < CLOUD_MAX; i++) { this._spawnCloud(i, cdist, 0); this.cl.cd[i] = cdist - (Math.random() * 90 - 60); }
     this._applyTod();
     this._place(0);
   }
 
   update(dt, speed) {
-    if (!(dt > 0)) dt = 0;
+    if (!(dt > 0) || dt === Infinity) dt = 0;
+    if (!(speed === speed) || speed === Infinity || speed === -Infinity) speed = 0;
     this._d += speed * dt;
     this._t += dt;
+    this._clock += dt;               // never wraps: cloud drift and spinners
     if (this._t > TIME_WRAP) this._t -= TIME_WRAP;
     this._ensureChunks(false);
     this._applyTod();
@@ -1611,71 +1687,91 @@ export class World {
     const d = this._d;
     const kLo = Math.floor((d - 22) / CHUNK), kHi = Math.floor((d + 46) / CHUNK) + 1;  // +1 = built ahead
     // release slots outside [kLo, kHi]
-    for (const ch of this.chunks) if (ch.k !== null && (ch.k < kLo || ch.k > kHi)) { ch.k = null; ch.mesh.visible = false; ch.smesh.visible = false; ch.nspin = 0; }
+    for (const ch of this.chunks) if (ch.k !== null && (ch.k < kLo || ch.k > kHi)) { ch.k = null; ch.phase = 0; ch.mesh.visible = false; ch.smesh.visible = false; ch.nspin = 0; }
+    // Chunks overlapping the view are built at once. The one ahead of the view is built in
+    // three slices (ground, props, water mask + upload) on consecutive frames, and only on a
+    // frame that did no other build — so a phone never pays for a whole chunk in one frame.
     let built = 0;
     for (let k = kLo; k <= kHi; k++) {
-      let have = false;
-      for (const ch of this.chunks) if (ch.k === k) { have = true; break; }
-      if (have) continue;
-      // chunk k is needed now if it overlaps the visible range; the ahead one can wait a frame
+      let ch = null;
+      for (const c of this.chunks) if (c.k === k) { ch = c; break; }
       const needed = k < kHi || all;
+      if (ch && ch.phase === 3) continue;
       if (!needed && built > 0) continue;
-      let slot = null;
-      for (const ch of this.chunks) if (ch.k === null) { slot = ch; break; }
-      if (!slot) break;
-      this._build(slot, k);
+      if (!ch) {
+        for (const c of this.chunks) if (c.k === null) { ch = c; break; }
+        if (!ch) break;
+        this._begin(ch, k);
+      }
+      const t0 = performance.now();
+      if (needed) { while (ch.phase < 3) this._step(ch); }
+      else this._step(ch);
+      const ms = performance.now() - t0;
+      if (ms > this.stats.maxSliceMs) this.stats.maxSliceMs = ms;
       built++;
     }
     if (this._maskDirty) { this.tex.mask.needsUpdate = true; this._maskDirty = false; }
   }
 
   // ---------------------------------------------------------------------------
-  _build(ch, k) {
-    const t0 = performance.now();
-    const d0 = k * CHUNK;
-    ch.k = k;
-    ch.nspin = 0; ch.nwake = 0;
-    // target this chunk
-    BP = ch.pos; BCOL = ch.col; BU = ch.uv; BT = ch.tile; BN = 0; BCAP = this.quality === 'low' ? CAP_LOW : CAP_HIGH; BZ0 = d0;
-    SP = ch.spos; SN = 0; SCAP = SH_CAP;
-    LOWQ = this.quality === 'low';
-    SHK = todShadowK(d0 + 20);
-    frameId(); plain(); setTile(0); uvMode(0, 0);
-    const v0 = VIOL;
-    this._curChunk = ch;
-    srand(k * 7919 + 1013);
-    const land = d0 + CHUNK > 280 && d0 < BASE_END + 6;
-    const hasGround = k <= 6 || land;
-    if (hasGround) this._ground(d0);
-    const t1 = performance.now();
-    srand(k * 7919 + 2027);
-    if (k <= 6) genOcean(this, ch, k, d0);
-    else if (k <= 9) genCoast(this, ch, k, d0);
-    else if (k <= 15) genCountry(this, ch, k, d0);
-    else if (k <= 23) genCity(this, ch, k, d0);
-    else if (k <= 30) genBase(this, ch, k, d0);
-    const t2 = performance.now();
-    // mask rows (terrain / wakes / calm)
-    this._writeMask(ch, k, d0);
-    const t3 = performance.now();
-    this.stats.parts = [+(t1 - t0).toFixed(2), +(t2 - t1).toFixed(2), +(t3 - t2).toFixed(2)];
-    ch.viol = VIOL - v0;
-    this.stats.violations = VIOL;
-    ch.n = BN; ch.sn = SN;
-    const g = ch.geo;
-    g.setDrawRange(0, BN);
-    for (const name of ['position', 'color', 'uv', 'tile']) {
-      const a = g.getAttribute(name);
-      a.clearUpdateRanges(); a.addUpdateRange(0, BN * a.itemSize); a.needsUpdate = true;
-    }
-    ch.sgeo.setDrawRange(0, SN);
-    const sa = ch.sgeo.getAttribute('position');
-    sa.clearUpdateRanges(); sa.addUpdateRange(0, SN * 3); sa.needsUpdate = true;
-    ch.mesh.visible = BN > 0; ch.smesh.visible = SN > 0;
-    BP = null; SP = null; this._curChunk = null;
-    const ms = performance.now() - t0;
-    this.stats.builds++; this.stats.lastBuildMs = ms; this.stats.maxBuildMs = Math.max(this.stats.maxBuildMs, ms);
+  _begin(ch, k) {
+    ch.k = k; ch.phase = 0; ch.n = 0; ch.sn = 0;
+    ch.nspin = 0; ch.nwake = 0; ch.viol = 0; ch.ms = 0;
+    ch.mesh.visible = false; ch.smesh.visible = false;
   }
+  // point the emitter at a chunk (state is saved on the chunk between slices)
+  _target(ch) {
+    BP = ch.pos; BCOL = ch.col; BU = ch.uv; BT = ch.tile; BN = ch.n; BCAP = this.quality === 'low' ? CAP_LOW : CAP_HIGH; BZ0 = ch.k * CHUNK;
+    SP = ch.spos; SN = ch.sn; SCAP = SH_CAP;
+    LOWQ = this.quality === 'low';
+    SHK = todShadowK(ch.k * CHUNK + 20);
+    frameId(); plain(); setTile(0); uvMode(0, 0);
+  }
+  _step(ch) {
+    const t0 = performance.now();
+    const k = ch.k, d0 = k * CHUNK;
+    const v0 = VIOL;
+    if (ch.phase === 0) {
+      this._target(ch);
+      srand(k * 7919 + 1013);
+      const land = d0 + CHUNK > 280 && d0 < BASE_END + 6;
+      if (k <= 6 || land) this._ground(d0);
+    } else if (ch.phase === 1) {
+      this._target(ch);
+      srand(k * 7919 + 2027);
+      LSEED = (k * 131) & 1023;
+      if (k <= 6) genOcean(this, ch, k, d0);
+      else if (k <= 9) genCoast(this, ch, k, d0);
+      else if (k <= 15) genCountry(this, ch, k, d0);
+      else if (k <= 23) genCity(this, ch, k, d0);
+      else if (k <= 30) genBase(this, ch, k, d0);
+    } else {
+      this._writeMask(ch, k, d0);
+      this._upload(ch);
+    }
+    if (ch.phase < 2) { ch.n = BN; ch.sn = SN; BP = null; SP = null; }
+    ch.viol += VIOL - v0;
+    this.stats.violations = VIOL;
+    ch.ms += performance.now() - t0;
+    ch.phase++;
+    if (ch.phase === 3) {
+      this.stats.builds++; this.stats.lastBuildMs = ch.ms; this.stats.maxBuildMs = Math.max(this.stats.maxBuildMs, ch.ms);
+    }
+  }
+  _upload(ch) {
+    const g = ch.geo;
+    g.setDrawRange(0, ch.n);
+    for (let i = 0; i < ATTRS.length; i++) {
+      const a = g.getAttribute(ATTRS[i]);
+      a.clearUpdateRanges(); a.addUpdateRange(0, ch.n * a.itemSize); a.needsUpdate = true;
+    }
+    ch.sgeo.setDrawRange(0, ch.sn);
+    const sa = ch.sgeo.getAttribute('position');
+    sa.clearUpdateRanges(); sa.addUpdateRange(0, ch.sn * 3); sa.needsUpdate = true;
+    ch.mesh.visible = ch.n > 0; ch.smesh.visible = ch.sn > 0;
+  }
+  // synchronous full build (tools / profiling)
+  _build(ch, k) { this._begin(ch, k); while (ch.phase < 3) this._step(ch); }
 
   // ground grid (skips cells that are entirely under water)
   _ground(d0) {
@@ -1740,8 +1836,9 @@ export class World {
             const core = Math.exp(-(across * across) / (0.3 * wk[o + 5])) * (1 - t);
             g = Math.max(g, clamp((edge + core) * (1 - t) * 1.2, 0, 1));
           }
-          // calm (inland) water: harbour, river, ponds
-          if (d > 300 && d < BASE_END) calm = d < 340 && x > HARBOR_X0 ? 0.65 : 1;
+          // calm (inland) water: harbour basin, river, ponds, canal
+          if (d > 400 && d < BASE_END - 1) calm = 1;
+          else if (d > 290 && d < HARBOR_D1 + 1 && x > HARBOR_X0 - 1) calm = 0.55 * sstep(shoreD(x) - 6, shoreD(x) + 6, d) * sstep(HARBOR_X0 - 1, HARBOR_X0 + 2.5, x);
         }
         const o = row + i * 4;
         M[o] = clamp(Math.round((h * 0.25 + 0.5) * 255), 0, 255);
@@ -1762,7 +1859,7 @@ export class World {
     let nr = 0, nt = 0;
     const t = this._t;
     for (const ch of this.chunks) {
-      if (ch.k === null) continue;
+      if (ch.k === null || ch.phase < 3) continue;
       const z = d - ch.k * CHUNK;
       ch.mesh.position.z = z; ch.smesh.position.z = z;
       // chunk overlaps the visible range?
@@ -1771,7 +1868,7 @@ export class World {
       for (let i = 0; i < ch.nspin; i++) {
         const o = i * 7;
         const type = ch.spin[o], x = ch.spin[o + 1], y = ch.spin[o + 2], sd = ch.spin[o + 3];
-        const ang = ch.spin[o + 4] + t * ch.spin[o + 5];
+        const ang = ch.spin[o + 4] + ((this._clock * ch.spin[o + 5]) % TAU);
         const wz = d - sd;
         if (type === 0) {
           if (nr >= 16) continue;
@@ -1800,7 +1897,7 @@ export class World {
 
   _updateClouds() {
     const c = this.cl, d = this._d;
-    const cdist = d * 1.3 + this._t * 0.35;
+    const cdist = d * 1.3 + this._clock * 0.35;
     const n = this.cloudN;
     const sy = GROUND_Y + L_SHADOW + 0.02;
     const tod = this._tod;
@@ -1829,7 +1926,7 @@ export class World {
     this.cloudShadows.instanceMatrix.needsUpdate = true;
     this.cloudGeo.getAttribute('aAlpha').needsUpdate = true;
     const bi = biomeOf(d);
-    this.cloudShadowMat.uniforms.uK.value = bi === 'city' ? 0.18 : 0.34;
+    this.cloudShadowMat.uniforms.uK.value = bi === 'city' || bi === 'ocean' || bi === 'sea' ? 0.16 : 0.32;
   }
 
   // ---------------------------------------------------------------------------
@@ -1856,7 +1953,7 @@ export class World {
     u.uGlint.value.copy(o.glint).multiplyScalar(o.glintI);
     u.uGlintDir.value.copy(o.gdir);
     u.uCaps.value = o.caps;
-    if (this.sun) u.uSunDir.value.copy(this.sun.position).normalize();
+    u.uRelief.value = o.relief; u.uSpark.value = o.spark; u.uSheen.value = o.sheen;
     const cu = this.cloudMat.uniforms;
     cu.uLit.value.copy(o.cLit).multiplyScalar(0.93);
     cu.uShade.value.copy(o.cShade).multiplyScalar(0.78);
@@ -1868,10 +1965,10 @@ export class World {
   // debugging / tooling -----------------------------------------------------------
   info() {
     let verts = 0, sverts = 0, active = 0;
-    for (const ch of this.chunks) if (ch.k !== null) { active++; verts += ch.n; sverts += ch.sn; }
+    for (const ch of this.chunks) if (ch.k !== null && ch.phase === 3) { active++; verts += ch.n; sverts += ch.sn; }
     return { distance: this._d, biome: biomeOf(this._d), activeChunks: active, triangles: (verts + sverts) / 3,
       violations: this.stats.violations, violationLog: this.stats.violationLog.slice(0, 12), lastBuildMs: this.stats.lastBuildMs, maxBuildMs: this.stats.maxBuildMs, builds: this.stats.builds,
-      water: this.water.visible, parts: this.stats.parts };
+      water: this.water.visible, maxSliceMs: this.stats.maxSliceMs };
   }
 
   dispose() {
@@ -1888,6 +1985,7 @@ export class World {
 }
 
 // ground grid x positions: fine in the playfield, coarse at the far sides
+const ATTRS = ['position', 'color', 'uv', 'tile'];
 const GROUND_XS = (() => {
   const a = [];
   for (let x = -40; x < -24; x += 4) a.push(x);
@@ -1939,7 +2037,7 @@ function laneRoad(lx, dA, dB, style) {
   // centre dashes (skipping the cross-road intersection)
   for (let d = Math.ceil(dA / 2.5) * 2.5; d < dB - 1.3; d += 2.5) {
     if (crossDist(d + 0.6) < 2.4) continue;
-    flat(lx - 0.05, d, lx + 0.05, d + 1.2, L_MARK, P.paint, 0.85);
+    flat(lx - 0.06, d, lx + 0.06, d + 1.2, L_MARK, P.paint, 0.85);
   }
 }
 function crossRoad(c, style, x0 = -40, x1 = 40) {
@@ -1954,7 +2052,17 @@ function crossRoad(c, style, x0 = -40, x1 = 40) {
   }
   const taxi = style === 'taxi';
   flat(x0, c - 1.5, x1, c + 1.5, L_ROAD, taxi ? P.asphaltD : P.asphalt);
-  if (taxi) { flat(x0, c - 0.05, x1, c + 0.05, L_MARK, P.yellow); return; }
+  if (taxi) {
+    flat(x0, c - 0.05, x1, c + 0.05, L_MARK, P.yellow);
+    // hold-short bars before the runway and yellow/black guidance boards
+    for (const sx of [-1, 1]) {
+      flat(sx * 3.3 - 0.06, c - 1.4, sx * 3.3 + 0.06, c + 1.4, L_MARK, P.yellow, 0.95);
+      flat(sx * 3.55 - 0.06, c - 1.4, sx * 3.55 + 0.06, c + 1.4, L_MARK, P.yellow, 0.95);
+      box(sx * 3.9 - 0.3, c + 2.1, sx * 3.9 + 0.3, c + 2.22, 0, 0.26, P.yellow, P.hullDark);
+      box(sx * 7.3 - 0.3, c - 2.2, sx * 7.3 + 0.3, c - 2.08, 0, 0.26, P.hullDark, P.yellow);
+    }
+    return;
+  }
   // dashed centre line, skipping the lane intersections
   for (let x = Math.ceil(x0 / 2.5) * 2.5; x < x1 - 1.2; x += 2.5) {
     let skip = false;
@@ -1980,74 +2088,125 @@ function zebraAcrossLane(lx, c) {
 // OCEAN (d < 280)
 // =============================================================================
 function genOcean(w, ch, k, d0) {
-  // islands whose centre lies in this chunk
-  for (let i = 0; i < ISL.length; i++) if (ISL[i].k === k) islandProps(ISL[i]);
-  // a ship or two, well outside the centre lanes
-  const nShip = rand() < 0.75 ? 1 : 2;
+  for (let i = 0; i < ISL.length; i++) if (ISL[i].k === k) islandProps(ch, ISL[i]);
+  // shipping on both flanks; every hull stays at |x| ≥ 8.4, clear of core's gunboat lanes
+  const nShip = rand() < 0.6 ? 1 : 2;
   for (let s = 0; s < nShip; s++) {
-    const side = rand() < 0.5 ? -1 : 1;
-    const x = side * rr(8.8, 12), d = d0 + rr(10, 30);
-    if (nearIsland(x, d, 3.5)) continue;
-    const r = rand();
-    if (r < 0.4) containerShip(ch, x, d, rand() < 0.5 ? 0 : Math.PI, 1);
-    else if (r < 0.7) trawler(ch, x, d, rr(0, TAU));
-    else if (r < 0.85) tanker(ch, x, d, rand() < 0.5 ? 0.08 : Math.PI - 0.08);
-    else sailboat(ch, x, d, rr(0, TAU));
+    const side = rand() < 0.5 ? -1 : 1, d = d0 + rr(8, 32), r = rand();
+    if (r < 0.36) { const x = side * rr(10.2, 12.5); if (!nearIsland(x, d, 4.4)) containerShip(ch, x, d, rand() < 0.5 ? 0 : Math.PI, 1); }
+    else if (r < 0.52) { const x = side * rr(10.6, 12.5); if (!nearIsland(x, d, 4.8)) tanker(ch, x, d, rand() < 0.5 ? 0.08 : Math.PI - 0.08); }
+    else if (r < 0.84) { const x = side * rr(9.7, 13.5); if (!nearIsland(x, d, 2.2)) trawler(ch, x, d, rr(0, TAU)); }
+    else { const x = side * rr(9.3, 13.5); if (!nearIsland(x, d, 1.8)) sailboat(ch, x, d, rr(0, TAU)); }
   }
-  // rocks
+  // sea stacks / rocks
   const nr = 1 + ((rand() * 3) | 0);
   for (let i = 0; i < nr; i++) {
     const side = rand() < 0.5 ? -1 : 1;
-    const x = side * rr(8, 13), d = d0 + rr(3, 37);
-    if (nearIsland(x, d, 2)) continue;
-    rock(x, d, rr(0.35, 0.75), -0.35, rr(0.35, 0.7));
-    if (rand() < 0.6) rock(x + rr(-0.9, 0.9), d + rr(-0.9, 0.9), rr(0.2, 0.4), -0.3, rr(0.25, 0.45));
+    const x = side * rr(9.5, 14), d = d0 + rr(3, 37);
+    if (nearIsland(x, d, 1.6)) continue;
+    rock(x, d, rr(0.35, 0.7), -0.35, rr(0.35, 0.7));
+    if (rand() < 0.6) rock(x + side * rr(0, 0.9), d + rr(-0.9, 0.9), rr(0.2, 0.4), -0.3, rr(0.25, 0.45));
   }
-  // near the coast: fishing boats and buoys
-  if (k >= 5) for (let i = 0; i < 2; i++) { const x = (rand() < 0.5 ? -1 : 1) * rr(8, 14); const d = d0 + rr(5, 35); if (!nearIsland(x, d, 2.5)) trawler(ch, x, d, rr(0, TAU), 0.8); }
+  // offshore platforms as landmarks
+  if (k === 5) oilRig(ch, 11.4, 222);
+  if (k === 2) oilRig(ch, -12.4, 98);
+  // near the coast: fishing boats
+  if (k >= 5) for (let i = 0; i < 2; i++) { const x = (rand() < 0.5 ? -1 : 1) * rr(9.7, 14); const d = d0 + rr(5, 35); if (!nearIsland(x, d, 2.2)) trawler(ch, x, d, rr(0, TAU), 0.8); }
   for (let i = 0; i < 2; i++) buoy(rr(-16, 16), d0 + rr(2, 38));
 }
 function nearIsland(x, d, m) {
-  for (let i = 0; i < ISL.length; i++) { const I = ISL[i]; if (Math.hypot(x - I.x, d - I.d) < I.R * 1.35 + m) return true; }
+  for (let i = 0; i < ISL.length; i++) {
+    const I = ISL[i];
+    if (Math.abs(d - I.d) > I.R * I.sd * 1.3 + m || Math.abs(x - I.x) > I.R * I.sx * 1.3 + m) continue;
+    if (islandRho(I, x, d) < 1.3 + m / I.R) return true;
+  }
   return false;
+}
+// x where the island's shore meets the water on the side facing the centre line, at stage d
+function islandShoreX(I, d) {
+  const sgn = I.x < 0 ? -1 : 1;
+  let x = I.x;
+  for (let i = 0; i < 40 && terrainH(x, d) > WATER_REL; i++) x -= sgn * 0.2;
+  return x;
+}
+function oilRig(ch, x, d) {
+  if (nearIsland(x, d, 4)) return;
+  frameId();
+  // legs, two decks, helipad, crane, derrick, flare boom
+  for (const [ox, od] of [[-1.3, -1.1], [1.3, -1.1], [-1.3, 1.1], [1.3, 1.1]]) cyl(x + ox, d + od, 0.22, WATER_REL - 0.1, 0.9, 6, P.redPaint, P.redPaint, false);
+  box(x - 1.6, d - 1.4, x + 1.6, d + 1.4, 0.9, 1.15, P.metalD, P.deckGrey);
+  box(x - 1.5, d - 1.3, x + 0.2, d + 1.3, 1.15, 1.7, P.shipWhite, P.roofLight);
+  setTile(T_HELI); uvMode(1.5, 1.5, false, x - 1.45, d - 1.25);
+  flat(x - 1.45, d - 1.25, x + 0.05, d + 0.25, 1.72, P.white); setTile(0); uvMode(0, 0);
+  box(x + 0.5, d - 0.3, x + 1.3, d + 0.5, 1.15, 1.4, P.yellow, P.metalD);
+  for (const [ox, od] of [[-0.25, -0.25], [0.25, -0.25], [-0.25, 0.25], [0.25, 0.25]]) box(x + 0.9 + ox - 0.04, d + 0.1 + od - 0.04, x + 0.9 + ox + 0.04, d + 0.1 + od + 0.04, 1.4, 3.3, P.metal, P.metal);
+  box(x + 0.6, d - 0.2, x + 1.2, d + 0.4, 3.3, 3.45, P.metal, P.metal);
+  box(x + 1.5, d + 1.0, x + 3.2, d + 1.18, 1.1, 1.22, P.metal, P.metal);
+  box(x - 0.2, d + 1.25, x + 0.05, d + 3.0, 1.7, 1.82, P.yellow, P.yellow);
+  shadowBox(x - 1.6, d - 1.4, x + 1.6, d + 1.4, 1.6, WATER_REL);
+  shadowBox(x + 0.6, d - 0.2, x + 1.2, d + 0.4, 3.3, WATER_REL);
 }
 function buoy(x, d) {
   cyl(x, d, 0.09, WATER_REL - 0.05, 0.14, 5, P.redPaint, P.paint);
 }
-function islandProps(I) {
-  const R = I.R;
+const ISLE_WALLS = [P.wallW, P.wallW, P.wallCream, P.wallPink, P.wallSand];
+const ISLE_ROOFS = [P.roofTerra, P.roofTerra, P.roofBrown, P.roofSlate, P.roofGreen];
+function islandProps(ch, I) {
+  const R = I.R, sgn = I.x < 0 ? -1 : 1;
+  // village clearing on the side facing the centre line (big islands)
+  const vx = I.x - sgn * R * I.sx * 0.32, vd = I.d + rr(-0.2, 0.2) * R * I.sd;
   // palms on the beach ring, jungle inside
-  const n = Math.round(R * R * (LOWQ ? 1.2 : 2.2));
+  const n = Math.round(R * R * I.sx * I.sd * (LOWQ ? 1.2 : 2.3));
   for (let i = 0; i < n; i++) {
     const a = rand() * TAU, q = Math.sqrt(rand()) * 0.95;
-    const x = I.x + Math.cos(a) * q * R, d = I.d + Math.sin(a) * q * R;
+    const x = I.x + Math.cos(a) * q * R * I.sx, d = I.d + Math.sin(a) * q * R * I.sd;
     const rho = islandRho(I, x, d);
     if (rho > 0.9) continue;
     const h = terrainH(x, d);
     if (h < 0.05) continue;
+    if (I.village && Math.hypot(x - vx, d - vd) < 2.3) continue;
     if (rho > 0.62) { if (rand() < 0.55) palm(x, d, rr(0.9, 1.25), h - 0.02); }
     else if (rand() < 0.8) treeRound(x, d, rr(0.5, 0.8), rr(0.9, 1.4), jit(rand() < 0.5 ? P.jungle : P.tree1, 0.2), h - 0.05);
     else palm(x, d, rr(1.0, 1.35), h - 0.02);
   }
-  // shore rocks
-  const nr = Math.round(R * 1.5);
+  // shore rocks (never reaching toward the gunboat lanes)
+  const nr = Math.round(R * 0.75 * (I.sx + I.sd));
   for (let i = 0; i < nr; i++) {
     const a = rand() * TAU;
-    const x = I.x + Math.cos(a) * R * rr(0.9, 1.05), d = I.d + Math.sin(a) * R * rr(0.9, 1.05);
+    const x = I.x + Math.cos(a) * R * I.sx * rr(0.92, 1.08), d = I.d + Math.sin(a) * R * I.sd * rr(0.92, 1.08);
+    if (Math.abs(x) - 0.8 < ISL_X) continue;
     rock(x, d, rr(0.25, 0.55), -0.3, rr(0.3, 0.6));
   }
-  // a hut with a jetty, or a small lighthouse on the big ones
-  if (I.house || I.light) {
-    const a = Math.atan2(-I.d + I.d, -Math.sign(I.x)) + rr(-0.6, 0.6); // toward the centre line
-    const x = I.x + Math.cos(a) * R * 0.55, d = I.d + Math.sin(a) * R * 0.55;
-    const h = terrainH(x, d);
-    if (I.light) lighthouse(x, d, h, 0.8);
-    else {
-      house(x, d, 0.9, 0.7, 0.45, rr(-0.4, 0.4), P.wallCream, P.roofBrown, 1, 0.3);
-      frame(I.x + Math.cos(a) * R * 1.05, I.d + Math.sin(a) * R * 1.05, a + Math.PI / 2);
-      box(-0.18, -0.9, 0.18, 0.9, -0.3, 0.1, P.roofBrown, P.dirt);
-      frameId();
+  if (I.village) {
+    // a fishing village: whitewashed houses round a little square, a jetty with boats
+    frameId();
+    for (let i = 0; i < 9; i++) {
+      const gx = (i % 3) - 1, gd = ((i / 3) | 0) - 1;
+      if (rand() < 0.2) continue;
+      const x = vx + gx * 1.15 + rr(-0.2, 0.2), d = vd + gd * 1.3 + rr(-0.2, 0.2);
+      if (islandRho(I, x, d) > 0.78) continue;
+      const h = terrainH(x, d);
+      if (h < 0.1) continue;
+      house(x, d, rr(0.62, 0.85), rr(0.55, 0.75), rr(0.32, 0.45), rr(-0.3, 0.3), jit(pick(ISLE_WALLS), 0.06, TC2), jit(pick(ISLE_ROOFS), 0.1, TC3), rand() < 0.5 ? 0 : 1, 0.26, h - 0.04);
     }
+    const jd = vd + rr(-1, 1), sx0 = islandShoreX(I, jd);
+    if (Math.abs(sx0) - 0.3 > ISL_X - 0.2) {
+      frame(sx0, jd, 0); box(-0.16, -1.3, 0.16, 1.3, -0.3, 0.1, P.roofBrown, P.dirt); frameId();
+      shadowBox(sx0 - 0.16, jd - 1.3, sx0 + 0.16, jd + 1.3, 0.12, WATER_REL);
+    }
+  }
+  if (I.house) {
+    // a hut on the beach, facing the centre line
+    const hd = I.d + rr(-0.3, 0.3) * R * I.sd;
+    const sx0 = islandShoreX(I, hd);
+    const x = sx0 + sgn * 1.1, h = terrainH(x, hd);
+    if (h > 0.02) house(x, hd, 0.8, 0.65, 0.4, rr(-0.3, 0.3), P.wallCream, P.roofBrown, 1, 0.28, h - 0.03);
+  }
+  if (I.light) {
+    // a small lighthouse on the island tip
+    const td = I.d + (rand() < 0.5 ? -1 : 1) * R * I.sd * 0.62, tx = I.x + sgn * R * I.sx * 0.1;
+    const h = terrainH(tx, td);
+    if (h > 0.05) lighthouse(tx, td, h - 0.05, 0.8);
   }
 }
 function lighthouse(x, d, base, s = 1) {
@@ -2629,7 +2788,8 @@ function genCity(w, ch, k, d0) {
   if (cr === 820) highway(ch, cr); else crossRoad(cr, 'main');
   const I = urbanI(cr);
   const half = cr === 820 ? 4.0 : 1.95;
-  const halves = [[d0, cr - half], [cr + half, d1]];
+  const halves = [[d0, cr - half], [cr + half, k === 21 ? CANAL_C - 2.5 : d1]];
+  if (k === 21) canal(ch);
   for (let hi = 0; hi < 2; hi++) {
     const [a, b] = halves[hi];
     for (const side of [-1, 1]) {
@@ -2657,11 +2817,73 @@ function genCity(w, ch, k, d0) {
     }
   }
 }
+// canal across the city: stone embankments, bridges on the lanes, boats, trees
+function canal(ch) {
+  const c = CANAL_C;
+  frameId(); uvMode(0, 0);
+  for (const s of [-1, 1]) {
+    const e = c + s * 2.0;
+    box(-40, Math.min(e - s * 0.35, e + s * 0.3), 40, Math.max(e - s * 0.35, e + s * 0.3), -0.9, 0.1, P.concreteD, P.walk);
+    for (let x = -22; x < 22; x += 1.5) {
+      let skip = false;
+      for (let i = 0; i < 3; i++) if (Math.abs(x - LANES_X[i]) < 1.9) skip = true;
+      if (!skip) treeRound(x + rr(-0.2, 0.2), e + s * 0.95, rr(0.4, 0.5), rr(0.75, 0.95), jit(P.tree1, 0.12));
+    }
+  }
+  for (let i = 0; i < 3; i++) {
+    const lx = LANES_X[i];
+    box(lx - 1.3, c - 2.4, lx + 1.3, c + 2.4, -0.9, 0.06, P.concreteD, P.concrete);
+    flat(lx - 1.05, c - 2.4, lx + 1.05, c + 2.4, 0.075, P.asphalt);
+    box(lx - 1.3, c - 2.4, lx - 1.15, c + 2.4, 0.06, 0.22, P.walk, P.walk);
+    box(lx + 1.15, c - 2.4, lx + 1.3, c + 2.4, 0.06, 0.22, P.walk, P.walk);
+    shadowBox(lx - 1.3, c - 2.0, lx + 1.3, c + 2.0, 0.3, WATER_REL);
+  }
+  // moored and moving boats (outside the bridges)
+  trawler(ch, -9.2, c - 0.6, Math.PI / 2, 0.75);
+  trawler(ch, 10.5, c + 0.5, -Math.PI / 2, 0.7);
+  frame(-15, c + 0.7, Math.PI / 2); hull(1.8, 0.55, 0.14, P.shipWhite, P.deckRust, 0.3); box(-0.18, -0.4, 0.18, 0.3, 0.14, 0.34, P.shipWhite, P.roofLight); frameId();
+  ch.nwake = 0;
+}
+const BED_COLS = [P.mustard, P.lavender, C(0x9a6c66), P.cabbage, P.cropGold, C(0x8a7894)];
 function medianGarden(x0, x1, a, b) {
-  // flat lawns + low planters (siege-tank corridor and the suburbs' green median)
-  frameId();
-  flat(x0 + 0.05, a + 0.2, x1 - 0.05, b - 0.2, L_BASE, jit(P.grassL, 0.08, TC3));
-  for (let d = a + 1; d < b - 0.5; d += 1.6) disc((x0 + x1) / 2, d, 0.32, 0.32, L_WALK, P.bush, 6);
+  // a formal garden strip down the boulevard: promenade, fountain plazas, flower beds framed by
+  // low clipped hedges, benches. Nothing rises above 0.2, so the siege tank's path stays clear.
+  frameId(); setTile(0); uvMode(0, 0);
+  const cx = (x0 + x1) / 2;
+  flat(x0 + 0.05, a + 0.2, x1 - 0.05, b - 0.2, L_BASE, jit(P.grassL, 0.05, TC3));
+  flat(x0 + 0.05, a + 0.2, x0 + 0.2, b - 0.2, L_ROAD, P.walk, 0.95);
+  flat(x1 - 0.2, a + 0.2, x1 - 0.05, b - 0.2, L_ROAD, P.walk, 0.95);
+  flat(cx - 0.19, a + 0.2, cx + 0.19, b - 0.2, L_ROAD, P.gravel, 0.95);
+  const L = b - a - 0.4;
+  if (L < 3) return;
+  const nSeg = Math.max(1, Math.round(L / 9)), seg = L / nSeg;
+  const hc = jit(P.bush, 0.06, TC2);
+  for (let i = 0; i < nSeg; i++) {
+    const s0 = a + 0.2 + i * seg, s1 = s0 + seg, sm = (s0 + s1) * 0.5;
+    // plaza with a round fountain basin
+    disc(cx, sm, 0.95, 0.95, L_WALK, P.paving, 14);
+    cyl(cx, sm, 0.55, 0, 0.14, 12, P.concrete, P.concrete, false);
+    disc(cx, sm, 0.5, 0.5, 0.12, P.glassL, 12, 0.9);
+    cyl(cx, sm, 0.07, 0.12, 0.2, 5, P.concrete, P.paint);
+    if (!LOWQ) for (const sd of [-1, 1]) box(cx + sd * 0.78 - 0.08, sm - 0.22, cx + sd * 0.78 + 0.08, sm + 0.22, 0, 0.08, P.roofBrown, P.roofBrown);
+    // beds either side of the promenade, before and after the plaza
+    for (let hh = 0; hh < 2; hh++) {
+      const da = hh ? sm + 1.2 : s0 + 0.45, db = hh ? s1 - 0.45 : sm - 1.2;
+      if (db - da < 1.2) continue;
+      for (let sx = -1; sx <= 1; sx += 2) {
+        const bx0 = sx < 0 ? x0 + 0.42 : cx + 0.36, bx1 = sx < 0 ? cx - 0.36 : x1 - 0.42;
+        if (bx1 - bx0 < 0.5) continue;
+        setTile(T_ROWS); uvMode(1.0, 0.9);
+        flat(bx0, da, bx1, db, L_WALK, jit(pick(BED_COLS), 0.08, TC3));
+        setTile(0); uvMode(0, 0);
+        if (LOWQ) continue;
+        box(bx0 - 0.07, da - 0.07, bx1 + 0.07, da + 0.05, 0, 0.16, hc, hc);
+        box(bx0 - 0.07, db - 0.05, bx1 + 0.07, db + 0.07, 0, 0.16, hc, hc);
+        box(bx0 - 0.07, da + 0.05, bx0 + 0.05, db - 0.05, 0, 0.16, hc, hc);
+        box(bx1 - 0.05, da + 0.05, bx1 + 0.07, db - 0.05, 0, 0.16, hc, hc);
+      }
+    }
+  }
 }
 // a strip of building lots along d inside [x0,x1]
 function lotRow(x0, x1, a, b, I, inner) {
@@ -2977,6 +3199,28 @@ function runway(a, b) {
     if (zone < a || zone + 3 > b) continue;
     const x = rr(-1.3, 1.3) * (rand() < 0.5 ? 0.45 : 1);
     flat(x - rr(0.05, 0.13), zone, x + rr(0.05, 0.13), zone + rr(1.5, 3.5), L_ROAD + 0.003, P.runway, rr(0.62, 0.8));
+  }
+  // aiming-point blocks, arresting cables, distance-remaining boards, windsock, glideslope mast
+  for (const [ap, dir] of [[RW_A + 22, 1], [RW_B - 22 - 3, -1]]) if (ap > a && ap + 3 < b) for (const sx of [-1, 1]) flat(sx * 1.55 - 0.42, ap, sx * 1.55 + 0.42, ap + 3, L_MARK, P.paint, 0.95);
+  for (const cd of [RW_A + 48, RW_B - 48]) if (cd > a && cd < b) {
+    flat(-2.8, cd - 0.04, 2.8, cd + 0.04, L_MARK, P.hullDark, 0.9);
+    for (const sx of [-1, 1]) box(sx * 3.35 - 0.12, cd - 0.15, sx * 3.35 + 0.12, cd + 0.15, 0, 0.14, P.yellow, P.hullDark);
+  }
+  for (let d = Math.ceil((a - RW_A) / 20) * 20 + RW_A + 10; d < Math.min(b, RW_B - 5); d += 20) {
+    if (crossDist(d) < 2.2) continue;
+    for (const sx of [-1, 1]) box(sx * 3.75 - 0.28, d - 0.06, sx * 3.75 + 0.28, d + 0.06, 0, 0.26, P.hullDark, P.paint);
+  }
+  if (a <= RW_A + 30 && b > RW_A + 30) {
+    const x = -3.7, d = RW_A + 30;
+    box(x - 0.03, d - 0.03, x + 0.03, d + 0.03, 0, 0.8, P.metal, P.metal);
+    frame(x, d + 0.03, 0.5); box(-0.06, 0, 0.06, 0.55, 0.62, 0.76, P.redPaint, P.redPaint); frameId();
+    shadowBox(x - 0.03, d - 0.03, x + 0.03, d + 0.03, 0.8);
+  }
+  if (a <= RW_A + 14 && b > RW_A + 14) {
+    const x = 3.75, d = RW_A + 14;
+    box(x - 0.2, d - 0.2, x + 0.2, d + 0.2, 0, 0.3, P.shipWhite, P.redPaint);
+    box(x - 0.03, d - 0.03, x + 0.03, d + 0.03, 0.3, 1.3, P.redPaint, P.shipWhite);
+    shadowBox(x - 0.2, d - 0.2, x + 0.2, d + 0.2, 0.3); shadowBox(x - 0.03, d - 0.03, x + 0.03, d + 0.03, 1.3);
   }
   // PAPI light bars beside both thresholds
   for (const pd of [RW_A + 12, RW_B - 12]) if (pd > a && pd < b) for (let i = 0; i < 4; i++) box(-3.5 - i * 0.28, pd - 0.08, -3.3 - i * 0.28, pd + 0.08, 0, 0.1, P.hullDark, i < 2 ? P.redPaint : P.paint);

@@ -228,6 +228,8 @@ body.touch .kbd-only { display: none; }
 .tally .ln.total { font-size: 18px; color: var(--amber); border-bottom: 0; }
 .rank { font: 700 64px/1 var(--f-display); color: var(--crimson); text-shadow: 0 0 30px rgba(255,46,72,0.7); opacity: 0; transform: scale(2.4); transition: all 0.35s cubic-bezier(.2,1.4,.3,1); }
 .rank.on { opacity: 1; transform: none; }
+.reserve { visibility: hidden; }
+.bn.count .h { font-size: 84px; color: var(--amber); text-shadow: 0 0 30px rgba(255,182,39,0.6), 0 3px 0 #000; }
 .badge { font: 700 12px var(--f-display); letter-spacing: 0.3em; color: #0b0d14; background: var(--amber); padding: 4px 10px; animation: blink 0.8s steps(2) infinite; }
 #loading .bar { width: 180px; height: 3px; background: rgba(255,255,255,0.12); overflow: hidden; }
 #loading .bar i { display: block; height: 100%; width: 40%; background: var(--crimson); animation: load 1s ease-in-out infinite; }
@@ -255,7 +257,7 @@ body.touch .kbd-only { display: none; }
     </div>
     <div><h3>ITEMS</h3>
       <div class="row"><span class="chip red">P</span>紅＝散射火神砲</div>
-      <div class="row"><span class="chip blue">P</span>藍＝貫穿雷射</div>
+      <div class="row"><span class="chip blue">P</span>藍＝雷射</div>
       <div class="row"><span class="chip h">H</span>追蹤飛彈</div>
       <div class="row"><span class="chip n">N</span>核子飛彈</div>
       <div class="row"><span class="chip b">B</span>炸彈</div>

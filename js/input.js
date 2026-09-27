@@ -165,9 +165,12 @@ export class Input {
     if (b(14)) x = -1; if (b(15)) x = 1; if (b(12)) y = -1; if (b(13)) y = 1;
     this.pad.x = x; this.pad.y = y;
     const bomb = b(1) || b(2) || b(5), start = b(9), confirm = b(0);
-    if (bomb && !this.pad.prevBomb) this.edges.add('bomb');
+    if (bomb && !this.pad.prevBomb) { this.edges.add('bomb'); if (b(1)) this.edges.add('padBack'); }
     if (start && !this.pad.prevStart) this.edges.add('pause');
-    if (confirm && !this.pad.prevPause) this.edges.add('confirm');
+    if (confirm && !this.pad.prevPause) this.edges.add('padConfirm');
+    const navY = y < -0.5 ? -1 : y > 0.5 ? 1 : 0;
+    if (navY !== this.pad.prevNav) { if (navY < 0) this.edges.add('navUp'); if (navY > 0) this.edges.add('navDown'); }
+    this.pad.prevNav = navY;
     this.pad.prevBomb = bomb; this.pad.prevStart = start; this.pad.prevPause = confirm;
     if (x || y) this.usingTouch = false;
   }

@@ -129,7 +129,10 @@ export class UI {
     let p = null;
     for (const q of this.popPool) { if (!q.active) { p = q; break; } }
     if (!p) { p = this.popPool[0]; for (const q of this.popPool) if (q.t > p.t) p = q; }
-    p.active = true; p.t = 0; p.life = 0.9; p.x = sx; p.y = sy;
+    // stack popups that land on the same spot (e.g. a burst of medals) instead of overprinting
+    let near = 0;
+    for (const q of this.popPool) if (q.active && q.t < 0.3 && Math.abs(q.x - sx) < 24 && Math.abs(q.y - sy) < 24) near++;
+    p.active = true; p.t = 0; p.life = 0.9; p.x = sx; p.y = sy - 16 * Math.min(near, 3);
     p.el.className = 'popup ' + cls;
     p.el.textContent = text;
   }
@@ -158,33 +161,33 @@ export class UI {
   danger(on) { this.set('danger', on, (x) => { this.el.vignette.style.opacity = x ? '1' : '0'; }); }
 
   // --- results tally --------------------------------------------------------------
-  async tally(lines, total, rank, isNew, speedUp) {
+  // Lay out every row first (invisible) so the screen never jumps, then reveal them in turn.
+  async tally(lines, total, rank, isNew, speedUp, sound = () => {}) {
     const box = $('tally');
     box.innerHTML = '';
-    $('rank').classList.remove('on');
-    $('res-new').hidden = true;
-    $('res-menu').hidden = true;
-    const wait = (ms) => new Promise((r) => setTimeout(r, speedUp() ? 0 : ms));
-    for (const [label, sub, value] of lines) {
+    const r = $('rank');
+    r.classList.remove('on'); r.textContent = rank;
+    $('res-new').hidden = false; $('res-new').classList.add('reserve');
+    $('res-menu').hidden = false; $('res-menu').classList.add('reserve');
+    const rows = lines.map(([label, sub, value]) => {
       const ln = document.createElement('div');
       ln.className = 'ln';
       ln.innerHTML = `<span>${label}<small>${sub}</small></span><span>${value}</span>`;
       box.appendChild(ln);
-      await wait(40);
-      ln.classList.add('on');
-      await wait(380);
-    }
+      return ln;
+    });
     const tl = document.createElement('div');
     tl.className = 'ln total';
     tl.innerHTML = `<span>TOTAL<small>總分</small></span><span>${fmt(total)}</span>`;
     box.appendChild(tl);
-    await wait(40);
-    tl.classList.add('on');
+    const wait = (ms) => new Promise((res) => setTimeout(res, speedUp() ? 0 : ms));
+    for (const ln of rows) { await wait(60); ln.classList.add('on'); if (!speedUp()) sound('line'); await wait(360); }
+    await wait(40); tl.classList.add('on'); sound('total');
     await wait(500);
-    const r = $('rank'); r.textContent = rank; r.classList.add('on');
+    r.classList.add('on'); sound('rank');
     await wait(450);
-    $('res-new').hidden = !isNew;
-    $('res-menu').hidden = false;
+    if (isNew) { $('res-new').classList.remove('reserve'); sound('record'); } else $('res-new').hidden = true;
+    $('res-menu').classList.remove('reserve');
   }
 }
 export { fmt };

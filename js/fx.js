@@ -31,7 +31,7 @@ function frameFn(i, u, v) {
     case F.GLOW: { const g = Math.exp(-r * r * 4.5); return [g, Math.exp(-r * r * 22) * 0.6, g]; }
     case F.ORB: {
       const body = smooth(1.0, 0.55, r) * 0.9 + Math.exp(-r * r * 6) * 0.35;
-      const core = smooth(0.52, 0.3, r);
+      const core = smooth(0.38, 0.2, r);
       return [sat(body), core, sat(body + core)];
     }
     case F.STREAK: {
@@ -78,7 +78,9 @@ function getAtlas() {
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
         const u = ((x + 0.5) / S) * 2 - 1, v = ((y + 0.5) / S) * 2 - 1;
-        const [b, c, a] = frameFn(f, u, v);
+        const [b0, c0, a0] = frameFn(f, u, v);
+        const w = smooth(1.0, 0.8, Math.hypot(u, v)); // radial window: no straight quad edges
+        const b = b0 * w, c = c0 * w, a = a0 * w;
         const k = ((oy + y) * cv.width + ox + x) * 4;
         img.data[k] = Math.round(sat(b) * 255);
         img.data[k + 1] = Math.round(sat(c) * 255);
@@ -125,7 +127,7 @@ void main() {
   gl_Position = projectionMatrix * mvPosition;
   float f = iMisc.y;
   vec2 cell = vec2(mod(f, uGrid.x), uGrid.y - 1.0 - floor(f / uGrid.x));
-  vUv = (uv + cell) / uGrid;
+  vUv = (uv * (1.0 - 2.0 / 128.0) + 1.0 / 128.0 + cell) / uGrid; // 1-texel inset: no bleeding between cells
   vColor = iColor;
   vCore = iMisc.w;
   #include <fog_vertex>
@@ -181,6 +183,7 @@ export class SpriteBatch {
     geo.setAttribute('iMisc', this.aMisc);
     geo.instanceCount = 0;
     this.geo = geo;
+    this.attrs = [[this.aPos, 3], [this.aScale, 2], [this.aColor, 4], [this.aMisc, 4]];
     const uniforms = THREE.UniformsUtils.merge([fog ? THREE.UniformsLib.fog : {}, {
       uMap: { value: getAtlas() }, uGrid: { value: new THREE.Vector2(4, 2) }, uCore: { value: core },
     }]);
@@ -209,7 +212,7 @@ export class SpriteBatch {
     const n = this.count;
     this.geo.instanceCount = n;
     if (n === 0) return;
-    for (const [a, size] of [[this.aPos, 3], [this.aScale, 2], [this.aColor, 4], [this.aMisc, 4]]) {
+    for (const [a, size] of this.attrs) {
       a.clearUpdateRanges(); a.addUpdateRange(0, n * size); a.needsUpdate = true;
     }
   }
@@ -389,17 +392,17 @@ export class Debris {
 // ---------------------------------------------------------------------------
 const rnd = (a, b) => a + Math.random() * (b - a);
 const WHITE_HOT = [2.4, 1.7, 0.9, 1];
-const FIRE_A = [2.5, 1.0, 0.25, 1];
-const FIRE_B = [1.2, 0.18, 0.05, 0];
-const SMOKE_A = [0.22, 0.2, 0.2, 0.55];
-const SMOKE_B = [0.12, 0.11, 0.11, 0];
+const FIRE_A = [1.3, 0.38, 0.07, 1];
+const FIRE_B = [0.5, 0.07, 0.02, 0];
+const SMOKE_A = [0.10, 0.09, 0.085, 0.9];
+const SMOKE_B = [0.09, 0.085, 0.08, 0];
 
 export class FX {
   constructor(scene) {
     this.scene = scene;
     this.smoke = new SpriteBatch(900, { additive: false, depthTest: true, renderOrder: 2, fog: false });
-    this.addGround = new SpriteBatch(1200, { additive: true, depthTest: true, renderOrder: 3 });
-    this.addAir = new SpriteBatch(2400, { additive: true, depthTest: false, renderOrder: 8 });
+    this.addGround = new SpriteBatch(1200, { additive: true, depthTest: true, renderOrder: 3, core: 0.7 });
+    this.addAir = new SpriteBatch(2400, { additive: true, depthTest: false, renderOrder: 8, core: 0.7 });
     this.underlay = new SpriteBatch(900, { additive: false, depthTest: false, renderOrder: 9 });
     this.bullets = new SpriteBatch(1400, { additive: true, depthTest: false, renderOrder: 10, core: 1.6 });
     for (const b of [this.smoke, this.addGround, this.addAir, this.underlay, this.bullets]) scene.add(b.mesh);
@@ -431,7 +434,7 @@ export class FX {
     const scroll = ground;
     const p = this.p;
     // flash
-    p.emit(x, y + 0.3, z, 0, 0, 0, 0.13, 1.0 * size, 2.3 * size, WHITE_HOT, [1.6, 0.6, 0.2, 0], F.GLOW, layer, { scroll });
+    p.emit(x, y + 0.3, z, 0, 0, 0, 0.13, 1.0 * size, 1.6 * size, WHITE_HOT, [1.6, 0.6, 0.2, 0], F.GLOW, layer, { scroll });
     p.emit(x, y + 0.3, z, 0, 0, 0, 0.18, 0.6 * size, 3.0 * size, [1.3, 0.9, 0.55, 0.8], [0.8, 0.3, 0.1, 0], F.FLARE, layer, { scroll, vrot: 3 });
     // fireballs
     const nf = Math.round((5 + 5 * size) * q);
@@ -454,7 +457,7 @@ export class FX {
     for (let i = 0; i < nm; i++) {
       const a = Math.random() * 6.283, sp = rnd(0.5, 2.2) * Math.sqrt(size);
       p.emit(x + rnd(-0.4, 0.4) * size, y - 0.2, z + rnd(-0.4, 0.4) * size, Math.cos(a) * sp, rnd(0.3, 1.2), Math.sin(a) * sp,
-        rnd(0.9, 1.6) * (0.8 + size * 0.2), rnd(0.8, 1.2) * size, rnd(2.2, 3.4) * size,
+        rnd(1.4, 2.4) * (0.8 + size * 0.2), rnd(0.8, 1.2) * size, rnd(2.2, 3.4) * size,
         SMOKE_A, SMOKE_B, F.SMOKE, 2, { scroll: true, drag: 1.5, vrot: rnd(-0.8, 0.8) });
     }
     if (size >= 1.4) {
@@ -504,10 +507,12 @@ export class FX {
   }
   splash(x, y, z, size = 2) {
     const p = this.p;
+    const k = Math.min(size, 3.5);
     for (let i = 0; i < 26; i++) {
       const a = Math.random() * 6.283, sp = rnd(1, 5) * size * 0.5;
-      p.emit(x + Math.cos(a) * size * 0.4, y, z + Math.sin(a) * size * 0.4, Math.cos(a) * sp, rnd(4, 11), Math.sin(a) * sp,
-        rnd(0.8, 1.4), rnd(0.5, 1.0) * size * 0.5, rnd(1.4, 2.2) * size * 0.5, [0.85, 0.92, 1.0, 0.8], [0.8, 0.9, 1, 0], F.SMOKE, 2,
+      const s1 = rnd(1.4, 2.2) * k * 0.5;
+      p.emit(x + Math.cos(a) * size * 0.4, y + 0.4 * s1, z + Math.sin(a) * size * 0.4, Math.cos(a) * sp, rnd(4, 11), Math.sin(a) * sp,
+        rnd(0.6, 1.0), rnd(0.5, 1.0) * k * 0.5, s1, [0.85, 0.92, 1.0, 0.5], [0.8, 0.9, 1, 0], F.SMOKE, 2,
         { scroll: true, grav: 14, drag: 0.6 });
     }
     p.emit(x, y + 0.05, z, 0, 0, 0, 1.4, size, size * 5, [1.2, 1.4, 1.6, 0.8], [0.4, 0.5, 0.6, 0], F.RING, 1, { flat: true, rot: 0, scroll: true, drag: 0 });

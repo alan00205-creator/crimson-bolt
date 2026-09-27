@@ -69,6 +69,7 @@ async function boot() {
   renderer.setClearColor(0x0b1320, 1);
   viewEl.prepend(renderer.domElement);
   renderer.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); if (state === 'playing') pause(); });
+  renderer.domElement.addEventListener('webglcontextrestored', () => { needsRender = true; });
 
   scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0x9fc4e0, 60, 140);
@@ -107,8 +108,9 @@ async function precompile() {
   const shown = [];
   game.forEachPooled((o) => { o.mesh.visible = true; o.mesh.position.set(0, 0, -10); shown.push(o); });
   try {
-    if (renderer.compileAsync) await renderer.compileAsync(scene, camera);
-    else renderer.compile(scene, camera);
+    const compile = async () => { if (renderer.compileAsync) await renderer.compileAsync(scene, camera); else renderer.compile(scene, camera); };
+    world.setQuality('low'); await compile();
+    world.setQuality(qualityLevel === 0 ? 'low' : 'high'); await compile();
     render();
   } catch (err) { console.warn('precompile', err); }
   for (const o of shown) { o.mesh.visible = false; if (o.shadow) o.shadow.visible = false; }
@@ -132,8 +134,7 @@ function applyQuality(initial = false) {
   if (settings.quality === 'high') qualityLevel = 2;
   else if (settings.quality === 'low') qualityLevel = 0;
   else if (initial) qualityLevel = isTouch ? 1 : 2;
-  const dprCap = qualityLevel === 2 ? 2 : qualityLevel === 1 ? 1.5 : 1;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
+  setPixelRatio();
   world.setQuality(qualityLevel === 0 ? 'low' : 'high');
   fx.setQuality(qualityLevel === 0 ? 'low' : 'high');
   resize();
@@ -150,12 +151,17 @@ function trackPerf(rawDt) {
     const avg = perf.acc / perf.frames;
     perf.acc = 0; perf.frames = 0;
     if (avg > 1 / 48) perf.strikes++; else perf.strikes = 0;
-    if (perf.strikes >= 2) { qualityLevel--; perf.strikes = 0; applyQualityLevel(); }
+    const calm = state === 'title' || (game.eb.n < 15 && !game.boss && game.phase === 'stage');
+    if (perf.strikes >= 2 && calm) { qualityLevel--; perf.strikes = 0; applyQualityLevel(); }
   }
 }
-function applyQualityLevel() {
-  const dprCap = qualityLevel === 2 ? 2 : qualityLevel === 1 ? 1.5 : 1;
+function setPixelRatio() {
+  const dprCap = qualityLevel === 2 ? 2 : qualityLevel === 1 ? 1.25 : 1;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
+  if (composer) composer.setPixelRatio(renderer.getPixelRatio()); // the bloom path renders at the same resolution
+}
+function applyQualityLevel() {
+  setPixelRatio();
   world.setQuality(qualityLevel === 0 ? 'low' : 'high');
   fx.setQuality(qualityLevel === 0 ? 'low' : 'high');
   resize();
@@ -182,7 +188,7 @@ function resize() {
   // keep the jet clear of the bottom HUD (lives/weapon/bomb button) and the thumb
   view.bottomPx = (isTouch ? 158 : 60) + (safeProbe.offsetHeight || 0); // touch: stay above the joystick
   view.fit(W, H);
-  if (isPortraitBlocked() && state === 'playing') pause();
+  if (isPortraitBlocked() && (state === 'playing' || state === 'resuming')) pause();
 }
 window.addEventListener('resize', () => { resize(); });
 if (landscapeLock.addEventListener) landscapeLock.addEventListener('change', () => resize());
@@ -238,15 +244,22 @@ function frame(now) {
   } else if (state === 'results' || state === 'gameover') {
     world.update(rawDt, 3);
     fx.update(rawDt, game.GROUND_Y, 3);
-    if (state === 'results' && (input.take('confirm') || input.take('tap'))) { speedTally = true; }
+    if (state === 'results' && $('res-menu').classList.contains('reserve') && (input.take('confirm') || input.take('tap') || input.take('padConfirm'))) { speedTally = true; }
   } else if (state === 'paused') {
     if (input.take('pause')) { if (panelOpen()) closePanel(); else resume(); }
+  } else if (state === 'resuming') {
+    resumeT -= rawDt;
+    const n = Math.max(1, Math.ceil(resumeT / 0.3));
+    if (n !== resumeShown) { resumeShown = n; ui.banner(`<div class="h">${n}</div>`, 'count', 0); audio.play('select', { vol: 0.5 }); }
+    if (input.take('pause')) { state = 'paused'; ui.clearBanner(); ui.only('pause'); focusFirst('pause'); }
+    else if (resumeT <= 0) finishResume();
   }
-  if (state !== 'playing') input.clearEdges();
+  if (state !== 'playing') { menuNav(); input.clearEdges(); }
 
   shake.update(rawDt);
   camera.position.set(view.C.x + shake.x, view.C.y + shake.y, view.C.z + shake.z);
   if (state === 'playing' || state === 'title' || state === 'results' || state === 'continue' || state === 'gameover') game.draw();
+  else if (state === 'resuming' || (state === 'paused' && needsRender)) game.draw(false); // frozen frame keeps its bullets
   fx.end();
   ui.updatePopups(rawDt);
   ui.updateFlash(rawDt, reducedMotion);
@@ -254,6 +267,19 @@ function frame(now) {
   if (state !== 'paused' || needsRender) { render(); needsRender = false; }
 }
 let needsRender = true;
+let resumeT = 0, resumeShown = 0;
+
+// Gamepad menu navigation: D-pad/stick moves focus, A activates, B goes back.
+function menuNav() {
+  const up = input.take('navUp'), down = input.take('navDown'), ok = input.take('padConfirm'), back = input.take('padBack');
+  if (!up && !down && !ok && !back) return;
+  const btns = [...document.querySelectorAll('.screen:not([hidden]) .btn')].filter((b) => b.offsetParent !== null);
+  if (!btns.length) return;
+  const i = btns.indexOf(document.activeElement);
+  if (up || down) { const n = i < 0 ? 0 : (i + (down ? 1 : -1) + btns.length) % btns.length; btns[n].focus({ preventScroll: false }); audio.play('select', { vol: 0.4 }); }
+  if (ok) (i >= 0 ? btns[i] : btns[0]).click();
+  if (back) { const b = document.querySelector('.screen:not([hidden]) [data-act="back"], .screen:not([hidden]) [data-act="resume"]'); if (b) b.click(); }
+}
 
 function updateHud() {
   const g = game, p = g.player;
@@ -281,6 +307,7 @@ function closePanel() { audio.play('select'); ui.only(backTo); focusFirst(backTo
 
 function toTitle(first = false) {
   state = 'title';
+  audio.setMusicDuck(1);
   pendingContinue = -1;
   game.clearField();
   game.resetRun();
@@ -300,6 +327,7 @@ function toTitle(first = false) {
 }
 function startGame(loop = 1, keepScore = false) {
   audio.init();
+  audio.setMusicDuck(1);
   pendingContinue = -1;
   game.resetRun({ keepScore, loop });
   state = 'playing';
@@ -324,7 +352,8 @@ function startGame(loop = 1, keepScore = false) {
   input.consumeDrag();
 }
 function pause() {
-  if (state !== 'playing') return;
+  if (state !== 'playing' && state !== 'resuming') return;
+  ui.clearBanner();
   state = 'paused';
   input.releaseStick();
   document.querySelectorAll('#pause [data-armed="1"]').forEach((b) => { b.dataset.armed = ''; restoreLabel(b); });
@@ -337,11 +366,17 @@ function pause() {
 function resume() {
   if (state !== 'paused') return;
   if (isPortraitBlocked()) return;
-  state = 'playing';
-  if (game.player.alive) game.player.invuln = Math.max(game.player.invuln, 1.0); // a moment to get the thumb back
+  // short 3-2-1 so the thumb can get back to the joystick before the action restarts
+  state = 'resuming';
+  resumeT = 0.9; resumeShown = 0;
   ui.only();
   audio.setMusicDuck(1);
   audio.resume();
+  input.clearEdges();
+}
+function finishResume() {
+  state = 'playing';
+  ui.clearBanner();
   input.clearEdges();
   input.consumeDrag();
   last = performance.now();
@@ -361,13 +396,15 @@ function continueYes() {
   game.continueRun();
   state = 'playing';
   ui.only();
-  audio.music(game.phase === 'boss' ? 'boss' : 'stage');
+  const tr = { boss: 'boss', warning: null, bossdead: null, clear: null }[game.phase];
+  audio.music(tr === undefined ? 'stage' : tr);
   audio.play('confirm');
   input.clearEdges();
   input.consumeDrag();
 }
 function gameOver() {
   state = 'gameover';
+  audio.setMusicDuck(1);
   const isNew = saveHi();
   $('go-score').textContent = fmt(game.score);
   $('go-hi').textContent = fmt(hiScore);
@@ -421,7 +458,13 @@ async function showResults() {
   ];
   const zh = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
   $('next-label').textContent = `第${zh[g.loop + 1] || g.loop + 1}輪・難度提升`;
-  await ui.tally(lines, g.score, rank, isNew, () => speedTally);
+  audio.setMusicDuck(1);
+  await ui.tally(lines, g.score, rank, isNew, () => speedTally, (kind) => {
+    if (kind === 'line') audio.play('select', { vol: 0.5 });
+    else if (kind === 'total') audio.play('confirm');
+    else if (kind === 'rank') audio.play('powerup');
+    else if (kind === 'record') audio.play('oneup');
+  });
   focusFirst('results');
 }
 
@@ -536,16 +579,17 @@ function bindUI() {
   $('set-sfx').addEventListener('change', () => audio.play('item'));
 
   window.addEventListener('popstate', () => {
-    if (state === 'playing') { pause(); try { history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ } }
+    if (state === 'playing' || state === 'resuming') { pause(); try { history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ } }
     else if (panelOpen()) { closePanel(); try { history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ } }
   });
   window.addEventListener('pagehide', () => { if (game.score > 0) saveHi(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { if (state === 'playing') pause(); if (state === 'paused' && game.score > 0) saveHi(); audio.suspend(); }
+    if (document.hidden) { if (state === 'playing' || state === 'resuming') pause(); if (state === 'paused' && game.score > 0) saveHi(); audio.suspend(); }
     else if (state !== 'paused') audio.resume();
   });
-  window.addEventListener('blur', () => { if (state === 'playing') pause(); });
+  window.addEventListener('blur', () => { if (state === 'playing' || state === 'resuming') pause(); });
 }
+let lastQualitySetting = settings.quality;
 function applySettings() {
   const setSeg = (id, v) => { for (const b of $(id).querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === String(v))); };
   setSeg('set-quality', settings.quality);
@@ -560,6 +604,8 @@ function applySettings() {
   const prev = qualityLevel;
   if (settings.quality === 'high') qualityLevel = 2;
   else if (settings.quality === 'low') qualityLevel = 0;
+  else if (settings.quality === 'auto' && lastQualitySetting !== 'auto') { qualityLevel = isTouch ? 1 : 2; perf = { acc: 0, frames: 0, window: 0, strikes: 0 }; }
+  lastQualitySetting = settings.quality;
   if (renderer && prev !== qualityLevel) applyQualityLevel();
   store.set('settings', settings);
 }

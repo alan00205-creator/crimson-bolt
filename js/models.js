@@ -896,8 +896,8 @@ function buildTankHull() {
   }, EN.oliveDk, EN.oliveDk);
   // fenders over tracks (front/back mud guards)
   for (const s of [-1, 1]) {
-    b.block({ x: 0.5 * s, y: 0.3, z: -0.72, w: 0.32, d: 0.2, h: 0.03, top: EN.sand, side: EN.sandDk });
-    b.block({ x: 0.5 * s, y: 0.3, z: 0.74, w: 0.32, d: 0.16, h: 0.03, top: EN.sand, side: EN.sandDk });
+    b.block({ x: 0.5 * s, y: 0.3, z: -0.72, w: 0.32, d: 0.2, h: 0.03, top: EN.oliveDk, side: EN.sandDk });
+    b.block({ x: 0.5 * s, y: 0.3, z: 0.74, w: 0.32, d: 0.16, h: 0.03, top: EN.oliveDk, side: EN.sandDk });
   }
   // engine deck grille + hazard stripes
   for (let k = 0; k < 4; k++) b.decal([[-0.22, 0.392, 0.42 + k * 0.07], [0.22, 0.392, 0.42 + k * 0.07], [0.22, 0.392, 0.45 + k * 0.07], [-0.22, 0.392, 0.45 + k * 0.07]], EN.gunXDk);
@@ -913,10 +913,10 @@ function buildTankTurret() {
   const t0 = b.n;
   b.loft([ring(-0.36, 0.2, 0.12), ring(-0.26, 0.3, 0.2), ring(0.22, 0.32, 0.21), ring(0.36, 0.26, 0.16)], (i, j) => {
     if (j === 0) return null;
-    if (j === 3) return EN.sand;
-    if (j === 2 || j === 4) return i === 1 ? EN.sandLt : EN.sandDk;
-    return EN.sandDk;
-  }, EN.sandDk, EN.sandDk);
+    if (j === 3) return EN.olive;                                // dark olive top reads on tan dirt lanes
+    if (j === 2 || j === 4) return i === 1 ? EN.sandLt : EN.oliveDk; // thin light rim
+    return EN.oliveDk;
+  }, EN.oliveDk, EN.oliveDk);
   const t1 = b.n;
   // barrel with muzzle brake
   b.lathe([0, 0.1, -0.3], [0, 0, -1], [[0, 0.062], [0.06, 0.05], [0.62, 0.042], [0.62, 0.058], [0.74, 0.058], [0.74, 0.03]], 6,
@@ -1983,8 +1983,7 @@ export function createItem(kind) {
       ud.subKind = 'H';
       ud.setKind = (k) => {
         ud.subKind = k === 'N' ? 'N' : 'H'; setHue(ud.subKind);
-        letter.material.map = ud.subKind === 'N' ? texN : texH;
-        mat.color.set('#ffffff');
+        letter.material.map = ud.subKind === 'N' ? texN : texH; // body keeps its green/purple hue
       };
       ud.setKind('H');
       spin = (dt) => { mesh.rotation.x += dt * 3.2; };
@@ -2004,7 +2003,7 @@ export function createItem(kind) {
       setHue('medal');
       haloK = 0.34;
       halo.scale.setScalar(1.35);
-      spin = (dt) => { mesh.rotation.z += dt * 4.2; };
+      spin = (dt, t) => { mesh.rotation.z = Math.sin(t * 3 + phase) * 1.0; }; // wobble, never edge-on
       pivot.rotation.x = 0.33;          // face the camera
       break;
     }

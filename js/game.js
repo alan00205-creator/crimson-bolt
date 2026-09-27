@@ -137,7 +137,7 @@ const EXTENDS = [300000, 1000000];
 const BK = { ORB: 0, BIG: 1, NEEDLE: 2, MINE: 3 };
 const B_RADIUS = [0.2, 0.36, 0.17, 0.4];
 const B_SIZE = [0.66, 1.08, 0.34, 1.2];
-const B_COLOR = [[2.6, 0.42, 1.3], [2.9, 1.15, 0.25], [2.4, 0.45, 2.3], [3.0, 0.55, 0.18]];
+const B_COLOR = [[1.5, 0.16, 0.75], [1.7, 0.55, 0.08], [1.3, 0.2, 1.4], [1.8, 0.25, 0.06]]; // saturated, lightly HDR
 
 // Player shot kinds
 const SK = { VULCAN: 0, LASER: 1, HOMING: 2, NUKE: 3 };
@@ -361,6 +361,7 @@ export class Game {
     if (kind === 'P' && ud.setColor) ud.setColor(it.color);
     if (kind === 'S' && ud.setKind) ud.setKind(it.sub);
     it.mesh.position.set(x, 0.2, z);
+    it.mesh.scale.setScalar(kind === 'medal' ? 1.3 : 1.5); // readable at phone size
     this.items.push(it);
     return it;
   }
@@ -405,6 +406,7 @@ export class Game {
   // Debug: skip timeline events before distance d.
   skipTo(d) { let i = 0; while (i < TIMELINE.length && TIMELINE[i].d < d) i++; this.tlIndex = i; }
   runTimeline() {
+    if (this.phase === 'midboss') return; // the city waits for the siege tank
     const d = this.world.distance;
     while (this.tlIndex < TIMELINE.length && TIMELINE[this.tlIndex].d <= d) {
       const ev = TIMELINE[this.tlIndex++];
@@ -612,7 +614,7 @@ export class Game {
         if (p.alive) ps.x[i] += (p.x - ps.x[i]) * Math.min(1, dt * 16) * f;
       } else if (k === SK.HOMING) {
         let tg = ps.target[i];
-        if (!tg || !tg.alive || (tg.part && tg.part.dead)) { tg = this.findTarget(ps.x[i], ps.z[i]); ps.target[i] = tg; }
+        if (!tg || !tg.alive || tg.dying || (tg.part && tg.part.dead)) { tg = this.findTarget(ps.x[i], ps.z[i]); ps.target[i] = tg; }
         const sp = Math.min(26, Math.hypot(ps.vx[i], ps.vz[i]) + 40 * dt);
         let ang = Math.atan2(ps.vx[i], ps.vz[i]);
         let want = Math.PI; // straight up
@@ -653,7 +655,7 @@ export class Game {
     }
     if (!best) return null;
     // store a lightweight handle that tracks the enemy/part
-    return best.part ? { part: best.part, get alive() { return !this.part.dead; }, get x() { return this.part.x; }, get z() { return this.part.z; } }
+    return best.part ? { part: best.part, e: best.e, get alive() { return !this.part.dead && this.e.alive && !this.e.dying; }, get x() { return this.part.x; }, get z() { return this.part.z; } }
       : best.e;
   }
 
@@ -677,7 +679,7 @@ export class Game {
   bombHit(amount) {
     const v = this.view;
     for (const e of this.enemies) {
-      if (!e.alive || !v.onScreen(e.x, e.z, 1)) continue;
+      if (!e.alive || e.dying || !v.onScreen(e.x, e.z, 1)) continue;
       if (e.parts && e.parts.length) {
         const mul = e.def.boss ? 0.45 : 1;
         for (const pt of e.parts) if (!pt.dead && !(pt.core && e.armored)) this.damagePart(e, pt, amount * mul, true);
@@ -787,7 +789,7 @@ export class Game {
     if (e.hp <= 0) this.killEnemy(e, fromBomb);
   }
   damagePart(e, pt, dmg, fromBomb = false) {
-    if (pt.dead || !e.alive) return;
+    if (pt.dead || !e.alive || e.dying) return;
     pt.hp -= dmg;
     pt.flash = 0.45;
     if (pt.hp <= 0) {
@@ -927,7 +929,11 @@ export class Game {
               const dx = t.x - x, dz = t.z - z;
               if (dx * dx + dz * dz < 2.6) { if (t.part) this.damagePart(t.e, t.part, 1.5); else this.damageEnemy(t.e, 1.5); }
             }
-          } else if (kind === SK.LASER) this.fx.hitSpark(x, 0.1, z - 0.2, 0.4, 0.9, 1.0, 1);
+          } else if (kind === SK.LASER) {
+            this.fx.hitSpark(x, 0.1, z - 0.2, 0.4, 0.9, 1.0, 2);
+            const lv = this.player.level;
+            this.fx.p.emit(x, 0.12, z, 0, 0, 0, 0.06, 0.7 + 0.1 * lv, 1.1 + 0.12 * lv, [0.8, 2.0, 3.0, 1], [0.3, 0.8, 1.5, 0], F.FLARE, 0, { drag: 0 });
+          }
           else this.fx.hitSpark(x, 0.1, z, 1.0, 0.75, 0.35, kind === SK.VULCAN ? 1 : 3);
           this.audio.play('hit', { vol: 0.35 });
         }
@@ -951,7 +957,7 @@ export class Game {
         this.killPlayer();
         return;
       }
-      if (!b.grazed[j] && d2 < (grazeR + br) * (grazeR + br)) {
+      if (!b.grazed[j] && p.invuln <= 0 && d2 < (grazeR + br) * (grazeR + br)) {
         b.grazed[j] = 1;
         this.stats.grazes++;
         this.addScore(100);
@@ -1082,7 +1088,7 @@ export class Game {
   }
 
   // --- rendering of bullets/shots (called every frame after update) --------------------------
-  draw() {
+  draw(emit = true) {
     const fx = this.fx, ps = this.ps, b = this.eb, t = this.time;
     // player shots
     for (let i = 0; i < ps.n; i++) {
@@ -1116,20 +1122,20 @@ export class Game {
       if (k === BK.NEEDLE) {
         const rot = flatRot(b.vx[i], b.vz[i]);
         fx.underlay.push(x, 0.05, z, 0.55, 1.3, rot, F.GLOW, 1, 0.05, 0.0, 0.06, 0.7);
-        fx.bullets.push(x, 0.1, z, 0.42 * birth, 1.15 * birth, rot, F.STREAK, 1, c[0], c[1], c[2], 1);
+        fx.bullets.push(x, 0.1, z, 0.42 * birth, 1.15 * birth, rot, F.STREAK, 1, c[0], c[1], c[2], 1, 0.4);
       } else {
         const s = B_SIZE[k] * (0.4 + 0.6 * birth) * (k === BK.MINE ? 1 + Math.sin(t * 14 + i) * 0.12 : 1);
         fx.underlay.push(x, 0.05, z, s * 1.45, s * 1.45, 0, F.GLOW, 0, 0.06, 0.0, 0.07, 0.75);
-        fx.bullets.push(x, 0.1, z, s, s, 0, F.ORB, 0, c[0], c[1], c[2], 1);
+        fx.bullets.push(x, 0.1, z, s, s, 0, F.ORB, 0, c[0], c[1], c[2], 1, 0.45);
       }
     }
     // hitbox core: always visible while alive
     if (p.alive && this.phase !== 'clear') {
-      const pulse = 0.5 + Math.sin(t * 10) * 0.08;
-      fx.bullets.push(p.x, 0.2, p.z, pulse, pulse, 0, F.ORB, 0, 2.6, 1.8, 2.2, p.invuln > 0 ? 0.5 : 0.9);
+      const pulse = 0.3 + Math.sin(t * 10) * 0.04;
+      fx.bullets.push(p.x, 0.2, p.z, pulse, pulse, 0, F.ORB, 0, 1.8, 0.4, 0.9, p.invuln > 0 ? 0.5 : 0.85, 0.4);
     }
     // engine trail
-    if (p.alive && p.mesh.visible && Math.random() < 0.7) fx.trail(p.x + rnd(-0.18, 0.18), 0.05, p.z + 0.95, 2.6, 1.1, 0.35, 0.45, 0.22, 0.2);
+    if (emit && p.alive && p.mesh.visible && Math.random() < 0.7) fx.trail(p.x + rnd(-0.18, 0.18), 0.05, p.z + 0.95, 2.6, 1.1, 0.35, 0.45, 0.22, 0.2);
   }
 }
 

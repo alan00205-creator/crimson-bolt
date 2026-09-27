@@ -288,8 +288,8 @@ function crawlerAI() {
         pt.fireT = 1.7 / g.diff.fr;
         if (!g.canFire(e)) continue;
         const m = g.muzzlePos(pt.obj);
-        const a = g.aim(m.x, m.z);
-        for (let i = 0; i < 3; i++) g.later(i * 0.09, () => g.shoot(m.x, m.z, a, 9.5, g.BK.NEEDLE));
+        const mx = m.x, mz = m.z, a = g.aim(mx, mz); // copy: muzzlePos returns a shared scratch object
+        for (let i = 0; i < 3; i++) g.later(i * 0.09, () => { if (!pt.dead && e.alive && !e.dying) g.shoot(mx, mz, a, 9.5, g.BK.NEEDLE); });
       }
     }
   };
@@ -336,7 +336,7 @@ function bossAI() {
         for (let i = 0; i < 16; i++) g.dropItem('medal', e.x + rnd(-5, 5), e.z + rnd(-3, 3));
       }
       if (s.dieT > 3.4) {
-        g.fx.splash(v.pToGx(e.x), g.GROUND_Y, v.pToGz(e.z), 8);
+        for (const dx of [-4, 0, 4]) g.fx.splash(v.pToGx(e.x + dx), g.GROUND_Y, v.pToGz(e.z + rnd(-1, 1)), 3.5);
         e.alive = false;
         g.ui.boss(false);
       }
@@ -507,7 +507,7 @@ at(530, (g) => W.cross(g, [1, -1, 1]));
 at(546, (g) => { W.vee(g, -2); W.turrets(g, [0, 2]); });
 at(560, (g) => W.carrier(g, 2, ['P']));
 at(572, (g) => { W.rise(g, 1); g.later(0.5, () => W.rise(g, -1)); });
-at(MIDBOSS_AT, (g) => { g.phase = 'midboss'; g.scrollTarget = 1.3; g.onEvent('midboss'); spawnMidboss(g); });
+at(MIDBOSS_AT, (g) => { g.phase = 'midboss'; g.scrollTarget = 1.0; g.onEvent('midboss'); spawnMidboss(g); });
 // CITY ──────────────────────────────────────────────
 at(644, (g) => W.cross(g, [1, 1]));
 at(652, (g) => { W.swoop(g, -1); g.later(0.9, () => W.swoop(g, 1)); });

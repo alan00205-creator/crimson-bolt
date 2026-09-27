@@ -14,12 +14,17 @@
 //   • A feature at stage position d is drawn at z = distance − d (see CONTRACT.md).
 //   • Water is ONE static plane with a ShaderMaterial. Its shape comes from a ring-buffer
 //     DataTexture ("mask", 128×512 texels = 80×320 units) that each chunk writes when it
-//     is built: terrain height (shore foam, shallows), wake foam and "calm water".
+//     is built: terrain height (shore foam, shallows), wake foam and "calm water". The waves
+//     are a directional, sharpened-crest spectrum (3 layers) lit from the sun side, with a
+//     narrow sun path of glitter; all frequencies are commensurate with the 256-unit stage
+//     wrap and the 1000 s time wrap, so the sea never jumps (see the note above WATER_FRAG).
 //   • Low clouds (and their shadows) are an instanced layer at y≈−2 that scrolls ~30%
-//     faster than the ground. Radar dishes and wind-turbine rotors are instanced spinners.
+//     faster than the ground; soft billowed cumulus, self-shadowed toward the sun. Radar
+//     dishes and wind-turbine rotors are instanced spinners. Both run on an unbounded clock.
 //   • Time of day (sun/hemi colours, fog, water and cloud tint) is keyed on distance.
 //     The sun's DIRECTION never changes (core fakes aircraft shadows with a fixed offset);
 //     the water glint uses its own "glint direction" so the sun path is on screen.
+//   • update() creates no objects: per-frame scalars go into Vector uniforms / typed arrays.
 //   • The chunk ahead of the view is built in three slices (ground / props / water mask)
 //     on consecutive frames, so no single frame pays for a whole chunk.
 //   • Every prop taller than 0.25 is self-checked against the clear zones and the height
@@ -28,6 +33,9 @@
 // Rules this module guarantees (see CONTRACT.md):
 //   • nothing solid above y = −1.8;  • lanes x∈LANES_X±1 and cross roads (d≡20 mod 40,
 //     width 3) are clear of anything taller than 0.25 in land biomes (from d≥330);
+//   • the mid-boss path (|x| < 4.6, d 570–780, see CRAWLER) is clear the same way;
+//   • ocean islands keep their land at |x| ≥ 8.2 (contract: > 7; core sails gunboats at ±7),
+//     decorative ships keep their hulls at |x| ≥ 8.4;
 //   • ≤ 5 generated textures (atlas 512², noise 256², waves 256², mask 128×512, clouds 256²).
 // =============================================================================
 import * as THREE from 'three';

@@ -9,6 +9,8 @@ export class Input {
     this.dragDX = 0; this.dragDY = 0; // accumulated px since last consume
     this.touches = new Map();
     this.usingTouch = false;
+    this.tap2 = null;
+    this.dragTravel = 0; // total drag distance in px (used to retire the movement hint)
     this.pad = { x: 0, y: 0, bomb: false, pause: false, prevBomb: false, prevPause: false, prevStart: false, start: false };
     this.enabled = true;
     this._bind();
@@ -26,39 +28,52 @@ export class Input {
       const a = map[e.code];
       if (!a) return;
       if (e.target && (e.target.tagName === 'INPUT')) return;
+      // a focused button handles Enter/Space itself (native click); don't also start the game
+      if ((a === 'confirm' || e.code === 'Space') && e.target && e.target.closest && e.target.closest('button')) return;
       if (a === 'bomb' || a.startsWith('up') || a === 'down' || a === 'left' || a === 'right' || e.code === 'Space') e.preventDefault();
       if (!e.repeat) this.edges.add(a);
       this.keys.add(a);
       this.usingTouch = false;
     });
     window.addEventListener('keyup', (e) => { const a = map[e.code]; if (a) this.keys.delete(a); });
-    window.addEventListener('blur', () => { this.keys.clear(); this._endDrag(); });
+    window.addEventListener('blur', () => { this.keys.clear(); this.touches.clear(); this.tap2 = null; this._endDrag(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { this.touches.clear(); this.tap2 = null; this._endDrag(); } });
 
     const s = this.surface;
     s.addEventListener('pointerdown', (e) => {
       if (e.target.closest && e.target.closest('button, input, .panel')) return;
       if (e.pointerType === 'touch') this.usingTouch = true;
+      if (this.dragId !== null && !this.touches.has(this.dragId)) this._endDrag(); // stale drag (lost pointerup)
       this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
       if (this.dragId === null) {
         this.dragId = e.pointerId;
         this.dragLast = { x: e.clientX, y: e.clientY };
         try { s.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
       } else if (e.pointerType === 'touch' && this.touches.size === 2) {
-        // second finger tap = bomb
-        this.edges.add('bomb');
+        // second finger: a quick tap (not a resting grip at the screen edge) drops a bomb on release
+        const r = s.getBoundingClientRect();
+        if (e.clientX - r.left > 24 && r.right - e.clientX > 24) this.tap2 = { id: e.pointerId, t: performance.now(), x: e.clientX, y: e.clientY };
       }
       this.edges.add('tap');
     });
     s.addEventListener('pointermove', (e) => {
+      const tp = this.touches.get(e.pointerId);
+      if (tp) { tp.x = e.clientX; tp.y = e.clientY; }
       if (e.pointerId !== this.dragId || !this.dragLast) return;
       // coalesced events give smoother movement on high-rate touch screens
       const list = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
       const last = list && list.length ? list[list.length - 1] : e;
       this.dragDX += last.clientX - this.dragLast.x;
       this.dragDY += last.clientY - this.dragLast.y;
+      this.dragTravel += Math.abs(last.clientX - this.dragLast.x) + Math.abs(last.clientY - this.dragLast.y);
       this.dragLast.x = last.clientX; this.dragLast.y = last.clientY;
     });
     const end = (e) => {
+      const tap = this.tap2;
+      if (tap && e.pointerId === tap.id) {
+        if (e.type === 'pointerup' && performance.now() - tap.t < 300 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 16) this.edges.add('bomb');
+        this.tap2 = null;
+      }
       this.touches.delete(e.pointerId);
       if (e.pointerId === this.dragId) {
         // hand the drag over to a remaining finger, if any
@@ -73,7 +88,12 @@ export class Input {
     s.addEventListener('contextmenu', (e) => e.preventDefault());
     document.addEventListener('gesturestart', (e) => e.preventDefault());
     document.addEventListener('dblclick', (e) => e.preventDefault());
-    s.addEventListener('touchmove', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+    // block page scroll/zoom during play, but let menu panels scroll
+    s.addEventListener('touchmove', (e) => {
+      if (!e.cancelable) return;
+      if (e.target && e.target.closest && e.target.closest('.screen:not([hidden])')) return;
+      e.preventDefault();
+    }, { passive: false });
   }
   _endDrag() { this.dragId = null; this.dragLast = null; }
   get dragging() { return this.dragId !== null; }

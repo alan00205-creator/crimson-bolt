@@ -64,7 +64,7 @@ export class UI {
   setChain(chain, nextValue) {
     const key = chain >= 2 ? chain : 0;
     this.set('chain', key, (x) => {
-      document.getElementById('chain').textContent = x ? `MEDAL ×${x} · NEXT ${fmt(nextValue)}` : '';
+      document.getElementById('chain').textContent = x ? `★×${x} → ${fmt(nextValue)}` : '';
     });
   }
   hint(touch) {
@@ -72,12 +72,28 @@ export class UI {
     clearTimeout(this.hintTimer);
     h.className = '';
     h.innerHTML = touch
-      ? '<i class="finger"></i><span>在畫面任意處拖曳即可移動・射擊全自動</span>'
-      : '<span>方向鍵／WASD 移動・Shift 精準・X 投彈・自動射擊</span>';
+      ? '<svg class="finger" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V10h.5V8.5a1.5 1.5 0 0 1 3 0V10h.5V9.5a1.5 1.5 0 0 1 3 0v5.8c0 3.4-2.4 6.2-5.8 6.2h-.6c-2 0-3.5-.8-4.7-2.4L4.6 14.6a1.4 1.4 0 0 1 2.1-1.8L9 15z" fill="currentColor"/></svg><span>在畫面任意處拖曳即可移動・射擊全自動</span>'
+      : '<span>方向鍵／WASD 移動・按住 Shift 慢速移動・X 投彈・射擊全自動</span>';
     h.hidden = false;
-    this.hintTimer = setTimeout(() => { h.className = 'out'; this.hintTimer = setTimeout(() => { h.hidden = true; }, 520); }, 4200);
+    this.hintTimer = setTimeout(() => this.hideHint(true), 5200);
   }
-  hideHint() { clearTimeout(this.hintTimer); document.getElementById('hint').hidden = true; }
+  bombHint(touch) {
+    const h = document.getElementById('hint');
+    clearTimeout(this.hintTimer);
+    h.className = 'warnhint';
+    h.innerHTML = touch ? '<span>危急時按右下 <b>B</b> 投彈：清除敵彈並短暫無敵</span>' : '<span>危急時按 <b>X</b> 投彈：清除敵彈並短暫無敵</span>';
+    h.hidden = false;
+    document.getElementById('btn-bomb').classList.add('pulse');
+    this.hintTimer = setTimeout(() => { this.hideHint(true); document.getElementById('btn-bomb').classList.remove('pulse'); }, 3600);
+  }
+  hideHint(fade = false) {
+    clearTimeout(this.hintTimer);
+    const h = document.getElementById('hint');
+    if (h.hidden) return;
+    if (!fade) { h.hidden = true; return; }
+    h.classList.add('out');
+    this.hintTimer = setTimeout(() => { h.hidden = true; }, 520);
+  }
   boss(on, name) {
     this.el.bossbar.hidden = !on;
     if (name) this.el.bossName.textContent = name;
@@ -103,7 +119,7 @@ export class UI {
   warning(on) {
     clearTimeout(this.bannerTimer);
     this.el.banner.innerHTML = on
-      ? `<div class="warn"><div class="stripe"></div><div class="e">HUGE BATTLESHIP APPROACHING</div><div class="w">WARNING</div><div class="s">巨大要塞 接近中</div><div class="stripe"></div></div>`
+      ? `<div class="warn"><div class="stripe"></div><div class="e">HUGE FORTRESS APPROACHING</div><div class="w">WARNING</div><div class="s">巨大要塞 接近中</div><div class="stripe"></div></div>`
       : '';
   }
   clearBanner() { clearTimeout(this.bannerTimer); this.el.banner.innerHTML = ''; }

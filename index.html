@@ -48,9 +48,10 @@ button { font: inherit; color: inherit; }
   radial-gradient(120% 80% at 50% 110%, rgba(255, 46, 72, 0.10), transparent 60%),
   repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 28px),
   var(--void); }
-#view { position: relative; height: 100%; width: 100%; overflow: hidden; touch-action: none;
+#view { position: relative; height: 100%; width: 100%; overflow: hidden;
   background: #0b1320; box-shadow: 0 0 0 1px rgba(255,255,255,0.06), 0 0 80px rgba(0,0,0,0.8); }
-#view canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#view canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+#hud button { touch-action: none; }
 .side { position: absolute; top: 0; bottom: 0; display: none; flex-direction: column; justify-content: center;
   gap: 18px; padding: 28px; color: var(--ink-dim); font-size: 13px; letter-spacing: 0.04em; }
 .side h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.24em; color: var(--ink); font-weight: 600; }
@@ -70,11 +71,11 @@ button { font: inherit; color: inherit; }
 .hud-hi { text-align: center; }
 .hud-hi .hud-score { font-size: 15px; color: var(--amber); }
 .hud-right { display: flex; justify-content: flex-end; }
-#btn-pause { pointer-events: auto; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--panel-line);
+#btn-pause { pointer-events: auto; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--panel-line);
   background: rgba(8,10,18,0.5); display: grid; place-items: center; cursor: pointer; }
 #btn-pause i { display: flex; gap: 5px; }
 #btn-pause i::before, #btn-pause i::after { content: ""; width: 4px; height: 14px; background: var(--ink); border-radius: 1px; }
-#bossbar { position: absolute; left: 14px; right: 14px; top: calc(60px + var(--safe-t)); }
+#bossbar { position: absolute; left: 14px; right: 14px; top: calc(76px + var(--safe-t)); }
 #bossbar .name { display: flex; justify-content: space-between; font: 600 11px var(--f-display); letter-spacing: 0.28em; color: #ffb3c6; margin-bottom: 4px; }
 #bossbar .track { height: 7px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,120,170,0.5); overflow: hidden; }
 #bossbar .fill { height: 100%; width: 100%; transform-origin: left; background: linear-gradient(90deg, #ff2e7a, #ff9a3c); box-shadow: 0 0 10px #ff2e7a; transition: transform 0.12s linear; }
@@ -101,13 +102,18 @@ button { font: inherit; color: inherit; }
 #btn-bomb:active { transform: scale(0.94); }
 body:not(.touch) #btn-bomb { display: none; }
 #popups { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.chain { margin-top: 3px; font: 600 10px var(--f-display); letter-spacing: 0.14em; color: #ffd84d; min-height: 12px; text-shadow: 0 1px 0 #000; }
+.chain { margin-top: 3px; white-space: nowrap; font: 600 11px var(--f-display); letter-spacing: 0.14em; color: #ffd84d; min-height: 12px; text-shadow: 0 1px 0 #000; }
 #hint { position: absolute; left: 50%; bottom: calc(30% + var(--safe-b)); transform: translateX(-50%); pointer-events: none;
   display: flex; align-items: center; gap: 10px; padding: 9px 14px; background: rgba(6,8,14,0.72); border: 1px solid var(--panel-line);
   max-width: calc(100% - 32px); width: max-content; font: 500 13px/1.5 var(--f-cjk); letter-spacing: 0.06em; animation: hintIn 0.4s ease-out both; }
 #hint .finger { flex: 0 0 auto; }
 #hint.out { animation: hintOut 0.5s ease-in both; }
-#hint .finger { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--ink); position: relative; animation: drag 1.6s ease-in-out infinite; }
+#hint .finger { width: 22px; height: 22px; color: var(--ink); animation: drag 1.6s ease-in-out infinite; }
+#hint.warnhint { border-color: rgba(255,182,39,0.7); color: #ffe2a8; }
+#hint b { color: var(--amber); }
+#btn-bomb.pulse { animation: pulse 0.6s ease-in-out 6; }
+@keyframes pulse { 50% { transform: scale(1.14); box-shadow: 0 0 34px rgba(255,160,0,0.9), inset 0 0 14px rgba(255,140,0,0.5); } }
+body.touch .kbd-only { display: none; }
 @keyframes drag { 0%, 100% { transform: translateX(-10px); } 50% { transform: translateX(10px); } }
 @keyframes hintIn { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes hintOut { to { opacity: 0; transform: translate(-50%, 10px); } }
@@ -139,9 +145,10 @@ body:not(.touch) #btn-bomb { display: none; }
   background: radial-gradient(ellipse at center, transparent 55%, rgba(255,20,40,0.55) 100%); }
 
 /* ---------- menus ---------- */
-.screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+.screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: safe center;
+  overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain;
   gap: 22px; padding: calc(24px + var(--safe-t)) 20px calc(24px + var(--safe-b)); text-align: center; pointer-events: auto; }
-.screen.dim { background: rgba(4, 6, 12, 0.72); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.screen.dim { background: rgba(4, 6, 12, 0.8); }
 .logo { display: grid; justify-items: center; gap: 2px; animation: logoIn 1s cubic-bezier(.2,.9,.2,1) both; }
 .logo .kanji { font: 900 clamp(72px, 26vw, 118px)/0.95 var(--f-cjk); letter-spacing: 0.02em; transform: skewX(-8deg);
   background: linear-gradient(175deg, #fff 8%, #ff9aa6 32%, var(--crimson) 52%, var(--crimson-deep) 88%);
@@ -179,9 +186,19 @@ body:not(.touch) #btn-bomb { display: none; }
 .setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .setting label { font: 500 13px var(--f-cjk); }
 .seg { display: flex; border: 1px solid var(--panel-line); }
-.seg button { pointer-events: auto; padding: 7px 10px; background: transparent; border: 0; cursor: pointer; font: 600 11px var(--f-display); letter-spacing: 0.12em; color: var(--ink-dim); }
+.seg button { pointer-events: auto; min-height: 44px; min-width: 48px; padding: 0 12px; background: transparent; border: 0; cursor: pointer; font: 600 11px var(--f-display); letter-spacing: 0.12em; color: var(--ink-dim); }
 .seg button[aria-pressed="true"] { background: var(--ink); color: #0b0d14; }
-.setting input[type=range] { width: 130px; accent-color: var(--crimson); }
+.setting input[type=range] { width: 130px; height: 36px; accent-color: var(--crimson); }
+.panel > .btn[data-act=back] { position: sticky; bottom: 0; }
+.tally .ln small { white-space: nowrap; }
+@media (max-height: 640px) {
+  .screen { gap: 12px; }
+  .h-title { font-size: 28px; }
+  .rank { font-size: 44px; }
+  .big-num { font-size: 64px; }
+  .tally .ln { padding-bottom: 3px; font-size: 13px; }
+  .logo .kanji { font-size: clamp(56px, 18vw, 90px); }
+}
 .big-num { font: 700 88px/1 var(--f-display); color: var(--amber); text-shadow: 0 0 30px rgba(255,182,39,0.5); }
 .h-title { font: 700 38px/1 var(--f-display); letter-spacing: 0.14em; }
 .h-title.red { color: var(--danger); text-shadow: 0 0 24px rgba(255,59,48,0.6); }
@@ -273,11 +290,11 @@ body:not(.touch) #btn-bomb { display: none; }
       <div class="panel">
         <h2>HOW TO PLAY<small>操作說明</small></h2>
         <div><h4>TOUCH 手機</h4><ul>
-          <li>在畫面任意處按住拖曳，戰機會跟著手指的移動量移動（不必按在戰機上）。</li>
-          <li>射擊全自動。右下角 <b>B</b> 鈕投下炸彈：清除敵彈、重創全畫面敵人，並短暫無敵。</li>
+          <li>手指按住畫面任一處拖曳，戰機就會同步移動（不必壓在戰機上）。</li>
+          <li>射擊全自動。右下角 <b>B</b> 鈕投下炸彈：清除敵彈、重創全畫面敵人，並短暫無敵。也可以用第二根手指在畫面上輕點一下投彈。</li>
         </ul></div>
-        <div><h4>KEYBOARD 鍵盤</h4><ul>
-          <li>方向鍵／WASD 移動，按住 Shift 精準移動；X 或空白鍵投彈；Esc／P 暫停。也支援手把。</li>
+        <div class="kbd-only"><h4>KEYBOARD 鍵盤</h4><ul>
+          <li>方向鍵／WASD 移動，按住 Shift 慢速移動（精準閃避）；X 或空白鍵投彈；Esc／P 暫停。也支援手把。</li>
         </ul></div>
         <div><h4>ITEMS 道具</h4><ul>
           <li><span class="chip red">P</span><span class="chip blue">P</span>主武器。會紅藍交替變色：紅＝散射火神砲、藍＝雷射。吃同色升級，換色則切換武器。</li>
@@ -285,8 +302,8 @@ body:not(.touch) #btn-bomb { display: none; }
           <li><span class="chip b">B</span>炸彈 +1。<span class="chip m">★</span>勳章：連續拾取分數遞增，漏接一枚就歸零。</li>
         </ul></div>
         <div><h4>TIPS 訣竅</h4><ul>
-          <li>戰機的判定只有機身中央的小光點；擦過敵彈（擦彈）也有加分。</li>
-          <li>攜帶道具的黃色運輸機優先擊落。每 20 萬分與 60 萬分各獎勵一架。</li>
+          <li>中彈判定點只有機身中央的小光點；敵彈擦身而過（擦彈）每發 +100 分。</li>
+          <li>攜帶道具的黃色運輸機優先擊落。每達 30 萬分、100 萬分各加一架戰機。</li>
         </ul></div>
         <button class="btn primary" data-act="back">OK<span>返回</span></button>
       </div>
@@ -346,7 +363,7 @@ body:not(.touch) #btn-bomb { display: none; }
       <div class="rank" id="rank">S</div>
       <div class="badge" id="res-new" hidden>NEW RECORD</div>
       <div class="menu" id="res-menu" hidden>
-        <button class="btn primary" data-act="next">NEXT LOOP<span>第二輪・難度提升</span></button>
+        <button class="btn primary" data-act="next">NEXT LOOP<span id="next-label">第二輪・難度提升</span></button>
         <button class="btn" data-act="quit">TITLE<span>回標題</span></button>
       </div>
     </section>
@@ -358,8 +375,8 @@ body:not(.touch) #btn-bomb { display: none; }
     <div><h3>MISSION</h3><div class="row">STAGE 1 · 沿岸前線</div><div class="row">擊破巨大要塞 ARCLIGHT</div></div>
     <div><h3>SCORING</h3>
       <div class="row">勳章連鎖 500 → 10,000</div>
-      <div class="row">擦彈 +10 / 發</div>
-      <div class="row">200,000・600,000 分獎勵一機</div>
+      <div class="row">擦彈 +100 / 發</div>
+      <div class="row">300,000・1,000,000 分各加一架戰機</div>
     </div>
   </aside>
 </div>

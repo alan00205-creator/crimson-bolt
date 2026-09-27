@@ -48,6 +48,12 @@ export class View {
     this.zTop = edge(1, 0); this.zBottom = edge(-1, 0);
     this.gTop = edge(1, this.GY); this.gBottom = edge(-1, this.GY);
     this.k = this.C.y / (this.C.y - this.GY); // ground→plane scale
+    this.setBottomReserve(this.bottomPx || 60);
+  }
+  // Keep the jet above the bottom HUD / thumb zone: bottomPx is the reserved strip in CSS px.
+  setBottomReserve(bottomPx) {
+    const q = this.screenToPlane(this.w / 2, Math.max(this.h * 0.5, this.h - bottomPx), { x: 0, z: 0 });
+    this.zPlayerMax = Math.min(this.zBottom - 1.3, q.z);
   }
   depthAt(z, y = 0) { return (z - this.C.z) * this.v.z + (y - this.C.y) * this.v.y; }
   hw(z) { return this.depthAt(z) * this.tanH; }            // half-width of the visible plane at z
@@ -111,19 +117,21 @@ class Pool {
 
 // Weapon patterns --------------------------------------------------------------
 // Vulcan (red): per level, a list of [xOffset, angleDeg]. Angle 0 = straight up.
+// Forward (near-0°) streams grow 2,2,3,3,4,4,5,5 so every level adds focused damage; outer
+// streams add coverage.
 const VULCAN = [
   null,
   [[-0.2, 0], [0.2, 0]],
-  [[0, 0], [-0.3, -7], [0.3, 7]],
-  [[-0.2, 0], [0.2, 0], [-0.35, -9], [0.35, 9]],
-  [[0, 0], [-0.3, -5], [0.3, 5], [-0.4, -13], [0.4, 13]],
-  [[-0.2, 0], [0.2, 0], [-0.35, -7], [0.35, 7], [-0.45, -16], [0.45, 16]],
-  [[0, 0], [-0.3, -5], [0.3, 5], [-0.4, -12], [0.4, 12], [-0.5, -22], [0.5, 22]],
-  [[-0.2, 0], [0.2, 0], [-0.3, -6], [0.3, 6], [-0.4, -14], [0.4, 14], [-0.5, -26], [0.5, 26]],
-  [[0, 0], [-0.25, -4], [0.25, 4], [-0.35, -10], [0.35, 10], [-0.45, -19], [0.45, 19], [-0.55, -32], [0.55, 32]],
+  [[-0.2, 0], [0.2, 0], [-0.35, -8], [0.35, 8]],
+  [[-0.3, 0], [0, 0], [0.3, 0], [-0.4, -9], [0.4, 9]],
+  [[-0.3, 0], [0, 0], [0.3, 0], [-0.4, -7], [0.4, 7], [-0.5, -16], [0.5, 16]],
+  [[-0.36, -1], [-0.12, 0], [0.12, 0], [0.36, 1], [-0.45, -7], [0.45, 7], [-0.55, -17], [0.55, 17]],
+  [[-0.36, -1], [-0.12, 0], [0.12, 0], [0.36, 1], [-0.45, -6], [0.45, 6], [-0.5, -13], [0.5, 13], [-0.6, -24], [0.6, 24]],
+  [[-0.4, -1.5], [-0.2, -0.5], [0, 0], [0.2, 0.5], [0.4, 1.5], [-0.45, -7], [0.45, 7], [-0.5, -15], [0.5, 15], [-0.6, -26], [0.6, 26]],
+  [[-0.4, -1.5], [-0.2, -0.5], [0, 0], [0.2, 0.5], [0.4, 1.5], [-0.45, -6], [0.45, 6], [-0.5, -12], [0.5, 12], [-0.55, -20], [0.55, 20], [-0.6, -30], [0.6, 30]],
 ];
 export const MEDAL_VALUES = [500, 1000, 2000, 4000, 6000, 8000, 10000];
-const EXTENDS = [200000, 600000];
+const EXTENDS = [300000, 1000000];
 
 // Enemy bullet kinds
 const BK = { ORB: 0, BIG: 1, NEEDLE: 2, MINE: 3 };
@@ -242,6 +250,8 @@ export class Game {
   shoot(x, z, ang, speed, kind = BK.ORB) {
     const b = this.eb;
     if (b.n >= b.max) return -1;
+    const p = this.player;
+    if (p.alive) { const dx = p.x - x, dz = p.z - z; if (dx * dx + dz * dz < 16) return -1; } // never spawn point-blank
     const i = b.n++;
     const s = speed * this.diff.bs;
     b.x[i] = x; b.z[i] = z; b.vx[i] = Math.sin(ang) * s; b.vz[i] = Math.cos(ang) * s;
@@ -259,9 +269,11 @@ export class Game {
   canFire(e) {
     const p = this.player;
     if (!p.alive || p.entering > 0) return false;
+    if (e.def.boss || e.type === 'crawler') return true; // bosses never go quiet when hugged
     if (e.z < this.view.zTop + 0.8 || e.z > this.view.zBottom - 1) return false;
+    if (e.ground && e.z > p.z - 1.5) return false;       // ground units hold fire once level with the jet
     const dx = p.x - e.x, dz = p.z - e.z;
-    return dx * dx + dz * dz > 10;
+    return dx * dx + dz * dz > 20;
   }
   get BK() { return BK; }
 
@@ -271,7 +283,9 @@ export class Game {
   spawn(type, opts) {
     const def = ENEMY[type];
     const o = this.pools[type].get();
-    const hpMul = def.boss ? 1 : this.diff.hp;
+    const d = this.world.distance;
+    const seg = (def.boss || type === 'crawler' || type === 'dart' || type === 'carrier') ? 1 : d < 380 ? 1 : d < 640 ? 1.15 : d < 960 ? 1.3 : 1.45;
+    const hpMul = def.boss ? 1 : this.diff.hp * seg;
     const e = {
       type, def, o, mesh: o.mesh, shadow: o.shadow, ground: !def.air,
       hp: def.hp * hpMul, maxHp: def.hp * hpMul, r: def.radius, alive: true,
@@ -380,7 +394,8 @@ export class Game {
     this.world.update(dt, 5.5);
     const p = this.player;
     p.x = Math.sin(t * 0.45) * 2.4;
-    p.z = this.view.zBottom - 9 + Math.sin(t * 0.7) * 0.8;
+    const row = this.view.screenToPlane(this.view.w / 2, this.view.h * 0.84, { x: 0, z: 0 }).z;
+    p.z = row + Math.sin(t * 0.7) * 0.8;
     const bank = Math.cos(t * 0.45) * 0.45;
     p.bank = lerp(p.bank, bank, 0.1);
     this.syncPlayerMesh(dt, true);
@@ -401,7 +416,7 @@ export class Game {
     const d = this.world.distance;
     if (this.phase === 'midboss' && this.midbossDone) { this.phase = 'stage'; this.scrollTarget = 7; this.onEvent('midbossEnd'); }
     if (this.phase === 'stage' && d >= STAGE_BOSS_AT - 40 && !this.warned) {
-      this.warned = true; this.phase = 'warning'; this.warningT = 5.5;
+      this.warned = true; this.phase = 'warning'; this.warningT = 4.2;
       this.scrollTarget = 3;
       this.onEvent('warning');
     }
@@ -411,12 +426,12 @@ export class Game {
     }
     if (this.phase === 'bossdead') {
       this.clearT += dt;
-      if (this.clearT > 3.2 && !this.clearAnnounced) { this.clearAnnounced = true; this.onEvent('clearBanner'); }
-      if (this.clearT > 4.0) {
+      if (this.clearT > 4.5 && !this.clearAnnounced) { this.clearAnnounced = true; this.onEvent('clearBanner'); }
+      if (this.clearT > 5.5) {
         const p = this.player; // fly off the top
-        p.z -= (6 + (this.clearT - 4) * 30) * dt;
+        p.z -= (6 + (this.clearT - 5.5) * 30) * dt;
       }
-      if (this.clearT > 6.4 && !this.clearDone) { this.clearDone = true; this.phase = 'clear'; this.onEvent('clear'); }
+      if (this.clearT > 7.8 && !this.clearDone) { this.clearDone = true; this.phase = 'clear'; this.onEvent('clear'); }
     }
   }
 
@@ -433,10 +448,10 @@ export class Game {
     const prevX = p.x, prevZ = p.z;
     if (p.entering > 0) {
       p.entering -= dt;
-      const tz = v.zBottom - 5;
+      const tz = Math.min(v.zBottom - 5, (v.zPlayerMax ?? v.zBottom) - 1.5);
       p.z = lerp(p.z, tz, Math.min(1, dt * 4));
       input.consumeDrag();
-    } else if (this.phase !== 'bossdead' && this.phase !== 'clear') {
+    } else if (this.phase !== 'clear' && !(this.phase === 'bossdead' && this.clearT > 5.5)) {
       // relative drag: convert pixel delta at the jet's screen position into plane units
       const drag = input.consumeDrag();
       if (drag.x || drag.y) {
@@ -449,7 +464,9 @@ export class Game {
       const ax = input.axis();
       const sp = ax.slow ? 6.5 : 13.5;
       p.x += ax.x * sp * dt; p.z += ax.y * sp * dt;
-      const zMin = v.zTop + 5, zMax = v.zBottom - 1.3;
+      const b = this.boss;
+      const zMin = (b && b.alive && !b.dying) ? Math.max(v.zTop + 5, b.z + 7) : v.zTop + 5;
+      const zMax = v.zPlayerMax ?? v.zBottom - 1.3;
       p.z = clamp(p.z, zMin, zMax);
       const hw = v.hw(p.z) - 0.75;
       p.x = clamp(p.x, -hw, hw);
@@ -555,7 +572,7 @@ export class Game {
         const age = -p.laserT;
         p.laserT += 0.034;
         const lv = p.level;
-        const i = add(p.x, p.z - 1.0 - 44 * age, 0, -44, 0.55 + lv * 0.2, SK.LASER, 0.28 + lv * 0.075, 0.34 + lv * 0.11);
+        const i = add(p.x, p.z - 1.0 - 44 * age, 0, -44, 0.8 + lv * 0.25, SK.LASER, 0.28 + lv * 0.075, 0.34 + lv * 0.11);
         if (i >= 0) ps.t[i] = age;
       }
       this.audio.play('laser');
@@ -576,7 +593,7 @@ export class Game {
           const n = lv >= 3 ? 4 : 2;
           for (let i = 0; i < n; i++) {
             const side = i % 2 ? 1 : -1, outer = i >= 2 ? 1.9 : 1;
-            add(p.x + side * 0.55 * outer, p.z - 0.3, 0, -8, 5.2, SK.NUKE, 0.45);
+            add(p.x + side * 0.55 * outer, p.z - 0.3, 0, -8, 3.0, SK.NUKE, 0.45);
           }
         }
         this.audio.play('missile', { vol: 0.6 });
@@ -814,6 +831,11 @@ export class Game {
     const medals = typeof def.medal === 'number' ? (def.medal >= 1 ? def.medal : (Math.random() < def.medal ? 1 : 0)) : 0;
     for (let i = 0; i < medals; i++) this.dropItem('medal', e.x + rnd(-0.6, 0.6), e.z + rnd(-0.4, 0.4));
     if (def.boss !== true && size >= 2) this.ui.flash(0.12);
+    // loop 2+: destroyed enemies answer with a slow revenge shot
+    if (this.loop > 1 && !fromBomb && e.type !== 'carrier' && this.canFire(e)) {
+      const a = this.aim(e.x, e.z);
+      if (e.ground) this.fan(e.x, e.z, a, 3, 0.5, 5.2); else this.shoot(e.x, e.z, a, 5.6);
+    }
   }
 
   // --- enemy bullets ---------------------------------------------------------------------
@@ -903,7 +925,7 @@ export class Game {
               const t = T[k];
               if (t === hit || t.armored) continue;
               const dx = t.x - x, dz = t.z - z;
-              if (dx * dx + dz * dz < 2.6) { if (t.part) this.damagePart(t.e, t.part, 2.5); else this.damageEnemy(t.e, 2.5); }
+              if (dx * dx + dz * dz < 2.6) { if (t.part) this.damagePart(t.e, t.part, 1.5); else this.damageEnemy(t.e, 1.5); }
             }
           } else if (kind === SK.LASER) this.fx.hitSpark(x, 0.1, z - 0.2, 0.4, 0.9, 1.0, 1);
           else this.fx.hitSpark(x, 0.1, z, 1.0, 0.75, 0.35, kind === SK.VULCAN ? 1 : 3);
@@ -932,7 +954,7 @@ export class Game {
       if (!b.grazed[j] && d2 < (grazeR + br) * (grazeR + br)) {
         b.grazed[j] = 1;
         this.stats.grazes++;
-        this.addScore(10);
+        this.addScore(100);
         this.fx.sparkle(b.x[j] * 0.5 + p.x * 0.5, b.z[j] * 0.5 + p.z * 0.5, 2.2, 2.2, 2.6, 0.45, 0.2);
         this.audio.play('graze', { vol: 0.4 });
       }
@@ -981,7 +1003,10 @@ export class Game {
       if (p.alive) {
         const dx = p.x - it.x, dz = p.z - it.z, d2 = dx * dx + dz * dz;
         if (d2 < 1.3 * 1.3) collected = true;
-        else if (d2 < 9 && it.kind === 'medal') { const d = Math.sqrt(d2); it.x += dx / d * 9 * dt; it.z += dz / d * 9 * dt; }
+        else if (it.kind === 'medal' && (d2 < 9 || this.phase === 'bossdead')) {
+          const d = Math.sqrt(d2), sp = this.phase === 'bossdead' ? 14 : 9;
+          it.x += dx / d * sp * dt; it.z += dz / d * sp * dt;
+        }
       }
       if (collected) { this.collect(it); this.items.splice(i, 1); this.pools['item_' + it.kind].put(it.o); continue; }
       if (it.z > v.zBottom + 2 || it.z < v.zTop - 8) {

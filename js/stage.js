@@ -10,12 +10,12 @@ const TAU = Math.PI * 2;
 
 export const ENEMY = {
   dart:    { hp: 2,   score: 200,  radius: 0.75, air: true,  explode: 0.8, debris: 5 },
-  hornet:  { hp: 12,  score: 700,  radius: 1.0,  air: true,  explode: 1.2, debris: 8 },
+  hornet:  { hp: 20,  score: 700,  radius: 1.0,  air: true,  explode: 1.2, debris: 8 },
   carrier: { hp: 14,  score: 300,  radius: 1.15, air: true,  explode: 1.3, debris: 8 },
-  bomber:  { hp: 120, score: 6000, radius: 2.3,  air: true,  explode: 2.6, debris: 24, medal: 3 },
-  tank:    { hp: 7,   score: 400,  radius: 0.9,  air: false, explode: 1.0, debris: 8, medal: 0.6 },
-  turret:  { hp: 14,  score: 600,  radius: 1.0,  air: false, explode: 1.1, debris: 8, medal: 1 },
-  gunboat: { hp: 30,  score: 1500, radius: 1.5,  air: false, explode: 1.6, debris: 12, medal: 2, water: true },
+  bomber:  { hp: 320, score: 6000, radius: 2.3,  air: true,  explode: 2.6, debris: 24, medal: 3 },
+  tank:    { hp: 10,  score: 400,  radius: 0.9,  air: false, explode: 1.0, debris: 8, medal: 0.6 },
+  turret:  { hp: 22,  score: 600,  radius: 1.0,  air: false, explode: 1.1, debris: 8, medal: 1 },
+  gunboat: { hp: 40,  score: 1500, radius: 1.5,  air: false, explode: 1.6, debris: 12, medal: 2, water: true },
   crawler: { hp: 340, score: 30000, radius: 2.4, air: false, explode: 3.2, debris: 30 },
   boss:    { hp: 1,   score: 0,    radius: 3.5,  air: true,  explode: 4, debris: 40, boss: true },
 };
@@ -27,7 +27,7 @@ export const STAGE_BOSS_AT = 1275;
 // shared bits
 // --------------------------------------------------------------------------------
 function fireTimer(e, dt, g, interval, first = rnd(0.6, 1.4)) {
-  if (e.s.ft === undefined) e.s.ft = first;
+  if (e.s.ft === undefined) e.s.ft = first / g.diff.fr;
   e.s.ft -= dt;
   if (e.s.ft <= 0) { e.s.ft += interval / g.diff.fr; return g.canFire(e); }
   return false;
@@ -54,7 +54,7 @@ function swoop(side, dur = 3.8) {
       e.x = bez(s.P[0][0], s.P[1][0], s.P[2][0], s.P[3][0], u);
       e.z = bez(s.P[0][1], s.P[1][1], s.P[2][1], s.P[3][1], u);
     } else { e.x += e.vx * dt; e.z += e.vz * dt; }
-    if (!s.fired && e.t > 1.1) { s.fired = true; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 8.5); }
+    if (!s.fired && e.t > 1.1 / g.diff.fr) { s.fired = true; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 8.5); }
   };
 }
 // Dive: straight down fast, nudging toward where the player was.
@@ -64,7 +64,7 @@ function dive(x0, speed = 12) {
     if (s.tx === undefined) { s.tx = clamp(g.player.x, -6, 6); e.x = x0; e.z = g.view.zTop - 2; }
     e.x += (s.tx - e.x) * Math.min(1, dt * 0.9);
     e.z += speed * dt;
-    if (!s.fired && e.t > 0.7) { s.fired = true; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 9); }
+    if (!s.fired && e.t > 0.7 / g.diff.fr) { s.fired = true; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 9); }
   };
 }
 // Snake: weave down the screen.
@@ -74,17 +74,17 @@ function snake(x0, amp = 2.6, speed = 6.2) {
     if (s.z0 === undefined) s.z0 = g.view.zTop - 2;
     e.x = x0 + Math.sin(e.t * 2.4) * amp;
     e.z = s.z0 + speed * e.t;
-    if (!s.fired && e.t > 1.5) { s.fired = true; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 8); }
+    if (!s.fired && e.t > 1.5 / g.diff.fr) { s.fired = true; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 8); }
   };
 }
 // Rise: overtake the player from behind along a screen edge (fires once, from a fair distance).
 function rise(side) {
   return (e, dt, g) => {
     const s = e.s;
-    if (s.z0 === undefined) { s.z0 = g.view.zBottom + 2; e.x = side * 7.5; }
-    e.z = s.z0 - 14 * e.t;
-    e.x = side * (7.5 - 3.5 * ease(e.t / 2.4));
-    if (!s.fired && e.t > 1.3) { s.fired = true; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7); }
+    if (s.z0 === undefined) { s.z0 = g.view.zBottom + 2; e.x = side * 9; }
+    e.z = s.z0 - 11 * e.t;
+    e.x = side * (9 - 3.2 * ease((e.t - 0.9) / 2.2));
+    if (!s.fired && e.t > 1.7) { s.fired = true; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7); }
   };
 }
 // Vee: descend in formation, then break outward.
@@ -107,7 +107,7 @@ function hover(tx, tzFrac, stay = 5.5) {
       const k = e.t - 1.5;
       e.x = s.x0 + Math.sin(k * 1.3) * 1.2;
       e.z = s.tz + Math.sin(k * 2.1) * 0.4;
-      if (fireTimer(e, dt, g, 1.35, 0.4)) {
+      if (fireTimer(e, dt, g, 1.35, 0.15)) {
         g.fan(e.x, e.z + 0.5, g.aim(e.x, e.z), 3, 0.42, 7.2);
         g.audio.play('lock', { vol: 0.25 });
       }
@@ -164,7 +164,7 @@ function laneTank(speed = 1.6, dir = 1) {
     e.yaw = dir > 0 ? 0 : Math.PI;
     const ud = e.mesh.userData;
     g.aimTurret(e, ud.turret, dt, 3);
-    if (fireTimer(e, dt, g, 2.4, rnd(1.0, 2.2)) && ud.turret) {
+    if (fireTimer(e, dt, g, 2.4, rnd(0.35, 0.95)) && ud.turret) {
       const m = g.muzzlePos(ud.turret);
       g.shoot(m.x, m.z, g.aim(m.x, m.z), 7.2);
     }
@@ -189,7 +189,7 @@ function turretAI() {
   return (e, dt, g) => {
     const ud = e.mesh.userData, s = e.s;
     g.aimTurret(e, ud.turret, dt, 4);
-    if (fireTimer(e, dt, g, 2.9, rnd(0.8, 1.8))) s.burst = 3;
+    if (fireTimer(e, dt, g, 2.9, rnd(0.35, 0.95))) s.burst = 3;
     if (s.burst > 0) {
       s.bt = (s.bt || 0) - dt;
       if (s.bt <= 0) {
@@ -344,9 +344,9 @@ function bossAI() {
     }
 
     if (s.mode === 'enter') {
-      const k = ease(e.t / 4.5);
+      const k = ease(e.t / 3.5);
       e.z = (v.zTop - 9) + (s.baseZ - (v.zTop - 9)) * k;
-      if (e.t > 4.5) { s.mode = 'p1'; s.pt = 0; e.invuln = false; }
+      if (e.t > 3.5) { s.mode = 'p1'; s.pt = 0; e.invuln = false; }
       return;
     }
     s.pt += dt;
@@ -397,9 +397,10 @@ function bossAI() {
     if (s.mode === 'p2' || s.mode === 'p3') {
       const cm = core ? g.muzzlePos(core.obj) : { x: e.x, z: e.z };
       s.st = (s.st || 0) - dt;
-      const arms = s.mode === 'p3' ? 4 : 2;
+      const hard = g.loop > 1;
+      const arms = s.mode === 'p3' ? (hard ? 4 : 3) : 2;
       if (s.st <= 0) {
-        s.st = (s.mode === 'p3' ? 0.12 : 0.1) / fr;
+        s.st = (s.mode === 'p3' ? (hard ? 0.12 : 0.14) : 0.1) / fr;
         s.a += s.mode === 'p3' ? 0.29 : 0.23;
         for (let i = 0; i < arms; i++) g.shoot(cm.x, cm.z, s.a + (i / arms) * TAU, s.mode === 'p3' ? 6.4 : 5.8);
       }
@@ -407,7 +408,7 @@ function bossAI() {
       if (s.ft2 <= 0) { s.ft2 = 3.0 / fr; g.fan(cm.x, cm.z, g.aim(cm.x, cm.z), 7, 1.0, 6.6, g.BK.BIG); }
       if (s.mode === 'p3') {
         s.rt = (s.rt ?? 1) - dt;
-        if (s.rt <= 0) { s.rt = 1.7 / fr; s.b += 0.13; g.ring(cm.x, cm.z, 20, 5.2, s.b); }
+        if (s.rt <= 0) { s.rt = (hard ? 1.7 : 2.0) / fr; s.b += 0.13; g.ring(cm.x, cm.z, hard ? 20 : 16, 5.2, s.b); }
       }
     }
   };
@@ -420,7 +421,7 @@ const W = {
   swoop(g, side, n = 5, gap = 0.28) { for (let i = 0; i < n; i++) g.later(i * gap, () => g.spawn('dart', { x: side * 8, z: -60, ai: swoop(side) })); },
   dive(g, xs, gap = 0.35) { xs.forEach((x, i) => g.later(i * gap, () => g.spawn('dart', { x, z: -60, ai: dive(x) }))); },
   snake(g, x0, n = 6, gap = 0.32) { for (let i = 0; i < n; i++) g.later(i * gap, () => g.spawn('dart', { x: x0, z: -60, ai: snake(x0) })); },
-  rise(g, side, n = 3, gap = 0.3) { for (let i = 0; i < n; i++) g.later(i * gap, () => g.spawn('dart', { x: side * 7.5, z: 60, ai: rise(side) })); },
+  rise(g, side, n = 3, gap = 0.3) { for (let i = 0; i < n; i++) g.later(i * gap, () => g.spawn('dart', { x: side * 9, z: 60, ai: rise(side) })); },
   vee(g, cx = 0) {
     const offs = [[0, 0], [-1.6, -1.4], [1.6, -1.4], [-3.2, -2.8], [3.2, -2.8]];
     for (const [ox, oz] of offs) g.spawn('dart', { x: cx + ox, z: -60, ai: vee(cx + ox, oz) });
@@ -480,7 +481,7 @@ at(146, (g) => W.snake(g, -3.5));
 at(160, (g) => W.boats(g, [-7, 0, 7], 4));
 at(178, (g) => { W.swoop(g, -1, 4); g.later(0.9, () => W.swoop(g, 1, 4)); });
 at(196, (g) => W.dive(g, [-5, 3, -1, 5]));
-at(212, (g) => W.carrier(g, 3, ['S']));
+at(212, (g) => W.carrier(g, 3, ['P', 'S']));
 at(226, (g) => { W.hornet(g, -6, 0.26); W.hornet(g, 0, 0.2); W.hornet(g, 6, 0.26); });
 at(250, (g) => { W.rise(g, -1); g.later(0.6, () => W.rise(g, 1)); });
 at(264, (g) => { W.boats(g, [-4, 6], 5); W.swoop(g, -1, 4); });
@@ -506,7 +507,7 @@ at(530, (g) => W.cross(g, [1, -1, 1]));
 at(546, (g) => { W.vee(g, -2); W.turrets(g, [0, 2]); });
 at(560, (g) => W.carrier(g, 2, ['P']));
 at(572, (g) => { W.rise(g, 1); g.later(0.5, () => W.rise(g, -1)); });
-at(MIDBOSS_AT, (g) => { g.phase = 'midboss'; g.scrollTarget = 3.2; g.onEvent('midboss'); spawnMidboss(g); });
+at(MIDBOSS_AT, (g) => { g.phase = 'midboss'; g.scrollTarget = 1.3; g.onEvent('midboss'); spawnMidboss(g); });
 // CITY ──────────────────────────────────────────────
 at(644, (g) => W.cross(g, [1, 1]));
 at(652, (g) => { W.swoop(g, -1); g.later(0.9, () => W.swoop(g, 1)); });
@@ -541,7 +542,7 @@ at(1158, (g) => { W.hornet(g, -5, 0.3); W.hornet(g, 5, 0.3); });
 at(1172, (g) => W.carrier(g, 0, ['1UP']));
 at(1184, (g) => W.turrets(g, [0, 1, 2]));
 at(1198, (g) => { W.swoop(g, -1); g.later(0.8, () => W.swoop(g, 1)); });
-at(1216, (g) => { W.carrier(g, -2, ['P']); g.later(1, () => W.carrier(g, 2, ['B'])); });
+at(1216, (g) => W.carrier(g, 0, ['B']));
 TIMELINE.sort((a, b) => a.d - b.d);
 
 export const STAGE_INFO = { number: 1, name: 'COASTAL FRONT', nameZh: '沿岸前線', boss: 'ARCLIGHT' };

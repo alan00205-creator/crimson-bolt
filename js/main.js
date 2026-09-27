@@ -16,6 +16,11 @@ const DEBUG = /debug/.test(location.hash);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 if (isTouch) document.body.classList.add('touch');
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const landscapeLock = matchMedia('(orientation: landscape) and (max-height: 500px)');
+const safeProbe = document.createElement('div');
+safeProbe.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none';
+document.body.appendChild(safeProbe);
+const isPortraitBlocked = () => isTouch && landscapeLock.matches;
 
 // ---------------------------------------------------------------------------------
 // persistence (never required to work)
@@ -137,7 +142,7 @@ function render() {
   else renderer.render(scene, camera);
 }
 function trackPerf(rawDt) {
-  if (settings.quality !== 'auto' || state !== 'playing' || qualityLevel === 0) return;
+  if (settings.quality !== 'auto' || (state !== 'playing' && state !== 'title') || qualityLevel === 0) return;
   perf.acc += rawDt; perf.frames++;
   if (perf.acc >= 3) {
     const avg = perf.acc / perf.frames;
@@ -168,12 +173,17 @@ function resize() {
     el.hidden = side < 220;
   }
   W = w; H = ih;
+  needsRender = true;
   if (!renderer) return;
   renderer.setSize(W, H, false);
   if (composer) composer.setSize(W, H);
+  // keep the jet clear of the bottom HUD (lives/weapon/bomb button) and the thumb
+  view.bottomPx = (isTouch ? 104 : 60) + (safeProbe.offsetHeight || 0);
   view.fit(W, H);
+  if (isPortraitBlocked() && state === 'playing') pause();
 }
 window.addEventListener('resize', () => { resize(); });
+if (landscapeLock.addEventListener) landscapeLock.addEventListener('change', () => resize());
 
 // ---------------------------------------------------------------------------------
 // state machine
@@ -209,12 +219,15 @@ function frame(now) {
       if (pendingContinue > 0) { pendingContinue -= rawDt; if (pendingContinue <= 0) { pendingContinue = -1; showContinue(); } }
     }
     updateHud();
+    updateHints();
   } else if (state === 'title') {
     game.updateAttract(rawDt, t);
+    trackPerf(rawDt);
     if (game.world.distance > 260) { game.world.reset(0); ui.flash(0.25); }
-    if (input.take('confirm')) startGame();
+    if (panelOpen()) { if (input.take('pause')) closePanel(); }
+    else if (!$('title').hidden && input.take('confirm')) startGame();
   } else if (state === 'continue') {
-    contT -= rawDt;
+    if (!isPortraitBlocked()) contT -= rawDt;
     const n = Math.max(0, Math.ceil(contT) - 1);
     if (n !== contShown) { contShown = n; $('cont-num').textContent = String(n); if (n < 9) audio.play('select', { vol: 0.5 }); }
     if (input.take('confirm')) continueYes();
@@ -223,9 +236,9 @@ function frame(now) {
   } else if (state === 'results' || state === 'gameover') {
     world.update(rawDt, 3);
     fx.update(rawDt, game.GROUND_Y, 3);
-    if (state === 'results' && input.take('confirm')) { speedTally = true; }
+    if (state === 'results' && (input.take('confirm') || input.take('tap'))) { speedTally = true; }
   } else if (state === 'paused') {
-    if (input.take('pause')) resume();
+    if (input.take('pause')) { if (panelOpen()) closePanel(); else resume(); }
   }
   if (state !== 'playing') input.clearEdges();
 
@@ -235,8 +248,10 @@ function frame(now) {
   fx.end();
   ui.updatePopups(rawDt);
   ui.updateFlash(rawDt, reducedMotion);
-  render();
+  // while paused the scene is frozen: draw it once, then save the GPU/battery
+  if (state !== 'paused' || needsRender) { render(); needsRender = false; }
 }
+let needsRender = true;
 
 function updateHud() {
   const g = game, p = g.player;
@@ -247,6 +262,20 @@ function updateHud() {
   ui.setWeapon(p.main, p.level, p.sub, p.subLevel);
   ui.setChain(g.medalChain, gameMod.MEDAL_VALUES[Math.min(g.medalChain, gameMod.MEDAL_VALUES.length - 1)]);
 }
+
+let hintFlags = store.get('hints', { moved: false, bomb: false });
+let hintState = { moveShown: false, bombShown: false };
+function updateHints() {
+  if (hintState.moveShown && !hintFlags.moved && input.dragTravel > 40) {
+    hintFlags.moved = true; store.set('hints', hintFlags); ui.hideHint(true);
+  }
+  if (!hintFlags.bomb && !hintState.bombShown && game.eb.n >= 6 && game.bombs > 0 && game.player.alive) {
+    hintState.bombShown = true; hintFlags.bomb = true; store.set('hints', hintFlags);
+    ui.bombHint(isTouch || input.usingTouch);
+  }
+}
+function panelOpen() { return !$('howto').hidden || !$('settings').hidden; }
+function closePanel() { audio.play('select'); ui.only(backTo); focusFirst(backTo); }
 
 function toTitle(first = false) {
   state = 'title';
@@ -282,7 +311,11 @@ function startGame(loop = 1, keepScore = false) {
   ui.banner(`${lp}<div class="h">COASTAL FRONT</div><div class="s">沿岸前線</div>`, '', 2800);
   audio.play('stageStart');
   audio.music('stage');
-  if (loop === 1) setTimeout(() => { if (state === 'playing') ui.hint(input.usingTouch || isTouch); }, 1200);
+  hintState = { moveShown: false, bombShown: false };
+  if (loop === 1 && !(hintFlags.moved && isTouch)) {
+    setTimeout(() => { if (state === 'playing') { hintState.moveShown = true; input.dragTravel = 0; ui.hint(input.usingTouch || isTouch); } }, 1200);
+  }
+  try { if (!history.state || !history.state.cb) history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ }
   updateHud();
   requestWake();
   input.clearEdges();
@@ -291,6 +324,7 @@ function startGame(loop = 1, keepScore = false) {
 function pause() {
   if (state !== 'playing') return;
   state = 'paused';
+  document.querySelectorAll('#pause [data-armed="1"]').forEach((b) => { b.dataset.armed = ''; restoreLabel(b); });
   ui.only('pause');
   audio.play('pause');
   audio.setMusicDuck(0.35);
@@ -299,7 +333,9 @@ function pause() {
 }
 function resume() {
   if (state !== 'paused') return;
+  if (isPortraitBlocked()) return;
   state = 'playing';
+  if (game.player.alive) game.player.invuln = Math.max(game.player.invuln, 1.0); // a moment to get the thumb back
   ui.only();
   audio.setMusicDuck(1);
   audio.resume();
@@ -318,6 +354,7 @@ function showContinue() {
 }
 function continueYes() {
   if (state !== 'continue') return;
+  saveHi();
   game.continueRun();
   state = 'playing';
   ui.only();
@@ -341,11 +378,15 @@ function gameOver() {
   releaseWake();
   focusFirst('gameover');
 }
+// Persist the best score seen (including runs that were continued, which reset the score).
+// Returns true when this run's current score is a new record.
 function saveHi() {
   const best = Number(store.get('hi', 0)) || 0;
-  if (game.score > best) { store.set('hi', Math.floor(game.score)); hiScore = Math.max(hiScore, game.score); return true; }
-  hiScore = Math.max(hiScore, best);
-  return false;
+  const cand = Math.floor(Math.max(hiScore, game.score));
+  const isNew = game.score > best;
+  if (cand > best) store.set('hi', cand);
+  hiScore = Math.max(cand, best);
+  return isNew;
 }
 let speedTally = false;
 async function showResults() {
@@ -371,10 +412,12 @@ async function showResults() {
     ['STAGE SCORE', '關卡得分', fmt(stageScore)],
     ['CLEAR BONUS', '過關獎勵', '+' + fmt(clearBonus)],
     ['DESTRUCTION ' + Math.round(pct * 100) + '%', '擊破率', '+' + fmt(destroy)],
-    ['NO MISS', '無損', noMiss ? '+' + fmt(noMiss) : '—'],
+    ['NO MISS', '無傷', noMiss ? '+' + fmt(noMiss) : '—'],
     ['BOMB × ' + g.bombs, '剩餘炸彈', '+' + fmt(bombBonus)],
-    ['MEDAL CHAIN × ' + g.medalMaxChain, '勳章連鎖', '+' + fmt(chainBonus)],
+    ['CHAIN × ' + g.medalMaxChain, '勳章連鎖', '+' + fmt(chainBonus)],
   ];
+  const zh = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+  $('next-label').textContent = `第${zh[g.loop + 1] || g.loop + 1}輪・難度提升`;
   await ui.tally(lines, g.score, rank, isNew, () => speedTally);
   focusFirst('results');
 }
@@ -397,7 +440,7 @@ function onGameEvent(ev) {
       audio.play('lock', { vol: 0.6 });
       break;
     case 'extend':
-      ui.banner('<div class="h">EXTEND!</div><div class="s">獎勵一機</div>', 'extend', 1600);
+      ui.banner('<div class="h">EXTEND!</div><div class="s">戰機 +1</div>', 'extend', 1600);
       break;
     case 'gameover':
       pendingContinue = 1.6;
@@ -418,6 +461,19 @@ function onGameEvent(ev) {
 // UI wiring
 // ---------------------------------------------------------------------------------
 let backTo = 'title';
+// Destructive pause-menu actions need a second tap within 2 s.
+function confirmTwice(btn) {
+  if (btn.dataset.armed === '1') { btn.dataset.armed = ''; restoreLabel(btn); return true; }
+  btn.dataset.armed = '1';
+  const span = btn.querySelector('span');
+  btn.dataset.label = span.textContent;
+  span.textContent = '再按一次確認';
+  audio.play('select');
+  clearTimeout(btn._armT);
+  btn._armT = setTimeout(() => { btn.dataset.armed = ''; restoreLabel(btn); }, 2000);
+  return false;
+}
+function restoreLabel(btn) { const span = btn.querySelector('span'); if (btn.dataset.label) span.textContent = btn.dataset.label; clearTimeout(btn._armT); }
 function focusFirst(id) {
   if (isTouch) return;
   const el = document.querySelector(`#${id} .btn`);
@@ -446,8 +502,8 @@ function bindUI() {
       case 'settings': openPanel('settings'); break;
       case 'back': audio.play('select'); ui.only(backTo); focusFirst(backTo); break;
       case 'resume': resume(); break;
-      case 'restart': audio.play('confirm'); startGame(); break;
-      case 'quit': audio.play('select'); if (game.score > 0) saveHi(); toTitle(); break;
+      case 'restart': if (!confirmTwice(b)) break; audio.play('confirm'); if (game.score > 0) saveHi(); startGame(); break;
+      case 'quit': if (state === 'paused' && !confirmTwice(b)) break; audio.play('select'); if (game.score > 0) saveHi(); toTitle(); break;
       case 'retry': audio.play('confirm'); startGame(); break;
       case 'cont-yes': continueYes(); break;
       case 'cont-no': gameOver(); break;
@@ -476,6 +532,11 @@ function bindUI() {
   $('set-sfx').addEventListener('input', (e) => { settings.sfx = e.target.value / 100; applySettings(); });
   $('set-sfx').addEventListener('change', () => audio.play('item'));
 
+  window.addEventListener('popstate', () => {
+    if (state === 'playing') { pause(); try { history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ } }
+    else if (panelOpen()) { closePanel(); try { history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ } }
+  });
+  window.addEventListener('pagehide', () => { if (game.score > 0) saveHi(); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { if (state === 'playing') pause(); if (state === 'paused' && game.score > 0) saveHi(); audio.suspend(); }
     else if (state !== 'paused') audio.resume();
@@ -510,7 +571,7 @@ function releaseWake() { try { if (wakeLock) wakeLock.release(); } catch (_) { /
 // ---------------------------------------------------------------------------------
 function exposeDebug() {
   window.__cb = {
-    THREE, game, world, view, fx, renderer, audio,
+    THREE, game, world, view, fx, renderer, audio, input,
     get state() { return state; },
     get fps() { return fpsAvg; },
     get quality() { return qualityLevel; },

@@ -66,33 +66,37 @@
     <div class="row">
       <button class="primary" id="init">Start audio</button>
       <button id="mute">Mute</button>
-      <button id="suspend">Suspend</button>
-      <button id="resume">Resume</button>
+      <button id="pausemenu" title="What the game's pause() does: 'pause' blip + setMusicDuck(0.35)">Pause menu</button>
+      <button id="suspend" title="audio.suspend(): song freezes on the current step (tab hidden)">Suspend</button>
+      <button id="resume" title="audio.resume() + setMusicDuck(1)">Resume</button>
       <span id="status">not started</span>
     </div>
     <div class="row" style="margin-top:10px">
       <label class="slider">Music <input type="range" id="mvol" min="0" max="1" step="0.01" value="0.8"><output id="mvolo">0.80</output></label>
       <label class="slider">SFX <input type="range" id="svol" min="0" max="1" step="0.01" value="0.9"><output id="svolo">0.90</output></label>
-      <label class="slider">Duck <input type="range" id="duck" min="0" max="1" step="0.01" value="0"><output id="ducko">0.00</output></label>
+      <label class="slider" title="setMusicDuck(v): music level multiplier. 1 = normal, 0.35 = pause-menu duck">Duck level <input type="range" id="duck" min="0" max="1" step="0.01" value="1"><output id="ducko">1.00</output></label>
     </div>
   </section>
 
   <section>
     <h2>Music</h2>
     <div class="row" id="tracks"></div>
-    <p class="note">Tracks crossfade (~0.6 s). The loop plays twice with different orchestration (harmony, doubling, busier drums) before repeating.</p>
+    <p class="note">Tracks crossfade (~0.6 s). The loop plays twice with different orchestration (harmony, doubling, busier drums) before repeating. <b>stage</b> + <b>stageStart</b> together is what the game does at the start of a run (the fanfare is locked to the stage tempo).</p>
+    <div class="row" style="margin-top:8px"><button id="startrun">Start a run (stageStart + stage)</button><button id="bossin">Boss entrance (warning → boss)</button></div>
   </section>
 
   <section>
     <h2>Sound effects</h2>
     <div class="row" style="margin-bottom:10px">
-      <label class="slider">Medal chain <input type="range" id="mpitch" min="0" max="6" step="1" value="0"><output id="mpitcho">0</output></label>
+      <label class="slider" title="The game plays medal with pitch = chain step × 2; the module snaps it to E G A B C D E">Medal chain <input type="range" id="mpitch" min="0" max="6" step="1" value="0"><output id="mpitcho">0</output></label>
       <label class="slider">Pan <input type="range" id="pan" min="-1" max="1" step="0.1" value="0"><output id="pano">0.0</output></label>
       <label class="slider">Vol <input type="range" id="vol" min="0" max="1" step="0.05" value="1"><output id="volo">1.00</output></label>
     </div>
     <div class="grid" id="sfx"></div>
     <div class="row" style="margin-top:10px">
-      <button id="firefight">Simulate 6 s of firefight</button>
+      <button id="vulcan">Vulcan 5 s (every 75 ms)</button>
+      <button id="laserhold">Laser 5 s (called every frame)</button>
+      <button id="firefight">Firefight 6 s (as game.js calls it)</button>
       <button id="chain">Medal chain 0→6</button>
       <button id="pile">30 explosions at once</button>
     </div>
@@ -119,7 +123,7 @@
 import { audio, SFX_NAMES, MUSIC_TRACKS, __renderForTest, __renderBuffer, __songInfo } from '../js/audio.js';
 
 const $ = (id) => document.getElementById(id);
-const DUR = { shot: 0.5, laser: 0.5, hit: 0.5, graze: 0.5, lock: 0.5, select: 0.5, hitArmor: 0.8,
+const DUR = { shot: 0.5, laser: 0.5, hit: 0.5, graze: 0.5, lock: 0.5, select: 0.5, hitArmor: 0.8, vulcan: 5, laserBeam: 5, firefight: 8, gameplayLaser: 8,
   item: 0.8, missile: 1, pause: 1, confirm: 1.2, explodeS: 1.5, medal: 1.5, powerup: 1.5,
   oneup: 2, explodeM: 3, explodeL: 5, death: 5, warning: 4, stageStart: 3.5, bomb: 6, bossDown: 9 };
 const TRACK_SECONDS = 8;
@@ -131,8 +135,9 @@ function refreshStatus() {
 setInterval(refreshStatus, 500);
 $('init').onclick = () => { audio.init(); refreshStatus(); };
 $('mute').onclick = () => { audio.setMuted(!audio.muted); $('mute').classList.toggle('on', audio.muted); $('mute').textContent = audio.muted ? 'Unmute' : 'Mute'; };
+$('pausemenu').onclick = () => { audio.play('pause'); audio.setMusicDuck(0.35); $('duck').value = 0.35; $('ducko').textContent = '0.35'; };
 $('suspend').onclick = () => audio.suspend();
-$('resume').onclick = () => audio.resume();
+$('resume').onclick = () => { audio.setMusicDuck(1); $('duck').value = 1; $('ducko').textContent = '1.00'; audio.resume(); };
 const bindSlider = (id, fn, digits = 2) => {
   const el = $(id), out = $(id + 'o');
   const upd = () => { out.textContent = (+el.value).toFixed(digits); fn(+el.value); };
@@ -151,7 +156,9 @@ for (const t of [...MUSIC_TRACKS, null]) {
   b.onclick = () => { audio.init(); audio.music(t); refreshStatus(); };
   $('tracks').appendChild(b);
 }
-const HINT = { shot: 'vulcan · 10/s', laser: 'blue laser', medal: 'uses chain step', warning: '3 s klaxon',
+$('startrun').onclick = () => { audio.init(); audio.play('stageStart'); audio.music('stage'); refreshStatus(); };
+$('bossin').onclick = () => { audio.init(); audio.music(null); audio.play('warning'); setTimeout(() => audio.music('boss'), 3200); };
+const HINT = { shot: 'vulcan · 13/s', laser: 'beam · hold to sustain', medal: 'uses chain step', warning: '3 s klaxon',
   bossDown: 'long tail', stageStart: 'fanfare', bomb: 'screen clear', graze: 'sparkle' };
 for (const n of SFX_NAMES) {
   const b = document.createElement('button');
@@ -163,18 +170,22 @@ for (const n of SFX_NAMES) {
   };
   $('sfx').appendChild(b);
 }
+// Calls exactly like js/game.js: vulcan every 75 ms, laser every frame, hits at vol 0.35, etc.
+function every(ms, dur, fn) { audio.init(); const t0 = performance.now(); const id = setInterval(() => { if (performance.now() - t0 > dur) clearInterval(id); else fn(); }, ms); }
+function eachFrame(dur, fn) { audio.init(); const t0 = performance.now(); const f = () => { if (performance.now() - t0 < dur) { fn(); requestAnimationFrame(f); } }; requestAnimationFrame(f); }
+$('vulcan').onclick = () => every(75, 5000, () => audio.play('shot'));
+$('laserhold').onclick = () => eachFrame(5000, () => audio.play('laser'));
 $('firefight').onclick = () => {
-  audio.init();
-  const t0 = performance.now();
-  const id = setInterval(() => {
-    const t = performance.now() - t0;
-    if (t > 6000) return clearInterval(id);
-    audio.play('shot', { pan: (Math.random() - 0.5) * 0.2 });
-    if (Math.random() < 0.35) audio.play('hit', { pan: Math.random() - 0.5 });
-    if (Math.random() < 0.08) audio.play(['explodeS', 'explodeM', 'explodeL'][Math.random() * 3 | 0], { pan: Math.random() - 0.5 });
-    if (Math.random() < 0.05) audio.play('medal', { pitch: (Math.random() * 7 | 0) * 2 });
-    if (Math.random() < 0.04) audio.play('graze');
-  }, 100);
+  let chain = 0, k = 0;
+  every(75, 6000, () => audio.play('shot'));
+  every(100, 6000, () => {
+    k++;
+    if (Math.random() < 0.6) audio.play('hit', { vol: 0.35, pan: Math.random() - 0.5 });
+    if (Math.random() < 0.1) audio.play(['explodeS', 'explodeS', 'explodeM', 'explodeL'][Math.random() * 4 | 0], { pan: Math.random() - 0.5 });
+    if (Math.random() < 0.06) audio.play('medal', { pitch: Math.min(chain++, 6) * 2 });
+    if (Math.random() < 0.04) audio.play('graze', { vol: 0.4 });
+    if (k % 5 === 0) audio.play('missile', { vol: 0.6 });
+  });
 };
 $('chain').onclick = () => { audio.init(); for (let i = 0; i <= 6; i++) setTimeout(() => audio.play('medal', { pitch: i * 2 }), i * 160); };
 $('pile').onclick = () => { audio.init(); for (let i = 0; i < 30; i++) audio.play(['explodeS', 'explodeM', 'explodeL'][i % 3]); };
@@ -185,7 +196,8 @@ async function runAuto() {
   const rows = [];
   const tbl = $('results');
   tbl.innerHTML = '<tr><th>name</th><th>kind</th><th>sec</th><th>peak</th><th>peak dBFS</th><th>pre-limiter</th><th>rms dBFS</th><th>NaN</th><th>render ms</th><th>ms / s</th><th>result</th></tr>';
-  const jobs = [...SFX_NAMES.map((n) => [n, DUR[n] || 2]), ...MUSIC_TRACKS.map((t) => [t, TRACK_SECONDS]), ['gameplay', 8], ['stress', 6], ['stressRaw', 6]];
+  const jobs = [...SFX_NAMES.map((n) => [n, DUR[n] || 2]), ...MUSIC_TRACKS.map((t) => [t, TRACK_SECONDS]),
+    ['vulcan', 5], ['laserBeam', 5], ['firefight', 8], ['gameplay', 8], ['gameplayLaser', 8], ['stress', 6], ['stressRaw', 6]];
   let pass = 0;
   for (const [name, sec] of jobs) {
     const r = await __renderForTest(name, sec);
@@ -303,7 +315,7 @@ async function drawOne(name, sec, prepend) {
 }
 async function drawAll(list) {
   $('viz').innerHTML = '';
-  const names = list || [...SFX_NAMES, ...MUSIC_TRACKS, 'gameplay', 'stress'];
+  const names = list || [...SFX_NAMES, ...MUSIC_TRACKS, 'vulcan', 'laserBeam', 'gameplay', 'stress'];
   for (const n of names) await drawOne(n, MUSIC_TRACKS.includes(n) ? TRACK_SECONDS : n === 'stress' ? 6 : n === 'gameplay' ? 8 : (DUR[n] || 2));
   window.__vizDone = true;
 }

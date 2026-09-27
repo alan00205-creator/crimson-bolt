@@ -1428,7 +1428,7 @@ function buildBossCoreFrame() {
 }
 function buildBossOrb() {
   const b = new GB();
-  const geo = new THREE.IcosahedronGeometry(0.72, 1).toNonIndexed();
+  const geo = new THREE.IcosahedronGeometry(0.72, 1);
   const p = geo.attributes.position.array;
   for (let i = 0; i < p.length; i += 9) {
     const t = i / 9, k = hash3(t, 1.7, 3.1);
@@ -1440,7 +1440,7 @@ function buildBossOrb() {
 }
 function buildBossOrbDead() {
   const b = new GB();
-  const geo = new THREE.IcosahedronGeometry(0.6, 1).toNonIndexed();
+  const geo = new THREE.IcosahedronGeometry(0.6, 1);
   const p = geo.attributes.position.array;
   for (let i = 0; i < p.length; i += 9) {
     const t = i / 9, k = hash3(t, 4.7, 1.1);

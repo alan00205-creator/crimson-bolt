@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Model Preview · Crimson Bolt</title>
+<script type="importmap">{"imports":{
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+<style>
+  :root {
+    --bg: #0a0c11; --panel: rgba(14, 17, 24, 0.92); --line: #262c38; --ink: #dfe6ef; --ink-soft: #8c97a8;
+    --accent: #e0353b; --ok: #4fd18b; --bad: #ff5a5a; --warn: #f2c02a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  #view { position: relative; width: 100%; height: 100%; overflow: hidden; }
+  body.game #view { height: 100%; aspect-ratio: 1 / 2; width: auto; max-width: 100%; }
+  body.game.has-panel #stage { right: 330px; }
+  body.inspect.has-panel #stage { right: 330px; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #labels { position: absolute; inset: 0; pointer-events: none; }
+  .lbl { position: absolute; transform: translate(-50%, 0); font: 600 10px/1 system-ui, sans-serif; letter-spacing: .04em;
+    color: #fff; text-shadow: 0 1px 2px #000, 0 0 4px #000; white-space: nowrap; opacity: .85; }
+  #panel { position: fixed; top: 0; right: 0; bottom: 0; width: 330px; background: var(--panel); border-left: 1px solid var(--line);
+    overflow-y: auto; padding: 12px 14px 24px; }
+  #panel h1 { font-size: 15px; margin: 0 0 2px; letter-spacing: .02em; }
+  #panel h1 b { color: var(--accent); }
+  #panel .sub { color: var(--ink-soft); margin: 0 0 10px; font-size: 12px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); margin: 14px 0 6px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 4px 0; }
+  .row label { display: flex; align-items: center; gap: 6px; }
+  .row .k { width: 66px; color: var(--ink-soft); }
+  .row input[type=range] { flex: 1; min-width: 120px; }
+  .row .v { width: 38px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+  button, select { background: #1a1f2a; color: var(--ink); border: 1px solid var(--line); padding: 5px 9px; border-radius: 0;
+    font: inherit; cursor: pointer; }
+  button:hover, select:hover { border-color: #3a4456; }
+  button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .seg { display: inline-flex; }
+  .seg button + button { border-left: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-soft); font-weight: 500; }
+  td.n { text-align: right; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); font-weight: 700; }
+  #hud { position: absolute; left: 8px; top: 8px; font: 11px/1.35 ui-monospace, Menlo, Consolas, monospace; color: #cfd8e3;
+    text-shadow: 0 1px 2px #000; pointer-events: none; white-space: pre; }
+  #toggle { position: fixed; right: 10px; bottom: 10px; z-index: 5; display: none; }
+  .hidden { display: none !important; }
+  @media (max-width: 760px) {
+    body.has-panel #stage { right: 0 !important; bottom: 46vh; }
+    #panel { top: auto; left: 0; width: auto; height: 46vh; border-left: 0; border-top: 1px solid var(--line); }
+    #toggle { display: block; }
+    body:not(.has-panel) #panel { display: none; }
+  }
+  body.noui #panel, body.noui #toggle, body.noui #hud { display: none !important; }
+  body.noui #stage { right: 0 !important; bottom: 0 !important; }
+</style>
+</head>
+<body class="game has-panel">
+<div id="stage"><div id="view"><div id="labels"></div><div id="hud"></div></div></div>
+<button id="toggle">☰ controls</button>
+<aside id="panel">
+  <h1>CRIMSON BOLT <b>赤電</b> · models</h1>
+  <p class="sub">Preview for <code>js/models.js</code>. Gameplay view uses the game camera and lights at true scale.</p>
+  <div class="row"><span class="seg" id="modeSeg"><button data-mode="game">Gameplay view</button><button data-mode="inspect">Inspect</button></span></div>
+
+  <div id="gameCtl">
+    <h2>Ground (y = −6)</h2>
+    <div class="row"><span class="seg" id="groundSeg"><button data-g="sea">Sea</button><button data-g="country">Country</button><button data-g="city">City</button><button data-g="dusk">Dusk sea</button></span></div>
+    <h2>Show</h2>
+    <div class="row">
+      <label><input type="checkbox" id="gBoss"> Boss</label>
+      <label><input type="checkbox" id="gBossFlip"> Boss faces player</label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="gLabels" checked> Labels</label>
+      <label><input type="checkbox" id="gShadows" checked> Shadows</label>
+      <label><input type="checkbox" id="gAnim" checked> Animate</label>
+    </div>
+    <div class="row"><button id="gFlash">Flash everything</button><button id="gAim">Sweep turrets</button></div>
+  </div>
+
+  <div id="inspCtl" class="hidden">
+    <h2>Model</h2>
+    <div class="row"><button id="prev">◀</button><select id="modelSel"></select><button id="next">▶</button></div>
+    <div class="row"><span class="seg" id="viewSeg"><button data-v="top">Game angle</button><button data-v="34">¾</button><button data-v="side">Side</button><button data-v="front">Front</button></span></div>
+    <div class="row">
+      <label><input type="checkbox" id="iRotate"> Auto-rotate</label>
+      <label><input type="checkbox" id="iAnim" checked> Animate</label>
+      <label><input type="checkbox" id="iWire"> Wireframe</label>
+      <label><input type="checkbox" id="iShadow" checked> Shadow</label>
+    </div>
+    <h2>Hit flash</h2>
+    <div class="row"><span class="k">flash</span><input type="range" id="iFlash" min="0" max="1" step="0.01" value="0"><span class="v" id="iFlashV">0</span><button id="iPulse">Pulse</button></div>
+    <div id="playerCtl">
+      <h2>Player</h2>
+      <div class="row"><span class="k">bank</span><input type="range" id="iBank" min="-1" max="1" step="0.01" value="0"><span class="v" id="iBankV">0</span></div>
+      <div class="row"><span class="k">thrust</span><input type="range" id="iThrust" min="0" max="1" step="0.01" value="0.5"><span class="v" id="iThrustV">0.5</span></div>
+      <div class="row"><label><input type="checkbox" id="iHitbox" checked> Hitbox marker</label></div>
+    </div>
+    <div id="aimCtl">
+      <h2>Turret aim</h2>
+      <div class="row"><span class="k">yaw</span><input type="range" id="iAim" min="-180" max="180" step="1" value="0"><span class="v" id="iAimV">0°</span></div>
+    </div>
+    <div id="bossCtl">
+      <h2>Boss core</h2>
+      <div class="row"><span class="k">open</span><input type="range" id="iOpen" min="0" max="1" step="0.01" value="0"><span class="v" id="iOpenV">0</span></div>
+      <h2>Destroyed parts</h2>
+      <div class="row" id="partBoxes"></div>
+    </div>
+    <div id="itemCtl">
+      <h2>Item variant</h2>
+      <div class="row"><span class="seg" id="pSeg"><button data-c="red">P red</button><button data-c="blue">P blue</button></span>
+        <span class="seg" id="sSeg"><button data-k="H">S · H</button><button data-k="N">S · N</button></span></div>
+    </div>
+  </div>
+
+  <h2>Post</h2>
+  <div class="row"><label><input type="checkbox" id="bloom" checked> Bloom (HIGH quality)</label></div>
+
+  <h2>Budgets</h2>
+  <table id="stats"><thead><tr><th>model</th><th class="n">meshes</th><th class="n">tris</th><th class="n">budget</th></tr></thead><tbody></tbody></table>
+  <p class="sub" style="margin-top:8px">Drag to orbit in Inspect. URL params: <code>mode, model, ground, boss, flip, open, destroy, flash, bank, thrust, aim, view, bloom, ui</code>.</p>
+</aside>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { createPlayer, createEnemy, createBoss, createItem, createShadow, modelStats, ENEMY_TYPES, GROUND_TYPES } from '../js/models.js';
+
+const GROUND_Y = -6;
+const SUN_POS = new THREE.Vector3(-14, 30, 10);
+const Q = new URLSearchParams(location.search);
+const qnum = (k, d) => (Q.has(k) ? Number(Q.get(k)) : d);
+
+// ------------------------------------------------------------------ renderer
+const view = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+view.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x3b3226, 1.1);
+const sun = new THREE.DirectionalLight(0xfff1dc, 2.4);
+sun.position.copy(SUN_POS); sun.target.position.set(0, 0, 0);
+scene.add(hemi, sun, sun.target);
+
+const gameCam = new THREE.PerspectiveCamera(40, 0.5, 1, 220);
+gameCam.position.set(0, 41, 9); gameCam.lookAt(0, 0, -6);
+const inspCam = new THREE.PerspectiveCamera(35, 1, 0.05, 400);
+const controls = new OrbitControls(inspCam, renderer.domElement);
+controls.enableDamping = true; controls.enabled = false;
+
+const composer = new EffectComposer(renderer);
+const renderPass = new RenderPass(scene, gameCam);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.7, 0.4, 0.85);
+composer.addPass(renderPass); composer.addPass(bloomPass); composer.addPass(new OutputPass());
+
+// ------------------------------------------------------------------ grounds
+function makeGroundTex(kind) {
+  const S = 512, cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const g = cv.getContext('2d');
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  if (kind === 'sea' || kind === 'dusk') {
+    g.fillStyle = kind === 'sea' ? '#1c3d56' : '#2a2440'; g.fillRect(0, 0, S, S);
+    for (let i = 0; i < 900; i++) {
+      const x = rnd() * S, y = rnd() * S, w = 8 + rnd() * 30;
+      g.strokeStyle = kind === 'sea' ? `rgba(120,180,210,${0.05 + rnd() * 0.08})` : `rgba(255,150,120,${0.04 + rnd() * 0.07})`;
+      g.lineWidth = 1 + rnd() * 1.5; g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + w / 2, y - 2, x + w, y); g.stroke();
+    }
+  } else if (kind === 'country') {
+    g.fillStyle = '#3e4a2d'; g.fillRect(0, 0, S, S);
+    const cols = ['#46532f', '#56603a', '#4d5a36', '#5e5a3c', '#3a4428', '#62613f'];
+    for (let y = 0; y < S; y += 64) for (let x = 0; x < S; x += 64 + ((y / 64) % 2) * 16) {
+      g.fillStyle = cols[Math.floor(rnd() * cols.length)]; g.fillRect(x + 2, y + 2, 60 + rnd() * 20, 60);
+      g.strokeStyle = 'rgba(0,0,0,0.12)'; g.lineWidth = 1;
+      for (let k = 6; k < 60; k += 6) { g.beginPath(); g.moveTo(x + 2, y + k); g.lineTo(x + 62, y + k); g.stroke(); }
+    }
+    for (let i = 0; i < 140; i++) { g.fillStyle = `rgba(28,40,20,${0.5 + rnd() * 0.4})`; g.beginPath(); g.arc(rnd() * S, rnd() * S, 3 + rnd() * 7, 0, 7); g.fill(); }
+    g.fillStyle = '#55524a'; g.fillRect(S / 2 - 14, 0, 28, S);
+  } else {
+    g.fillStyle = '#2f3237'; g.fillRect(0, 0, S, S);
+    for (let y = 0; y < S; y += 64) for (let x = 0; x < S; x += 64) {
+      const n = 1 + Math.floor(rnd() * 3);
+      for (let k = 0; k < n; k++) {
+        const bw = 18 + rnd() * 30, bh = 18 + rnd() * 30, bx = x + 6 + rnd() * (52 - bw), by = y + 6 + rnd() * (52 - bh);
+        const v = 70 + Math.floor(rnd() * 40); g.fillStyle = `rgb(${v},${v + 2},${v + 6})`; g.fillRect(bx, by, bw, bh);
+        g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(bx + bw, by + 3, 4, bh);
+      }
+    }
+    g.strokeStyle = 'rgba(210,200,150,0.18)'; g.setLineDash([6, 8]);
+    for (let y = 0; y < S; y += 64) { g.beginPath(); g.moveTo(0, y + 1); g.lineTo(S, y + 1); g.stroke(); }
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(6, 6); t.anisotropy = 8;
+  return t;
+}
+const GROUND_TEX = {};
+const groundMat = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0 });
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 160), groundMat);
+ground.rotation.x = -Math.PI / 2; ground.position.set(0, GROUND_Y, -10);
+scene.add(ground);
+const SKY = { sea: 0x8fb4cf, country: 0xa7bfd0, city: 0x9aa7b4, dusk: 0x4a3a58 };
+function setGround(kind) {
+  if (!GROUND_TEX[kind]) GROUND_TEX[kind] = makeGroundTex(kind);
+  groundMat.map = GROUND_TEX[kind]; groundMat.needsUpdate = true;
+  scene.background = new THREE.Color(SKY[kind]);
+  state.ground = kind;
+  if (kind === 'dusk') { hemi.color.set(0xb89ad0); hemi.intensity = 0.8; sun.color.set(0xffa070); sun.intensity = 1.8; }
+  else { hemi.color.set(0xcfe3ff); hemi.intensity = 1.1; sun.color.set(0xfff1dc); sun.intensity = 2.4; }
+  seg('groundSeg', 'g', kind);
+}
+
+// ------------------------------------------------------------------ catalog
+const CATALOG = [
+  { id: 'player', make: () => createPlayer(), budget: [4, 1500] },
+  ...ENEMY_TYPES.map((t) => ({ id: t, make: () => createEnemy(t), budget: t === 'crawler' ? [6, 2500] : [4, 700], ground: GROUND_TYPES.includes(t) })),
+  { id: 'boss', make: () => createBoss(), budget: [24, 8000] },
+  { id: 'item P', make: () => createItem('P'), budget: [4, 700] },
+  { id: 'item S', make: () => createItem('S'), budget: [4, 700] },
+  { id: 'item B', make: () => createItem('B'), budget: [4, 700] },
+  { id: 'item medal', make: () => createItem('medal'), budget: [4, 700] },
+  { id: 'item 1UP', make: () => createItem('1UP'), budget: [4, 700] },
+];
+
+// budget table + console log
+const tbody = document.querySelector('#stats tbody');
+for (const c of CATALOG) {
+  const m = c.make(); m.updateMatrixWorld(true);
+  const s = modelStats(m);
+  const okM = s.drawCalls <= c.budget[0], okT = s.tris <= c.budget[1];
+  console.log(`[models] ${c.id.padEnd(11)} meshes=${s.meshes} sprites=${s.sprites} drawCalls=${s.drawCalls} tris=${s.tris}  budget ≤${c.budget[0]} / ≤${c.budget[1]}  ${okM && okT ? 'OK' : 'OVER'}`);
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${c.id}</td><td class="n ${okM ? 'ok' : 'bad'}">${s.drawCalls}</td><td class="n ${okT ? 'ok' : 'bad'}">${s.tris}</td><td class="n" style="color:var(--ink-soft)">${c.budget[0]}/${c.budget[1]}</td>`;
+  tbody.appendChild(tr);
+  c.stats = s;
+  if (m.userData.dispose) m.userData.dispose();
+}
+
+// ------------------------------------------------------------------ state
+const state = { mode: 'game', ground: 'sea', t: 0, anim: true, flash: 0, pulse: 0, aim: 0, sweep: false };
+const labelsEl = document.getElementById('labels');
+const hud = document.getElementById('hud');
+
+// ------------------------------------------------------------------ gameplay layout
+const game = new THREE.Group(); scene.add(game);
+const gameItems = [];   // { model, shadow, label, air }
+function sunOffset(h) { return new THREE.Vector3(SUN_POS.x, 0, SUN_POS.z).multiplyScalar(-h / SUN_POS.y); }
+function place(id, make, x, y, z, ry = 0, extra) {
+  const m = make(); m.position.set(x, y, z); m.rotation.y = ry;
+  if (extra) extra(m);
+  game.add(m);
+  const air = y > GROUND_Y + 1;
+  const sh = createShadow(m);
+  const off = sunOffset(air ? y - GROUND_Y : 0.35);
+  sh.position.set(x + off.x, GROUND_Y, z + off.z); sh.rotation.y = ry;
+  game.add(sh);
+  const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = id; labelsEl.appendChild(lbl);
+  const it = { id, model: m, shadow: sh, label: lbl, air };
+  gameItems.push(it);
+  return it;
+}
+// air units on the gameplay plane (y=0), ground units on the ground (y=−6)
+place('player', createPlayer, 0, 0, 5.2);
+place('dart', () => createEnemy('dart'), -5.2, 0, -3.5, Math.PI);
+place('dart', () => createEnemy('dart'), -3.4, 0, -4.6, Math.PI);
+place('hornet', () => createEnemy('hornet'), 0.4, 0, -4.2, Math.PI);
+place('carrier', () => createEnemy('carrier'), 5.0, 0, -3.6, Math.PI);
+place('bomber', () => createEnemy('bomber'), 3.0, 0, -12.5, Math.PI);
+place('tank', () => createEnemy('tank'), -8.0, GROUND_Y, -12.0, Math.PI, (m) => { m.userData.turret.rotation.y = 0.5; });
+place('turret', () => createEnemy('turret'), -4.0, GROUND_Y, -14.5, 0, (m) => { m.userData.turret.rotation.y = Math.PI + 0.3; });
+place('gunboat', () => createEnemy('gunboat'), 8.8, GROUND_Y, -5.0, Math.PI * 0.92, (m) => { m.userData.turret.rotation.y = 0.4; });
+place('crawler', () => createEnemy('crawler'), -2.5, GROUND_Y, -24.0, Math.PI);
+const ITEMS_ROW = [['P', (m) => m.userData.setColor('red')], ['P', (m) => m.userData.setColor('blue')], ['S', (m) => m.userData.setKind('H')],
+  ['S', (m) => m.userData.setKind('N')], ['B'], ['medal'], ['1UP']];
+ITEMS_ROW.forEach(([k, f], i) => place(k === 'P' ? (i ? 'P blue' : 'P red') : k === 'S' ? (i === 2 ? 'S·H' : 'S·N') : k,
+  () => { const m = createItem(k); if (f) f(m); return m; }, -6.0 + i * 2.0, 0, 1.2));
+let bossItem = null;
+function setBoss(on) {
+  if (on && !bossItem) {
+    bossItem = place('boss', createBoss, 0, 0, -14.5, state.bossFlip ? Math.PI : 0);
+    for (const it of gameItems) if (it !== bossItem && it.air && it.model.position.z < -8) it.model.visible = it.shadow.visible = false, it.label.style.display = 'none';
+  } else if (!on && bossItem) {
+    game.remove(bossItem.model, bossItem.shadow); bossItem.label.remove();
+    gameItems.splice(gameItems.indexOf(bossItem), 1); bossItem = null;
+    for (const it of gameItems) { it.model.visible = it.shadow.visible = true; it.label.style.display = ''; }
+  }
+  document.getElementById('gBoss').checked = on;
+}
+
+// ------------------------------------------------------------------ inspect
+const insp = new THREE.Group(); insp.visible = false; scene.add(insp);
+const inspFloor = new THREE.Mesh(new THREE.CircleGeometry(30, 64), new THREE.MeshStandardMaterial({ color: 0x1b2230, roughness: 1 }));
+inspFloor.rotation.x = -Math.PI / 2; insp.add(inspFloor);
+let cur = null, curShadow = null, curIdx = 0;
+const sel = document.getElementById('modelSel');
+CATALOG.forEach((c, i) => { const o = document.createElement('option'); o.value = i; o.textContent = c.id; sel.appendChild(o); });
+function select(i) {
+  curIdx = (i + CATALOG.length) % CATALOG.length; sel.value = curIdx;
+  if (cur) { insp.remove(cur); if (cur.userData.dispose) cur.userData.dispose(); }
+  if (curShadow) insp.remove(curShadow);
+  const c = CATALOG[curIdx];
+  cur = c.make(); insp.add(cur);
+  cur.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(cur);
+  const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
+  const floorY = c.ground ? -0.001 : box.min.y - Math.max(0.6, size.x * 0.25);
+  inspFloor.position.y = floorY;
+  curShadow = createShadow(cur);
+  const off = sunOffset(-floorY);
+  curShadow.position.set(off.x * (c.ground ? 0.15 : 1), floorY, off.z * (c.ground ? 0.15 : 1));
+  insp.add(curShadow);
+  curShadow.visible = document.getElementById('iShadow').checked;
+  const r = Math.max(size.x, size.z, size.y) * 0.5 + 0.2;
+  controls.target.copy(center);
+  state.inspR = r; state.inspCenter = center.clone();
+  setView(state.view || '34');
+  document.getElementById('playerCtl').classList.toggle('hidden', c.id !== 'player');
+  const hasAim = !!(cur.userData.turret || (cur.userData.parts && cur.userData.parts.turrets));
+  document.getElementById('aimCtl').classList.toggle('hidden', !hasAim);
+  document.getElementById('bossCtl').classList.toggle('hidden', !cur.userData.parts);
+  document.getElementById('itemCtl').classList.toggle('hidden', !c.id.startsWith('item P') && !c.id.startsWith('item S'));
+  document.getElementById('iOpen').parentElement.classList.toggle('hidden', c.id !== 'boss');
+  buildPartBoxes();
+  applyInspectControls();
+  const s = modelStats(cur);
+  console.log(`[inspect] ${c.id}: meshes=${s.meshes} sprites=${s.sprites} tris=${s.tris}`);
+}
+function partList(m) {
+  const p = m.userData.parts; if (!p) return [];
+  const out = [];
+  for (const [k, v] of Object.entries(p)) {
+    if (Array.isArray(v)) v.forEach((t, i) => out.push([`${k.replace(/s$/, '')}${i}`, t]));
+    else out.push([k, v]);
+  }
+  return out;
+}
+function buildPartBoxes() {
+  const box = document.getElementById('partBoxes'); box.innerHTML = '';
+  for (const [name, part] of partList(cur)) {
+    const l = document.createElement('label');
+    l.innerHTML = `<input type="checkbox" data-part="${name}"> ${name}`;
+    l.querySelector('input').addEventListener('change', (e) => part.userData.setDestroyed(e.target.checked));
+    box.appendChild(l);
+  }
+}
+function setView(v) {
+  state.view = v; seg('viewSeg', 'v', v);
+  const r = state.inspR || 2, c = state.inspCenter || new THREE.Vector3();
+  const d = r / Math.tan((inspCam.fov / 2) * Math.PI / 180) * 1.25 * qnum('dist', 1);
+  const dir = v === 'top' ? new THREE.Vector3(0, 41, 15) : v === 'side' ? new THREE.Vector3(1, 0.25, 0.1)
+    : v === 'front' ? new THREE.Vector3(0, 0.35, -1) : new THREE.Vector3(0.8, 0.75, 0.9);
+  dir.normalize();
+  inspCam.position.copy(c).addScaledVector(dir, d);
+  inspCam.lookAt(c); controls.target.copy(c); controls.update();
+}
+function applyInspectControls() {
+  if (!cur) return;
+  const ud = cur.userData;
+  if (ud.setBank) ud.setBank(+document.getElementById('iBank').value);
+  if (ud.setThrust) ud.setThrust(+document.getElementById('iThrust').value);
+  if (ud.hitboxMarker) ud.hitboxMarker.visible = document.getElementById('iHitbox').checked;
+  aimAll(cur, +document.getElementById('iAim').value * Math.PI / 180);
+  if (ud.parts && ud.parts.core && ud.parts.core.userData.setOpen) ud.parts.core.userData.setOpen(+document.getElementById('iOpen').value);
+  setWire(document.getElementById('iWire').checked);
+}
+function aimAll(m, a) {
+  const ud = m.userData;
+  if (ud.turret) ud.turret.rotation.y = a;
+  if (ud.parts) {
+    if (ud.parts.turrets) ud.parts.turrets.forEach((t) => (t.rotation.y = a));
+    if (ud.parts.gunL) { ud.parts.gunL.rotation.y = a * 0.5; ud.parts.gunR.rotation.y = a * 0.5; }
+  }
+}
+function setWire(on) {
+  cur.traverse((o) => { if (o.isMesh && o.material && 'wireframe' in o.material) o.material.wireframe = on; });
+}
+
+// ------------------------------------------------------------------ mode
+function setMode(mode) {
+  state.mode = mode;
+  document.body.classList.toggle('game', mode === 'game');
+  document.body.classList.toggle('inspect', mode === 'inspect');
+  game.visible = mode === 'game'; insp.visible = mode === 'inspect'; ground.visible = mode === 'game';
+  labelsEl.style.display = mode === 'game' && document.getElementById('gLabels').checked ? '' : 'none';
+  document.getElementById('gameCtl').classList.toggle('hidden', mode !== 'game');
+  document.getElementById('inspCtl').classList.toggle('hidden', mode !== 'inspect');
+  controls.enabled = mode === 'inspect';
+  renderPass.camera = mode === 'game' ? gameCam : inspCam;
+  if (mode === 'inspect') { scene.background = new THREE.Color(0x121824); if (!cur) select(curIdx); }
+  else setGround(state.ground);
+  seg('modeSeg', 'mode', mode);
+  resize();
+}
+function seg(id, key, val) {
+  for (const b of document.querySelectorAll(`#${id} button`)) b.classList.toggle('on', b.dataset[key] === val);
+}
+
+// ------------------------------------------------------------------ UI wiring
+const $ = (id) => document.getElementById(id);
+for (const b of document.querySelectorAll('#modeSeg button')) b.onclick = () => setMode(b.dataset.mode);
+for (const b of document.querySelectorAll('#groundSeg button')) b.onclick = () => setGround(b.dataset.g);
+for (const b of document.querySelectorAll('#viewSeg button')) b.onclick = () => setView(b.dataset.v);
+$('gBoss').onchange = (e) => setBoss(e.target.checked);
+$('gBossFlip').onchange = (e) => { state.bossFlip = e.target.checked; if (bossItem) { bossItem.model.rotation.y = bossItem.shadow.rotation.y = e.target.checked ? Math.PI : 0; } };
+$('gLabels').onchange = (e) => (labelsEl.style.display = e.target.checked ? '' : 'none');
+$('gShadows').onchange = (e) => gameItems.forEach((it) => (it.shadow.visible = e.target.checked && it.model.visible));
+$('gAnim').onchange = (e) => (state.anim = e.target.checked);
+$('gFlash').onclick = () => (state.pulse = 1);
+$('gAim').onclick = () => (state.sweep = !state.sweep, $('gAim').classList.toggle('on', state.sweep));
+$('prev').onclick = () => select(curIdx - 1);
+$('next').onclick = () => select(curIdx + 1);
+sel.onchange = () => select(+sel.value);
+$('iRotate').onchange = (e) => (controls.autoRotate = e.target.checked);
+$('iAnim').onchange = (e) => (state.anim = e.target.checked);
+$('iWire').onchange = (e) => setWire(e.target.checked);
+$('iShadow').onchange = (e) => curShadow && (curShadow.visible = e.target.checked);
+const bindRange = (id, fmt, fn) => { const el = $(id), v = $(id + 'V'); el.oninput = () => { v.textContent = fmt(+el.value); fn(+el.value); }; };
+bindRange('iFlash', (x) => x.toFixed(2), (x) => { state.flash = x; });
+bindRange('iBank', (x) => x.toFixed(2), () => applyInspectControls());
+bindRange('iThrust', (x) => x.toFixed(2), () => applyInspectControls());
+bindRange('iAim', (x) => x + '°', () => applyInspectControls());
+bindRange('iOpen', (x) => x.toFixed(2), () => applyInspectControls());
+$('iHitbox').onchange = () => applyInspectControls();
+$('iPulse').onclick = () => (state.pulse = 1);
+for (const b of document.querySelectorAll('#pSeg button')) b.onclick = () => { if (cur.userData.setColor) cur.userData.setColor(b.dataset.c); seg('pSeg', 'c', b.dataset.c); };
+for (const b of document.querySelectorAll('#sSeg button')) b.onclick = () => { if (cur.userData.setKind) cur.userData.setKind(b.dataset.k); seg('sSeg', 'k', b.dataset.k); };
+$('bloom').onchange = () => {};
+$('toggle').onclick = () => document.body.classList.toggle('has-panel');
+
+// ------------------------------------------------------------------ sizing + loop
+function resize() {
+  const w = view.clientWidth || 1, h = view.clientHeight || 1;
+  renderer.setSize(w, h, false);
+  composer.setSize(w, h);
+  bloomPass.resolution.set(w, h);
+  gameCam.aspect = w / h; gameCam.updateProjectionMatrix();
+  inspCam.aspect = w / h; inspCam.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(view);
+
+const _p = new THREE.Vector3();
+const clock = new THREE.Clock();
+let frames = 0, fpsT = 0, fps = 0;
+function frame() {
+  const dt = Math.min(0.05, clock.getDelta());
+  if (state.anim) state.t += dt;
+  const t = state.t;
+  if (state.pulse > 0) state.pulse = Math.max(0, state.pulse - dt * 3.5);
+  const fl = Math.max(state.flash, state.pulse);
+  if (state.mode === 'game') {
+    for (const it of gameItems) {
+      const ud = it.model.userData;
+      if (state.anim && ud.update) ud.update(dt, t);
+      ud.setFlash(fl);
+      if (state.sweep) aimAll(it.model, Math.sin(t * 0.8) * 2.2);
+      if (it.id === 'player' && ud.setBank) ud.setBank(state.anim ? Math.sin(t * 0.9) * 0.8 : qnum('bank', 0));
+    }
+    // labels
+    const w = view.clientWidth, h = view.clientHeight;
+    if (labelsEl.style.display !== 'none') for (const it of gameItems) {
+      if (!it.model.visible) continue;
+      _p.copy(it.model.position); _p.z += it.id === 'boss' ? 5.2 : it.id === 'bomber' || it.id === 'crawler' ? 2.8 : 0.9;
+      _p.project(gameCam);
+      it.label.style.left = ((_p.x * 0.5 + 0.5) * w) + 'px'; it.label.style.top = ((-_p.y * 0.5 + 0.5) * h) + 'px';
+    }
+  } else if (cur) {
+    if (state.anim && cur.userData.update) cur.userData.update(dt, t);
+    cur.userData.setFlash(fl);
+    controls.update();
+  }
+  const cam = state.mode === 'game' ? gameCam : inspCam;
+  if ($('bloom').checked) { renderPass.camera = cam; composer.render(dt); } else renderer.render(scene, cam);
+  frames++; fpsT += dt;
+  if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
+  const info = renderer.info.render;
+  let txt = `${fps.toFixed(0)} fps · ${info.calls} calls · ${(info.triangles / 1000).toFixed(1)}k tris`;
+  if (state.mode === 'inspect' && cur) { const s = CATALOG[curIdx].stats; txt += `\n${CATALOG[curIdx].id}: ${s.drawCalls} draws · ${s.tris} tris`; }
+  hud.textContent = txt;
+  requestAnimationFrame(frame);
+}
+
+// ------------------------------------------------------------------ boot from URL
+if (Q.get('ui') === '0') document.body.classList.add('noui');
+if (Q.has('bloom')) $('bloom').checked = Q.get('bloom') !== '0';
+if (Q.get('labels') === '0') $('gLabels').checked = false;
+state.ground = Q.get('ground') || 'sea';
+state.bossFlip = Q.get('flip') === '1'; $('gBossFlip').checked = state.bossFlip;
+if (Q.has('anim')) { state.anim = Q.get('anim') !== '0'; $('gAnim').checked = $('iAnim').checked = state.anim; }
+if (Q.has('t')) state.t = +Q.get('t');
+state.flash = qnum('flash', 0); $('iFlash').value = state.flash;
+$('iBank').value = qnum('bank', 0); $('iThrust').value = qnum('thrust', 0.5); $('iAim').value = qnum('aim', 0); $('iOpen').value = qnum('open', 0);
+if (Q.has('view')) state.view = Q.get('view');
+if (Q.has('model')) { const i = CATALOG.findIndex((c) => c.id === Q.get('model') || c.id === 'item ' + Q.get('model')); if (i >= 0) curIdx = i; }
+setMode(Q.get('mode') === 'inspect' ? 'inspect' : 'game');
+if (Q.get('boss') === '1') setBoss(true);
+if (state.mode === 'inspect' && Q.has('destroy')) {
+  for (const name of Q.get('destroy').split(',')) {
+    const p = partList(cur).find(([n]) => n === name);
+    if (p) { p[1].userData.setDestroyed(true); const cb = document.querySelector(`[data-part="${name}"]`); if (cb) cb.checked = true; }
+  }
+}
+if (state.mode === 'inspect') {
+  if (Q.has('color') && cur.userData.setColor) cur.userData.setColor(Q.get('color'));
+  if (Q.has('kind') && cur.userData.setKind) cur.userData.setKind(Q.get('kind'));
+}
+if (Q.get('ui') === '0') resize();
+window.__preview = { setMode, select, setBoss, setGround, setView, state, scene, CATALOG, get current() { return cur; } };
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

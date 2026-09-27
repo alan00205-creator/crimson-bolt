@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crimson Bolt · Audio Lab</title>
+<script type="importmap">{"imports":{
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+<style>
+  :root {
+    --bg: #0d0f14; --panel: #161a22; --line: #262c38; --ink: #e7e9ee; --dim: #8a93a6;
+    --red: #e0343c; --amber: #ffb547; --ok: #3ccf7a; --bad: #ff4d5e; --cyan: #5fd4ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { padding: 16px; max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: .04em; }
+  h1 b { color: var(--red); }
+  .sub { color: var(--dim); margin: 0 0 14px; font-size: 13px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .14em; color: var(--dim);
+    margin: 0 0 10px; font-weight: 600; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; color: var(--ink); background: #20263200; border: 1px solid #3a4254;
+    background: #1d2330; padding: 8px 12px; border-radius: 7px; cursor: pointer; min-height: 38px;
+    touch-action: manipulation; }
+  button:hover { border-color: #56617a; background: #232a39; }
+  button:active { transform: translateY(1px); }
+  button.primary { background: var(--red); border-color: var(--red); color: #fff; font-weight: 600; }
+  button.on { border-color: var(--amber); color: var(--amber); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+  .grid button { width: 100%; text-align: left; }
+  .grid button small { display: block; color: var(--dim); font-size: 11px; }
+  label.slider { display: grid; grid-template-columns: 7.2em 1fr 42px; align-items: center; gap: 8px;
+    color: var(--dim); font-size: 13px; min-width: 250px; flex: 1 1 250px; }
+  label.slider input { width: 100%; accent-color: var(--red); }
+  label.slider output { width: 42px; text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
+  #status { font-size: 12px; color: var(--dim); margin-left: auto; }
+  #status b { color: var(--ok); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--dim); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+  td.ok { color: var(--ok); } td.bad { color: var(--bad); font-weight: 700; }
+  tr.click { cursor: pointer; } tr.click:hover td { background: #1c2230; }
+  .scroll { overflow-x: auto; }
+  #summary { margin: 10px 0 0; font-weight: 600; }
+  #viz { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; }
+  .tile { background: #0a0c11; border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
+  .tile canvas { width: 100%; height: auto; display: block; border-radius: 4px; }
+  .tile div { font-size: 12px; color: var(--dim); display: flex; justify-content: space-between; padding: 2px 2px 4px; }
+  .tile div b { color: var(--ink); }
+  .tile a { color: var(--cyan); }
+  .note { color: var(--dim); font-size: 12px; margin: 8px 0 0; }
+  @media (max-width: 560px) { body { padding: 10px; } section { padding: 10px; } }
+</style>
+</head>
+<body>
+  <h1><b>CRIMSON BOLT</b> · Audio Lab</h1>
+  <p class="sub">Preview and verify <code>js/audio.js</code> — every SFX, every music track, buses, limiter, voice limiting. Tap <b>Start audio</b> first (browsers require a gesture).</p>
+
+  <section>
+    <div class="row">
+      <button class="primary" id="init">Start audio</button>
+      <button id="mute">Mute</button>
+      <button id="suspend">Suspend</button>
+      <button id="resume">Resume</button>
+      <span id="status">not started</span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label class="slider">Music <input type="range" id="mvol" min="0" max="1" step="0.01" value="0.8"><output id="mvolo">0.80</output></label>
+      <label class="slider">SFX <input type="range" id="svol" min="0" max="1" step="0.01" value="0.9"><output id="svolo">0.90</output></label>
+      <label class="slider">Duck <input type="range" id="duck" min="0" max="1" step="0.01" value="0"><output id="ducko">0.00</output></label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Music</h2>
+    <div class="row" id="tracks"></div>
+    <p class="note">Tracks crossfade (~0.6 s). The loop plays twice with different orchestration (harmony, doubling, busier drums) before repeating.</p>
+  </section>
+
+  <section>
+    <h2>Sound effects</h2>
+    <div class="row" style="margin-bottom:10px">
+      <label class="slider">Medal chain <input type="range" id="mpitch" min="0" max="6" step="1" value="0"><output id="mpitcho">0</output></label>
+      <label class="slider">Pan <input type="range" id="pan" min="-1" max="1" step="0.1" value="0"><output id="pano">0.0</output></label>
+      <label class="slider">Vol <input type="range" id="vol" min="0" max="1" step="0.05" value="1"><output id="volo">1.00</output></label>
+    </div>
+    <div class="grid" id="sfx"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="firefight">Simulate 6 s of firefight</button>
+      <button id="chain">Medal chain 0→6</button>
+      <button id="pile">30 explosions at once</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Automated verification</h2>
+    <div class="row">
+      <button class="primary" id="auto">Auto test</button>
+      <button id="vizall">Draw waveforms + spectrograms</button>
+      <span class="note" id="autonote">Renders everything offline (OfflineAudioContext, 44.1 kHz, volumes at 1.0 = worst case). Click a row to visualise it; each tile links the exact render as a WAV.</span>
+    </div>
+    <div class="scroll"><table id="results"></table></div>
+    <p id="summary"></p>
+    <div class="scroll"><table id="songs"></table></div>
+  </section>
+
+  <section>
+    <h2>Visualiser</h2>
+    <div id="viz"></div>
+  </section>
+
+<script type="module">
+import { audio, SFX_NAMES, MUSIC_TRACKS, __renderForTest, __renderBuffer, __songInfo } from '../js/audio.js';
+
+const $ = (id) => document.getElementById(id);
+const DUR = { shot: 0.5, laser: 0.5, hit: 0.5, graze: 0.5, lock: 0.5, select: 0.5, hitArmor: 0.8,
+  item: 0.8, missile: 1, pause: 1, confirm: 1.2, explodeS: 1.5, medal: 1.5, powerup: 1.5,
+  oneup: 2, explodeM: 3, explodeL: 5, death: 5, warning: 4, stageStart: 3.5, bomb: 6, bossDown: 9 };
+const TRACK_SECONDS = 8;
+
+// ---- live controls
+function refreshStatus() {
+  $('status').innerHTML = audio.ready ? `<b>running</b> · track: ${audio.track || '—'} · ${audio.muted ? 'muted' : 'sound on'}` : 'not started';
+}
+setInterval(refreshStatus, 500);
+$('init').onclick = () => { audio.init(); refreshStatus(); };
+$('mute').onclick = () => { audio.setMuted(!audio.muted); $('mute').classList.toggle('on', audio.muted); $('mute').textContent = audio.muted ? 'Unmute' : 'Mute'; };
+$('suspend').onclick = () => audio.suspend();
+$('resume').onclick = () => audio.resume();
+const bindSlider = (id, fn, digits = 2) => {
+  const el = $(id), out = $(id + 'o');
+  const upd = () => { out.textContent = (+el.value).toFixed(digits); fn(+el.value); };
+  el.oninput = upd; upd();
+};
+bindSlider('mvol', (v) => audio.setMusicVolume(v));
+bindSlider('svol', (v) => audio.setSfxVolume(v));
+bindSlider('duck', (v) => audio.setMusicDuck(v));
+bindSlider('mpitch', () => {}, 0);
+bindSlider('pan', () => {}, 1);
+bindSlider('vol', () => {});
+
+for (const t of [...MUSIC_TRACKS, null]) {
+  const b = document.createElement('button');
+  b.textContent = t ? t : 'Stop (null)';
+  b.onclick = () => { audio.init(); audio.music(t); refreshStatus(); };
+  $('tracks').appendChild(b);
+}
+const HINT = { shot: 'vulcan · 10/s', laser: 'blue laser', medal: 'uses chain step', warning: '3 s klaxon',
+  bossDown: 'long tail', stageStart: 'fanfare', bomb: 'screen clear', graze: 'sparkle' };
+for (const n of SFX_NAMES) {
+  const b = document.createElement('button');
+  b.innerHTML = `${n}<small>${HINT[n] || '&nbsp;'}</small>`;
+  b.onclick = () => {
+    audio.init();
+    const pitch = n === 'medal' ? +$('mpitch').value * 2 : 0;
+    audio.play(n, { pitch, pan: +$('pan').value, vol: +$('vol').value });
+  };
+  $('sfx').appendChild(b);
+}
+$('firefight').onclick = () => {
+  audio.init();
+  const t0 = performance.now();
+  const id = setInterval(() => {
+    const t = performance.now() - t0;
+    if (t > 6000) return clearInterval(id);
+    audio.play('shot', { pan: (Math.random() - 0.5) * 0.2 });
+    if (Math.random() < 0.35) audio.play('hit', { pan: Math.random() - 0.5 });
+    if (Math.random() < 0.08) audio.play(['explodeS', 'explodeM', 'explodeL'][Math.random() * 3 | 0], { pan: Math.random() - 0.5 });
+    if (Math.random() < 0.05) audio.play('medal', { pitch: (Math.random() * 7 | 0) * 2 });
+    if (Math.random() < 0.04) audio.play('graze');
+  }, 100);
+};
+$('chain').onclick = () => { audio.init(); for (let i = 0; i <= 6; i++) setTimeout(() => audio.play('medal', { pitch: i * 2 }), i * 160); };
+$('pile').onclick = () => { audio.init(); for (let i = 0; i < 30; i++) audio.play(['explodeS', 'explodeM', 'explodeL'][i % 3]); };
+
+// ---- automated verification
+const db = (x) => (x > 0 ? (20 * Math.log10(x)).toFixed(1) : '-inf');
+async function runAuto() {
+  const rows = [];
+  const tbl = $('results');
+  tbl.innerHTML = '<tr><th>name</th><th>kind</th><th>sec</th><th>peak</th><th>peak dBFS</th><th>pre-limiter</th><th>rms dBFS</th><th>NaN</th><th>render ms</th><th>ms / s</th><th>result</th></tr>';
+  const jobs = [...SFX_NAMES.map((n) => [n, DUR[n] || 2]), ...MUSIC_TRACKS.map((t) => [t, TRACK_SECONDS]), ['gameplay', 8], ['stress', 6], ['stressRaw', 6]];
+  let pass = 0;
+  for (const [name, sec] of jobs) {
+    const r = await __renderForTest(name, sec);
+    const ok = r.rms > 0 && !r.nan && r.peak <= 1.0;
+    if (ok) pass++;
+    rows.push(r);
+    const tr = document.createElement('tr');
+    tr.className = 'click';
+    tr.innerHTML = `<td>${name}</td><td>${r.kind}</td><td>${sec}</td><td>${r.peak.toFixed(3)}</td><td>${db(r.peak)}</td>` +
+      `<td>${r.prePeak.toFixed(3)}</td><td>${db(r.rms)}</td><td class="${r.nan ? 'bad' : 'ok'}">${r.nan ? 'yes' : 'no'}</td>` +
+      `<td>${r.durationMs.toFixed(0)}</td><td>${r.msPerSec.toFixed(1)}</td><td class="${ok ? 'ok' : 'bad'}">${ok ? 'PASS' : 'FAIL'}</td>`;
+    tr.onclick = () => drawOne(name, sec, true);
+    tbl.appendChild(tr);
+  }
+  $('summary').textContent = `${pass} / ${jobs.length} passed (rms > 0, no NaN, final peak ≤ 1.0).`;
+  $('summary').style.color = pass === jobs.length ? 'var(--ok)' : 'var(--bad)';
+  const info = __songInfo();
+  $('songs').innerHTML = '<tr><th>track</th><th>BPM</th><th>intro bars</th><th>loop bars</th><th>intro s</th><th>loop s</th><th>variation cycle s</th><th>one-shot length s</th><th>notation warnings</th></tr>' +
+    Object.entries(info).map(([k, v]) => `<tr><td>${k}</td><td>${v.bpm}</td><td>${v.introBars}</td><td>${v.loopBars || '—'}</td><td>${v.introSec}</td>` +
+      `<td>${v.loopSec ?? '—'}</td><td>${v.variationCycleSec ?? '—'}</td><td>${v.lengthSec ?? '—'}</td><td class="${v.warn.length ? 'bad' : 'ok'}">${v.warn.length ? v.warn.join('; ') : 'none'}</td></tr>`).join('');
+  window.__autoResults = { rows, pass, total: jobs.length, songs: info };
+  return window.__autoResults;
+}
+$('auto').onclick = runAuto;
+
+// ---- visualiser: waveform (post-limiter, with pre-limiter ghost) + log-frequency spectrogram
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2;
+        const xr = re[b] * cr - im[b] * ci, xi = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - xr; im[b] = im[a] - xi; re[a] += xr; im[a] += xi;
+        const t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t;
+      }
+    }
+  }
+}
+function heat(v) { // 0..1 → dark blue → magenta → orange → white
+  const stops = [[8, 10, 22], [60, 20, 110], [200, 40, 120], [255, 140, 40], [255, 245, 210]];
+  const x = Math.max(0, Math.min(0.9999, v)) * (stops.length - 1), i = x | 0, f = x - i;
+  const a = stops[i], b = stops[i + 1];
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+function draw(canvas, buf, from = 0) {
+  const W = canvas.width, H = canvas.height, WH = Math.round(H * 0.34), SH = H - WH - 2;
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#07090d'; g.fillRect(0, 0, W, H);
+  const L = buf.getChannelData(0).subarray(from), R = buf.getChannelData(1).subarray(from), PL = buf.getChannelData(2).subarray(from), N = L.length;
+  // waveform
+  const mid = WH / 2;
+  g.strokeStyle = '#1c2230'; g.beginPath(); g.moveTo(0, mid); g.lineTo(W, mid); g.stroke();
+  for (let x = 0; x < W; x++) {
+    const a = Math.floor((x / W) * N), b = Math.floor(((x + 1) / W) * N);
+    let mx = 0, pm = 0;
+    for (let i = a; i < b; i++) { const v = Math.max(Math.abs(L[i]), Math.abs(R[i])); if (v > mx) mx = v; const p = Math.abs(PL[i]); if (p > pm) pm = p; }
+    g.fillStyle = 'rgba(255,80,90,0.25)'; g.fillRect(x, mid - Math.min(1, pm) * mid, 1, Math.min(1, pm) * mid * 2);
+    g.fillStyle = mx > 0.97 ? '#ffb547' : '#5fd4ff'; g.fillRect(x, mid - Math.max(0.5, mx * mid), 1, Math.max(1, mx * mid * 2));
+  }
+  // spectrogram (mono, 1024-pt, log frequency 40 Hz … 16 kHz)
+  const n = 1024, sr = buf.sampleRate, cols = W;
+  const img = g.createImageData(W, SH);
+  const re = new Float32Array(n), im = new Float32Array(n);
+  const fmin = 40, fmax = Math.min(16000, sr / 2);
+  for (let x = 0; x < cols; x++) {
+    const c = Math.floor((x / cols) * (N - n));
+    for (let i = 0; i < n; i++) { const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n); re[i] = (L[c + i] + R[c + i]) * 0.5 * w; im[i] = 0; }
+    fft(re, im);
+    for (let y = 0; y < SH; y++) {
+      const f = fmin * Math.pow(fmax / fmin, 1 - y / SH), k = Math.min(n / 2 - 1, Math.round((f / sr) * n));
+      const mag = Math.hypot(re[k], im[k]) / (n / 4);
+      const v = (20 * Math.log10(mag + 1e-9) + 80) / 80;
+      const [r, gg, b] = heat(v);
+      const o = (y * W + x) * 4;
+      img.data[o] = r; img.data[o + 1] = gg; img.data[o + 2] = b; img.data[o + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, WH + 2);
+  g.fillStyle = 'rgba(255,255,255,0.35)'; g.font = '10px sans-serif';
+  for (const f of [100, 1000, 10000]) { const y = WH + 2 + SH * (1 - Math.log(f / fmin) / Math.log(fmax / fmin)); g.fillText(f >= 1000 ? f / 1000 + 'k' : f, 2, y); }
+}
+function wavUrl(buf, from) {
+  const L = buf.getChannelData(0), R = buf.getChannelData(1), n = L.length - from, sr = buf.sampleRate;
+  const dv = new DataView(new ArrayBuffer(44 + n * 4));
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) dv.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, 'RIFF'); dv.setUint32(4, 36 + n * 4, true); str(8, 'WAVEfmt '); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, 2, true); dv.setUint32(24, sr, true); dv.setUint32(28, sr * 4, true);
+  dv.setUint16(32, 4, true); dv.setUint16(34, 16, true); str(36, 'data'); dv.setUint32(40, n * 4, true);
+  for (let i = 0, o = 44; i < n; i++, o += 4) {
+    dv.setInt16(o, Math.max(-1, Math.min(1, L[from + i])) * 32767, true);
+    dv.setInt16(o + 2, Math.max(-1, Math.min(1, R[from + i])) * 32767, true);
+  }
+  return URL.createObjectURL(new Blob([dv], { type: 'audio/wav' }));
+}
+async function drawOne(name, sec, prepend) {
+  const { buf, stats, from } = await __renderBuffer(name, sec);
+  const tile = document.createElement('div');
+  tile.className = 'tile';
+  tile.innerHTML = `<div><b>${name}</b><span>${sec}s · pk ${db(stats.peak)} · rms ${db(stats.rms)} dB · <a href="${wavUrl(buf, from)}" download="${name}.wav">wav</a></span></div>`;
+  const c = document.createElement('canvas');
+  c.width = 540; c.height = 260;
+  tile.appendChild(c);
+  draw(c, buf, from);
+  const v = $('viz');
+  if (prepend) v.prepend(tile); else v.appendChild(tile);
+}
+async function drawAll(list) {
+  $('viz').innerHTML = '';
+  const names = list || [...SFX_NAMES, ...MUSIC_TRACKS, 'gameplay', 'stress'];
+  for (const n of names) await drawOne(n, MUSIC_TRACKS.includes(n) ? TRACK_SECONDS : n === 'stress' ? 6 : n === 'gameplay' ? 8 : (DUR[n] || 2));
+  window.__vizDone = true;
+}
+$('vizall').onclick = () => drawAll();
+
+window.__lab = { audio, runAuto, drawAll, drawOne, __renderForTest, __renderBuffer, __songInfo };
+const q = new URLSearchParams(location.search);
+if (q.has('auto')) runAuto();
+if (q.has('viz')) drawAll(q.get('viz') ? q.get('viz').split(',') : null);
+</script>
+</body>
+</html>

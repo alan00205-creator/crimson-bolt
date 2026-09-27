@@ -48,7 +48,7 @@
   .ok { color: var(--ok); } .bad { color: var(--bad); font-weight: 700; }
   #hud { position: absolute; left: 8px; top: 8px; font: 11px/1.35 ui-monospace, Menlo, Consolas, monospace; color: #cfd8e3;
     text-shadow: 0 1px 2px #000; pointer-events: none; white-space: pre; }
-  #toggle { position: fixed; right: 10px; bottom: 10px; z-index: 5; display: none; }
+  #toggle { position: fixed; right: 10px; top: 10px; z-index: 5; display: none; }
   .hidden { display: none !important; }
   @media (max-width: 760px) {
     body.has-panel #stage { right: 0 !important; bottom: 46vh; }
@@ -162,10 +162,14 @@ const inspCam = new THREE.PerspectiveCamera(35, 1, 0.05, 400);
 const controls = new OrbitControls(inspCam, renderer.domElement);
 controls.enableDamping = true; controls.enabled = false;
 
+renderer.info.autoReset = false;          // we reset around the scene pass so the HUD shows scene-only numbers
+const sceneInfo = { calls: 0, tris: 0 };
 const composer = new EffectComposer(renderer);
 const renderPass = new RenderPass(scene, gameCam);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.7, 0.4, 0.85);
 composer.addPass(renderPass); composer.addPass(bloomPass); composer.addPass(new OutputPass());
+const _rpRender = renderPass.render.bind(renderPass);
+renderPass.render = (...a) => { renderer.info.reset(); _rpRender(...a); sceneInfo.calls = renderer.info.render.calls; sceneInfo.tris = renderer.info.render.triangles; };
 
 // ------------------------------------------------------------------ grounds
 function makeGroundTex(kind) {
@@ -280,7 +284,7 @@ place('carrier', () => createEnemy('carrier'), 5.0, 0, -3.6, Math.PI);
 place('bomber', () => createEnemy('bomber'), 3.0, 0, -12.5, Math.PI);
 place('tank', () => createEnemy('tank'), -8.0, GROUND_Y, -12.0, Math.PI, (m) => { m.userData.turret.rotation.y = 0.5; });
 place('turret', () => createEnemy('turret'), -4.0, GROUND_Y, -14.5, 0, (m) => { m.userData.turret.rotation.y = Math.PI + 0.3; });
-place('gunboat', () => createEnemy('gunboat'), 8.8, GROUND_Y, -5.0, Math.PI * 0.92, (m) => { m.userData.turret.rotation.y = 0.4; });
+place('gunboat', () => createEnemy('gunboat'), 7.2, GROUND_Y, -8.5, Math.PI * 0.92, (m) => { m.userData.turret.rotation.y = 0.4; });
 place('crawler', () => createEnemy('crawler'), -2.5, GROUND_Y, -24.0, Math.PI);
 const ITEMS_ROW = [['P', (m) => m.userData.setColor('red')], ['P', (m) => m.userData.setColor('blue')], ['S', (m) => m.userData.setKind('H')],
   ['S', (m) => m.userData.setKind('N')], ['B'], ['medal'], ['1UP']];
@@ -322,7 +326,7 @@ function select(i) {
   curShadow.position.set(off.x * (c.ground ? 0.15 : 1), floorY, off.z * (c.ground ? 0.15 : 1));
   insp.add(curShadow);
   curShadow.visible = document.getElementById('iShadow').checked;
-  const r = Math.max(size.x, size.z, size.y) * 0.5 + 0.2;
+  const r = size.length() * 0.5 + 0.1;   // bounding-sphere radius: wide models seen diagonally (¾ view) must fit too
   controls.target.copy(center);
   state.inspR = r; state.inspCenter = center.clone();
   setView(state.view || '34');
@@ -358,7 +362,9 @@ function buildPartBoxes() {
 function setView(v) {
   state.view = v; seg('viewSeg', 'v', v);
   const r = state.inspR || 2, c = state.inspCenter || new THREE.Vector3();
-  const d = r / Math.tan((inspCam.fov / 2) * Math.PI / 180) * 1.25 * qnum('dist', 1);
+  // fit the model's radius into the NARROWER of the two view angles (portrait phones are narrow)
+  const tanHalf = Math.tan((inspCam.fov / 2) * Math.PI / 180) * Math.min(1, inspCam.aspect || 1);
+  const d = r / tanHalf * 0.95 * qnum('dist', 1);
   const dir = v === 'top' ? new THREE.Vector3(0, 41, 15) : v === 'side' ? new THREE.Vector3(1, 0.25, 0.1)
     : v === 'front' ? new THREE.Vector3(0, 0.35, -1) : new THREE.Vector3(0.8, 0.75, 0.9);
   dir.normalize();
@@ -398,10 +404,10 @@ function setMode(mode) {
   document.getElementById('inspCtl').classList.toggle('hidden', mode !== 'inspect');
   controls.enabled = mode === 'inspect';
   renderPass.camera = mode === 'game' ? gameCam : inspCam;
+  resize();                                  // before select(): framing depends on the viewport aspect
   if (mode === 'inspect') { scene.background = new THREE.Color(0x121824); if (!cur) select(curIdx); }
   else setGround(state.ground);
   seg('modeSeg', 'mode', mode);
-  resize();
 }
 function seg(id, key, val) {
   for (const b of document.querySelectorAll(`#${id} button`)) b.classList.toggle('on', b.dataset[key] === val);
@@ -446,7 +452,10 @@ function resize() {
   composer.setSize(w, h);
   bloomPass.resolution.set(w, h);
   gameCam.aspect = w / h; gameCam.updateProjectionMatrix();
+  const prevAspect = inspCam.aspect;
   inspCam.aspect = w / h; inspCam.updateProjectionMatrix();
+  // re-frame the inspected model when the viewport shape really changes (rotation, panel toggle)
+  if (state.mode === 'inspect' && cur && Math.abs(prevAspect - inspCam.aspect) > 0.02) setView(state.view || '34');
 }
 window.addEventListener('resize', resize);
 new ResizeObserver(resize).observe(view);
@@ -482,11 +491,11 @@ function frame() {
     controls.update();
   }
   const cam = state.mode === 'game' ? gameCam : inspCam;
-  if ($('bloom').checked) { renderPass.camera = cam; composer.render(dt); } else renderer.render(scene, cam);
+  if ($('bloom').checked) { renderPass.camera = cam; composer.render(dt); }
+  else { renderer.info.reset(); renderer.render(scene, cam); sceneInfo.calls = renderer.info.render.calls; sceneInfo.tris = renderer.info.render.triangles; }
   frames++; fpsT += dt;
   if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
-  const info = renderer.info.render;
-  let txt = `${fps.toFixed(0)} fps · ${info.calls} calls · ${(info.triangles / 1000).toFixed(1)}k tris`;
+  let txt = `${fps.toFixed(0)} fps · scene ${sceneInfo.calls} draw calls · ${(sceneInfo.tris / 1000).toFixed(1)}k tris`;
   if (state.mode === 'inspect' && cur) { const s = CATALOG[curIdx].stats; txt += `\n${CATALOG[curIdx].id}: ${s.drawCalls} draws · ${s.tris} tris`; }
   hud.textContent = txt;
   requestAnimationFrame(frame);
@@ -502,6 +511,7 @@ if (Q.has('anim')) { state.anim = Q.get('anim') !== '0'; $('gAnim').checked = $(
 if (Q.has('t')) state.t = +Q.get('t');
 state.flash = qnum('flash', 0); $('iFlash').value = state.flash;
 $('iBank').value = qnum('bank', 0); $('iThrust').value = qnum('thrust', 0.5); $('iAim').value = qnum('aim', 0); $('iOpen').value = qnum('open', 0);
+for (const [id, fmt] of [['iFlash', (x) => x.toFixed(2)], ['iBank', (x) => x.toFixed(2)], ['iThrust', (x) => x.toFixed(2)], ['iAim', (x) => x + '°'], ['iOpen', (x) => x.toFixed(2)]]) $(id + 'V').textContent = fmt(+$(id).value);
 if (Q.has('view')) state.view = Q.get('view');
 if (Q.has('model')) { const i = CATALOG.findIndex((c) => c.id === Q.get('model') || c.id === 'item ' + Q.get('model')); if (i >= 0) curIdx = i; }
 setMode(Q.get('mode') === 'inspect' ? 'inspect' : 'game');

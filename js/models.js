@@ -15,6 +15,21 @@
 //     as the hull that carries them. That keeps every model at 1–4 draw calls.
 //   * glow values are > 1.0 linear so the bloom pass catches them; on LOW
 //     quality (no bloom) they still read as hot, saturated colour.
+//
+// Extras beyond the contract (all optional for core to use):
+//   * userData.muzzles of tank / turret / gunboat / crawler are refreshed by
+//     update() to follow the turret's current yaw (still group-local space);
+//     turret.userData.muzzles holds the same points in turret-local space.
+//   * userData.kind, userData.dispose() (frees this instance's materials; shared
+//     geometry stays cached until disposeAll()), userData.halfExtents {x,z} on
+//     the long units (gunboat, bomber, crawler) for an optional box test.
+//   * crawler parts (turret / gunL / gunR) have radius, setFlash, setDestroyed
+//     and part-local muzzles, exactly like boss parts.
+//   * player: userData.bankPivot (the rolling sub-group). setBank(b > 0) rolls
+//     RIGHT (right wing down) — pass +1 while strafing toward +x.
+//   * createShadow() bakes one soft silhouette (JS-rasterised DataTexture, no
+//     canvas read-back) per model kind, always from a pristine instance of that
+//     kind, onto a single quad (1 draw call, no double-darkening where parts overlap).
 // =============================================================================
 import * as THREE from 'three';
 
@@ -43,14 +58,16 @@ const EM = {
   eyeOrange: rgb(1.0, 0.38, 0.06, 3.2),
   engine: rgb(1.0, 0.5, 0.16, 3.4),
   engineHot: rgb(1.0, 0.78, 0.5, 4.2),
-  magenta: rgb(1.0, 0.1, 0.72, 3.4),
+  magenta: rgb(1.0, 0.1, 0.72, 2.8),
   magentaHot: rgb(1.0, 0.45, 0.9, 4.2),
   violet: rgb(0.55, 0.18, 1.0, 3.4),
   green: rgb(0.2, 1.0, 0.35, 3.0),
   amber: rgb(1.0, 0.55, 0.06, 3.0),
   red: rgb(1.0, 0.06, 0.04, 3.4),
-  ember: rgb(1.0, 0.28, 0.04, 2.2),
-  emberDim: rgb(0.9, 0.18, 0.02, 1.1),
+  // smoulder (wreckage): deliberately ≤ 1 — ACES pushes brighter reds toward peach/yellow and the
+  // wrecks read as orange crystals; kept low they stay a red-hot glow even without bloom
+  ember: rgb(1.0, 0.13, 0.015, 0.85),
+  emberDim: rgb(1.0, 0.1, 0.01, 0.6),
   white: rgb(1, 1, 1, 3.0),
 };
 
@@ -201,6 +218,54 @@ class GB {
   /** airfoil loft along the span; sections {x, y, zl, zt, t, tb} (see foil) */
   wing(secs, style, capA = null, capB = null) { return this.loft(secs.map(foil), style, capA, capB); }
 
+  /** pyramid from a base polygon to a tip */
+  spike(base, tip, style, baseStyle = null) {
+    const ref = centroid([...base, tip]);
+    for (let k = 0; k < base.length; k++) this.triO(base[k], base[(k + 1) % base.length], tip, ref, typeof style === 'function' ? style(k) : style);
+    if (baseStyle) for (let k = 1; k < base.length - 1; k++) this.triO(base[0], base[k], base[k + 1], ref, baseStyle);
+    return this;
+  }
+  /** highest upward-facing surface of triangles [from,to) above (x,z), or null */
+  surfaceY(x, z, from = 0, to = this.n) {
+    let best = null; const p = this.p;
+    for (let t = from; t < to; t++) {
+      const i = t * 9;
+      const ax = p[i], az = p[i + 2], bx = p[i + 3], bz = p[i + 5], cx = p[i + 6], cz = p[i + 8];
+      const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+      if (Math.abs(d) < 1e-12) continue;
+      const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d;
+      const l2 = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d;
+      const l3 = 1 - l1 - l2;
+      if (l1 < -1e-5 || l2 < -1e-5 || l3 < -1e-5) continue;
+      const y = l1 * p[i + 1] + l2 * p[i + 4] + l3 * p[i + 7];
+      if (best === null || y > best) best = y;
+    }
+    return best;
+  }
+  /** conformal decal: convex quads [[x,z]×4] subdivided n×n and draped onto the
+   *  existing surface of triangles [from,to) (+lift) — for livery on curved skins */
+  drape(quads, style, from, to, lift = 0.004, n = 3) {
+    const lerp2 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    for (const q of quads) {
+      const grid = [];
+      for (let u = 0; u <= n; u++) {
+        const row = [];
+        const e0 = lerp2(q[0], q[3], u / n), e1 = lerp2(q[1], q[2], u / n);
+        for (let v = 0; v <= n; v++) {
+          const [x, z] = lerp2(e0, e1, v / n);
+          const y = this.surfaceY(x, z, from, to);
+          row.push(y === null ? null : [x, y + lift, z]);
+        }
+        grid.push(row);
+      }
+      for (let u = 0; u < n; u++) for (let v = 0; v < n; v++) {
+        const a = grid[u][v], b = grid[u][v + 1], c = grid[u + 1][v + 1], d = grid[u + 1][v];
+        if (a && b && c && d) this.quadN(a, b, c, d, [0, 1, 0], style);
+      }
+    }
+    return this;
+  }
+
   xform(from, m, to = this.n) {
     const e = m.elements, p = this.p;
     for (let i = from * 9; i < to * 9; i += 3) {
@@ -303,7 +368,9 @@ function wreckOf(src, opt) {
   // torn metal shards + embers along the cut
   const dir = opt.dir ?? [0, 1, 0];
   const nShard = Math.min(opt.shards ?? 10, edge.length);
-  const DARK = S(lin('#1c1b1b')), EDGE = S(lin('#5b5752')), EMB = GL(EM.ember, 0.4);
+  // torn plate: mostly soot-dark metal with a bright bent edge catching the sun;
+  // only every third shard carries an ember face (glowing tears, not orange confetti)
+  const DARK = S(lin('#1a1918')), EDGE = S(lin('#77726b')), EMB = GL(EM.ember, 0.12), EMB2 = GL(EM.emberDim, 0.12);
   for (let k = 0; k < nShard; k++) {
     const pc = edge[Math.floor(hash3(k * 13.1 + seed, k * 7.7, 1.3) * edge.length)];
     const s = (opt.shardSize ?? 0.18) * (0.6 + hash3(k, seed, 2.2) * 0.8);
@@ -315,8 +382,8 @@ function wreckOf(src, opt) {
     const ref = centroid([b0, b1, b2, tip]);
     out.triO(b0, b1, tip, ref, DARK);
     out.triO(b1, b2, tip, ref, EDGE);
-    out.triO(b2, b0, tip, ref, k % 2 ? DARK : EMB);
-    out.triO(b0, b2, b1, ref, EMB);
+    out.triO(b2, b0, tip, ref, k % 3 === 0 ? EMB : k % 6 === 1 ? EMB2 : DARK);
+    out.triO(b0, b2, b1, ref, DARK);
   }
   return out;
 }
@@ -358,7 +425,7 @@ function additiveMat(opts = {}) {
     side: THREE.DoubleSide, ...opts,
   });
 }
-const FLASH_K = 0.95;
+const FLASH_K = 0.62;   // emissive white at v=1: reads as a white-hot hit without turning big models into bloom blobs
 function flashFn(mats) {
   return (v) => {
     const f = Math.max(0, Math.min(1, v)) * FLASH_K;
@@ -389,13 +456,13 @@ function gbOf(key, fn) { GG(key, fn); return GBS.get(key); }
 // =============================================================================
 // Palettes
 // =============================================================================
-const PL = { // player
-  crimson: lit('#c41c26'), crimsonLt: lit('#e0353b'), crimsonDk: lit('#7c0f17'), crimsonMd: lit('#a0141d'),
-  white: lit('#eef1f5'), steel: lit('#a9b2be'), steelDk: lit('#5a626d'),
-  belly: lit('#6b737e'), bellyDk: lit('#454b54'), gunDk: lit('#24282e'), black: lit('#0c0e11'),
-  radome: lit('#2f343b'), nozzle: lit('#3a3f47'),
-  glass: S(lin('#1aa6e2'), rgb(0.012, 0.11, 0.2)), glassLt: S(lin('#86e2ff'), rgb(0.04, 0.26, 0.36)),
-  intake: lit('#0b0c0f'),
+const PL = { // player — albedos capped so sun-lit faces stay under the bloom threshold
+  crimson: lit('#b0111b'), crimsonLt: lit('#cf222b'), crimsonDk: lit('#5e0810'), crimsonMd: lit('#870c15'),
+  white: lit('#dde2e8'), steel: lit('#96a0ac'), steelDk: lit('#515964'),
+  belly: lit('#59616c'), bellyDk: lit('#3a4048'), gunDk: lit('#202429'), black: lit('#0b0d10'),
+  radome: lit('#2a2f36'), nozzle: lit('#353a42'),
+  glass: S(lin('#119bd8'), rgb(0.01, 0.1, 0.19)), glassLt: S(lin('#74d4fb'), rgb(0.03, 0.22, 0.32)),
+  intake: lit('#0a0b0e'),
 };
 const EN = { // generic enemy palette
   gun: lit('#48505b'), gunLt: lit('#6c7581'), gunDk: lit('#2b3038'), gunXDk: lit('#1b1e23'),
@@ -408,10 +475,10 @@ const EN = { // generic enemy palette
   yellow: lit('#f2c02a'), yellowDk: lit('#c3951a'), khaki: lit('#5c6a30'),
   white: lit('#e9ecef'), glassDk: S(lin('#1c3140'), rgb(0.01, 0.04, 0.06)),
 };
-const BO = { // boss
-  steel: lit('#3b404b'), steelDk: lit('#262a31'), steelXDk: lit('#16181c'),
-  plate: lit('#4d5461'), panel: lit('#626a79'), trim: lit('#9aa3b3'), trimLt: lit('#c2c9d4'),
-  hazard: lit('#7e1b2c'), black: lit('#0e0f12'),
+const BO = { // boss — blackened steel; bright trims carry the silhouette on a dark dusk sea
+  steel: lit('#2e323a'), steelDk: lit('#1f2228'), steelXDk: lit('#131519'),
+  plate: lit('#393e48'), panel: lit('#4a505c'), trim: lit('#8a94a6'), trimLt: lit('#b3bcca'),
+  hazard: lit('#8e1a2d'), black: lit('#0c0d10'),
 };
 
 // =============================================================================
@@ -488,25 +555,38 @@ function buildPlayer() {
     return PL.crimson;
   }, PL.intake, null);
 
-  // ---- main wing
+  // ---- main wing: cranked arrow with a leading-edge strake
+  const w0 = b.n;
   b.wing([
-    { x: 0.14, y: -0.014, zl: -0.2, zt: 0.6, t: 0.056 },
-    { x: 0.42, y: -0.008, zl: 0.03, zt: 0.57, t: 0.042 },
-    { x: 0.6, y: -0.002, zl: 0.17, zt: 0.55, t: 0.032 },
-    { x: 0.8, y: 0.004, zl: 0.31, zt: 0.52, t: 0.022 },
+    { x: 0.13, y: -0.016, zl: -0.3, zt: 0.62, t: 0.058 },
+    { x: 0.24, y: -0.013, zl: -0.12, zt: 0.61, t: 0.052 },
+    { x: 0.46, y: -0.007, zl: 0.065, zt: 0.59, t: 0.04 },
+    { x: 0.64, y: -0.001, zl: 0.215, zt: 0.57, t: 0.03 },
+    { x: 0.8, y: 0.005, zl: 0.35, zt: 0.55, t: 0.02 },
   ], (i, j) => {
     if (j >= 4) return PL.belly;
-    if (j === 0) return PL.white;
-    if (i === 2) return j === 3 ? PL.steel : PL.white;       // white outer panel
-    if (j === 3) return PL.crimsonDk;                         // flaps
-    if (i === 1 && j === 2) return PL.crimsonLt;
+    if (j === 0) return i === 0 ? PL.steel : PL.white;       // bright leading edge
+    if (j === 3) return i === 2 ? PL.crimsonMd : PL.crimsonDk; // flaps / aileron
+    if (i === 3 && j === 1) return PL.crimsonLt;
     return PL.crimson;
   }, null, PL.crimsonDk);
-  // wing gun pod
-  b.lathe([0.42, 0.012, 0.2], [0, 0, -1], [[0, 0.024], [0.05, 0.036], [0.36, 0.036], [0.42, 0.026], [0.42, 0.014], [0.6, 0.014]], 6,
-    (i) => (i === 1 ? PL.steelDk : i >= 3 ? PL.gunDk : PL.steel), null, PL.black, { phase: Math.PI / 6 });
+  const w1 = b.n;
+  // livery: white lightning bolt draped over the wing skin
+  const bolt = [[0.19, 0.5], [0.43, 0.23], [0.47, 0.39], [0.735, 0.43]];
+  const quads = [];
+  for (let k = 0; k < bolt.length - 1; k++) {
+    const [ax, az] = bolt[k], [bx, bz] = bolt[k + 1];
+    const L = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / L, uz = (bz - az) / L;
+    const w = k === 1 ? 0.036 : 0.042, nx = -uz * w, nz = ux * w, e = 0.018;
+    const A = [ax - ux * e, az - uz * e], B = [bx + ux * e, bz + uz * e];
+    quads.push([[A[0] + nx, A[1] + nz], [B[0] + nx, B[1] + nz], [B[0] - nx, B[1] - nz], [A[0] - nx, A[1] - nz]]);
+  }
+  b.drape(quads, PL.white, w0, w1, 0.0035, 4);
+  // wing gun: short barrel poking out of the strake crank
+  b.lathe([0.27, 0.004, 0.0], [0, 0, -1], [[0, 0.022], [0.1, 0.02], [0.1, 0.014], [0.17, 0.014]], 6,
+    (i) => (i === 0 ? PL.steelDk : PL.gunDk), null, PL.black, { phase: Math.PI / 6 });
   // wingtip missile
-  b.lathe([0.8, 0.004, 0.55], [0, 0, -1], [[0, 0.012], [0.04, 0.026], [0.4, 0.026], [0.5, 0.017], [0.57, 0.002]], 6,
+  b.lathe([0.8, 0.006, 0.58], [0, 0, -1], [[0, 0.012], [0.04, 0.026], [0.42, 0.026], [0.52, 0.017], [0.6, 0.002]], 6,
     (i) => (i >= 3 ? PL.crimson : i === 0 ? PL.steelDk : PL.white), PL.gunDk, null, { phase: Math.PI / 6 });
   // canard
   b.wing([{ x: 0.1, y: 0.03, zl: -0.61, zt: -0.41, t: 0.022 }, { x: 0.33, y: 0.038, zl: -0.48, zt: -0.41, t: 0.01 }],
@@ -548,12 +628,12 @@ function buildPlayerFlame() {
 
 function buildHitbox() {
   const pos = [], col = [];
-  const core = rgb(1, 1, 1, 3.2), ring = rgb(1.0, 0.25, 0.55, 2.4);
-  const r = 0.085;
+  const core = rgb(1, 0.92, 0.96, 1.8), ring = rgb(1.0, 0.3, 0.6, 1.2);
+  const r = 0.07;
   const V = [[r, 0, 0], [-r, 0, 0], [0, r, 0], [0, -r, 0], [0, 0, r], [0, 0, -r]];
   const F = [[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]];
   for (const f of F) for (const k of f) { pos.push(...V[k]); col.push(...core); }
-  const N = 28, r0 = 0.27, r1 = 0.32;
+  const N = 32, r0 = 0.285, r1 = 0.31;
   for (let k = 0; k < N; k++) {
     const a0 = (TAU * k) / N, a1 = (TAU * (k + 1)) / N;
     const p = (rr, a) => [Math.cos(a) * rr, 0, Math.sin(a) * rr];
@@ -570,7 +650,7 @@ function buildHitbox() {
 export function createPlayer() {
   const g = new THREE.Group(); g.name = 'player';
   const pivot = new THREE.Group(); pivot.name = 'bank'; g.add(pivot);
-  const mat = bodyMat(0.45, 0.25);
+  const mat = bodyMat(0.5, 0.12);
   const body = new THREE.Mesh(GG('player', buildPlayer), mat); body.name = 'body';
   pivot.add(body);
   const flameMat = additiveMat();
@@ -579,7 +659,9 @@ export function createPlayer() {
   pivot.add(flame);
   const hb = new THREE.Mesh(G('player.hitbox', buildHitbox), new THREE.MeshBasicMaterial({
     vertexColors: true, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
-  hb.name = 'hitbox'; hb.position.y = 0.34; hb.renderOrder = 50; hb.userData.noShadow = true;
+  // at the collision centre on the plane (it ignores depth, so it never needs lifting above the canopy —
+  // a lifted marker would project ~0.1 off the real hitbox under the tilted game camera)
+  hb.name = 'hitbox'; hb.renderOrder = 50; hb.userData.noShadow = true;
   g.add(hb);
 
   const ud = g.userData;
@@ -587,10 +669,11 @@ export function createPlayer() {
   ud.radius = 0.3;
   ud.grazeRadius = 1.0;
   ud.debrisColor = new THREE.Color('#c41c26');
-  ud.muzzles = [new THREE.Vector3(0, 0, -1.0), new THREE.Vector3(-0.42, 0, -0.42), new THREE.Vector3(0.42, 0, -0.42)];
+  ud.muzzles = [new THREE.Vector3(0, 0, -1.0), new THREE.Vector3(-0.27, 0, -0.2), new THREE.Vector3(0.27, 0, -0.2)];
   ud.hitboxMarker = hb;
   ud.bankPivot = pivot;
   let thrust = 0.5, bank = 0;
+  // b > 0 rolls RIGHT (right wing down, 35° at b = 1): pass +1 while strafing toward +x.
   ud.setBank = (b) => { bank = Math.max(-1, Math.min(1, b)); pivot.rotation.z = -bank * 35 * DEG; };
   ud.setThrust = (t) => { thrust = Math.max(0, Math.min(1, t)); };
   ud.setFlash = flashFn([mat]);
@@ -660,7 +743,7 @@ function buildDart() {
   b.decal([[0, ey + 0.012, -0.47], [0.075, ey, -0.29], [0.04, ey + 0.004, -0.22], [0, ey + 0.012, -0.33]], GL(EM.eyeRed));
   b.decal([[0, ey + 0.012, -0.47], [-0.075, ey, -0.29], [-0.04, ey + 0.004, -0.22], [0, ey + 0.012, -0.33]], GL(EM.eyeRed));
   // exhaust glow cone
-  b.lathe([0, 0, 0.64], [0, 0, 1], [[0, 0.065], [0.26, 0.0]], 6, GL(EM.engine, 0.5));
+  b.lathe([0, 0, 0.64], [0, 0, 1], [[0, 0.065], [0.18, 0.0]], 6, GL(EM.engine, 0.5));
   const f0 = b.n;
   // swept wing
   b.wing([{ x: 0.07, y: -0.01, zl: -0.3, zt: 0.56, t: 0.05 }, { x: 0.44, y: 0.0, zl: 0.26, zt: 0.62, t: 0.028 },
@@ -683,7 +766,7 @@ function buildDart() {
   // intake scoops
   b.block({ x: 0.15, y: -0.04, z: -0.02, w: 0.08, d: 0.28, h: 0.08, tw: 0.06, td: 0.22, oz: 0.03, top: EN.gunLt, side: EN.gunDk, front: EN.black });
   b.mirrorX(f0);
-  return b;
+  return b.xform(0, M(0, 0, 0, 0, 0, 0, 0.92));
 }
 
 // =============================================================================
@@ -710,27 +793,28 @@ function buildHornet() {
   b.lathe([0, 0.07, -0.42], [0, 0.18, -1], [[0, 0.17], [0.1, 0.15], [0.18, 0.09], [0.22, 0.0]], 8,
     (i, j) => GL(((i + j) & 1) ? EM.eyeRed : scl(EM.eyeRed, 0.65), 0.45), null, null, { phase: Math.PI / 8 });
   // tail boom + tail
-  b.lathe([0, 0.06, 0.48], [0, 0, 1], [[0, 0.075], [0.55, 0.045]], 6, (i, j) => (j === 1 ? EN.sand : EN.olive), null, EN.oliveDk, { phase: Math.PI / 6 });
-  b.plate([[-0.3, 0.9], [0.3, 0.9], [0.26, 1.06], [-0.26, 1.06]], 0.05, 0.08, EN.sand, EN.oliveDk);
-  b.decal([[0.2, 0.082, 0.9], [0.3, 0.082, 0.9], [0.26, 0.082, 1.06], [0.18, 0.082, 1.06]], EN.orange);
-  b.decal([[-0.2, 0.082, 0.9], [-0.3, 0.082, 0.9], [-0.26, 0.082, 1.06], [-0.18, 0.082, 1.06]], EN.orange);
-  b.block({ x: 0, y: 0.08, z: 0.96, w: 0.03, d: 0.18, h: 0.2, td: 0.1, oz: 0.04, top: EN.orange, side: EN.olive });
+  b.lathe([0, 0.06, 0.48], [0, 0, 1], [[0, 0.075], [0.44, 0.045]], 6, (i, j) => (j === 1 ? EN.sand : EN.olive), null, EN.oliveDk, { phase: Math.PI / 6 });
+  b.plate([[-0.3, 0.8], [0.3, 0.8], [0.26, 0.95], [-0.26, 0.95]], 0.05, 0.08, EN.sand, EN.oliveDk);
+  b.decal([[0.2, 0.082, 0.8], [0.3, 0.082, 0.8], [0.26, 0.082, 0.95], [0.18, 0.082, 0.95]], EN.orange);
+  b.decal([[-0.2, 0.082, 0.8], [-0.3, 0.082, 0.8], [-0.26, 0.082, 0.95], [-0.18, 0.082, 0.95]], EN.orange);
+  b.block({ x: 0, y: 0.08, z: 0.86, w: 0.03, d: 0.18, h: 0.2, td: 0.1, oz: 0.04, top: EN.orange, side: EN.olive });
   // rotor mast
   b.lathe([0, 0.28, -0.02], [0, 1, 0], [[0, 0.09], [0.1, 0.07], [0.16, 0.05]], 6, EN.gunDk, null, EN.gun);
   // exhaust vents
-  b.decal([[0.1, 0.3, 0.2], [0.2, 0.27, 0.2], [0.18, 0.24, 0.38], [0.09, 0.26, 0.38]], GL(EM.engine, 0.4));
-  b.decal([[-0.1, 0.3, 0.2], [-0.2, 0.27, 0.2], [-0.18, 0.24, 0.38], [-0.09, 0.26, 0.38]], GL(EM.engine, 0.4));
+  for (const sg of [-1, 1]) for (const z of [0.2, 0.3]) {
+    b.decal([[0.1 * sg, 0.302, z], [0.2 * sg, 0.272, z], [0.19 * sg, 0.265, z + 0.045], [0.095 * sg, 0.295, z + 0.045]], GL(scl(EM.engine, 0.55), 0.3), [0.2 * sg, 1, 0]);
+  }
   const f0 = b.n;
   // stub wing
-  b.wing([{ x: 0.26, y: 0.02, zl: -0.14, zt: 0.2, t: 0.06 }, { x: 0.72, y: 0.06, zl: -0.1, zt: 0.16, t: 0.04 }],
+  b.wing([{ x: 0.26, y: 0.02, zl: -0.14, zt: 0.2, t: 0.06 }, { x: 0.68, y: 0.06, zl: -0.1, zt: 0.16, t: 0.04 }],
     (i, j) => (j >= 4 ? EN.oliveDk : j === 0 ? EN.sandLt : EN.olive), null, EN.oliveDk);
   // gun pod
-  b.lathe([0.8, 0.04, 0.34], [0, 0, -1], [[0, 0.05], [0.08, 0.105], [0.3, 0.105], [0.36, 0.105], [0.5, 0.105], [0.62, 0.085],
-    [0.62, 0.04], [0.86, 0.036], [0.86, 0.052], [0.92, 0.052]], 8, (i, j) => {
-    if (i === 3) return (j === 1 || j === 2) ? EN.orange : EN.orangeDk;           // hazard band
-    if (i >= 6) return i === 7 ? EN.gunLt : EN.gunXDk;
+  b.lathe([0.76, 0.04, 0.34], [0, 0, -1], [[0, 0.05], [0.08, 0.105], [0.36, 0.105], [0.46, 0.105], [0.62, 0.085],
+    [0.62, 0.04], [0.86, 0.036], [0.92, 0.05]], 6, (i, j) => {
+    if (i === 2) return (j === 1 || j === 2) ? EN.orange : EN.orangeDk;           // hazard band
+    if (i >= 5) return i === 6 ? EN.gunLt : EN.gunXDk;
     return (j === 1 || j === 2) ? EN.gunLt : EN.gun;
-  }, EN.gunDk, GL(EM.eyeOrange, 0.4), { phase: Math.PI / 8 });
+  }, EN.gunDk, GL(EM.eyeOrange, 0.4), { phase: Math.PI / 6 });
   b.mirrorX(f0);
   return b;
 }
@@ -745,18 +829,27 @@ function buildRotorBlades() {
   b.lathe([0, -0.03, 0], [0, 1, 0], [[0, 0.1], [0.05, 0.1], [0.08, 0.05]], 6, EN.gun, null, EN.gunLt);
   return b;
 }
+/** Motion-blur disc: smoky and almost clear over the hub (the drone body must stay
+ *  readable through it), with three trailing blade-sweep lobes that turn with the
+ *  rotor, and a thin hazard-orange tip ring. Vertex RGBA, 160 triangles. */
 function buildRotorDisc() {
-  const N = 36, R = [0.1, 0.55, 0.8, 0.86, 0.88];
-  const A = [0.02, 0.1, 0.2, 0.42, 0.0];
-  const C = [[0.8, 0.85, 0.8], [0.8, 0.85, 0.8], [0.85, 0.88, 0.85], [1.0, 0.6, 0.25], [1.0, 0.6, 0.25]];
+  const N = 20, R = [0.14, 0.52, 0.78, 0.82, 0.87];
+  const A = [0.0, 0.05, 0.1, 0.3, 0.3];                  // radial alpha
+  const C = [[0.5, 0.55, 0.58], [0.55, 0.6, 0.63], [0.62, 0.66, 0.68], [1.0, 0.5, 0.14], [1.0, 0.5, 0.14]];
+  // blade sweep: 3 lobes. update() spins the rotor toward +angle (rotation.y decreases), so each
+  // lobe has its sharp leading edge at the high-angle end and a soft tail trailing behind it.
+  const sweep = (a) => {
+    const f = ((a * 3) / TAU) % 1;                        // 0..1 within one lobe
+    return 0.35 + 0.65 * Math.pow(f, 2.2);
+  };
   const pos = [], col = [];
   for (let r = 0; r < R.length - 1; r++) {
     for (let k = 0; k < N; k++) {
       const a0 = (TAU * k) / N, a1 = (TAU * (k + 1)) / N;
       const P = (ri, a) => [Math.cos(a) * R[ri], 0, Math.sin(a) * R[ri]];
-      const Cc = (ri) => [...C[ri], A[ri]];
+      const Cc = (ri, a) => [...C[ri], A[ri] * (ri >= 3 ? 1 : sweep(a))];
       pos.push(...P(r, a0), ...P(r + 1, a1), ...P(r + 1, a0), ...P(r, a0), ...P(r, a1), ...P(r + 1, a1));
-      col.push(...Cc(r), ...Cc(r + 1), ...Cc(r + 1), ...Cc(r), ...Cc(r), ...Cc(r + 1));
+      col.push(...Cc(r, a0), ...Cc(r + 1, a1), ...Cc(r + 1, a0), ...Cc(r, a0), ...Cc(r, a1), ...Cc(r + 1, a1));
     }
   }
   const g = new THREE.BufferGeometry();
@@ -817,19 +910,22 @@ function buildTankHull() {
 function buildTankTurret() {
   const b = new GB();
   const ring = (z, w, h) => [[-w, 0, z], [w, 0, z], [w * 1.04, h * 0.5, z], [w * 0.72, h, z], [-w * 0.72, h, z], [-w * 1.04, h * 0.5, z]];
+  const t0 = b.n;
   b.loft([ring(-0.36, 0.2, 0.12), ring(-0.26, 0.3, 0.2), ring(0.22, 0.32, 0.21), ring(0.36, 0.26, 0.16)], (i, j) => {
     if (j === 0) return null;
     if (j === 3) return EN.sand;
     if (j === 2 || j === 4) return i === 1 ? EN.sandLt : EN.sandDk;
     return EN.sandDk;
   }, EN.sandDk, EN.sandDk);
+  const t1 = b.n;
   // barrel with muzzle brake
   b.lathe([0, 0.1, -0.3], [0, 0, -1], [[0, 0.062], [0.06, 0.05], [0.62, 0.042], [0.62, 0.058], [0.74, 0.058], [0.74, 0.03]], 6,
     (i) => (i === 3 ? EN.gunLt : i >= 2 ? EN.gunDk : EN.gun), null, EN.black, { phase: Math.PI / 6 });
   // commander hatch
   b.lathe([0.1, 0.2, 0.08], [0, 1, 0], [[0, 0.085], [0.04, 0.075], [0.055, 0.0]], 6, EN.oliveDk, null, null);
-  // sensor eye + hazard on the rear
-  b.decal([[-0.12, 0.2, -0.24], [0.12, 0.2, -0.24], [0.1, 0.2, -0.18], [-0.1, 0.2, -0.18]], GL(EM.eyeRed));
+  // sensor eye (draped onto the roof: a flat decal at the roof height was buried and never showed)
+  b.drape([[[-0.14, -0.25], [0.14, -0.25], [0.11, -0.18], [-0.11, -0.18]]], GL(EM.eyeRed), t0, t1, 0.005, 1);
+  // hazard on the rear
   hazardStrip(b, -0.16, 0.3, 0.16, 0.3, 0.214, 0.06, 4);
   return b;
 }
@@ -881,17 +977,20 @@ function buildGunboatHull() {
     [-w * 0.78, -0.08, z], [-w * 0.97, 0.1, z], [-w, dk, z]];
   const ST = [[-2.0, 0.02, 0.46, -0.02], [-1.62, 0.42, 0.4, -0.18], [-1.0, 0.7, 0.36, -0.22], [-0.2, 0.8, 0.34, -0.22],
     [1.0, 0.78, 0.34, -0.22], [1.7, 0.7, 0.34, -0.2], [2.0, 0.64, 0.34, -0.16]];
+  const d0 = b.n;
   b.loft(ST.map(ring), (i, j) => {
-    if (j === 0 || j === 7) return i === 0 ? EN.orange : (i === 3 ? EN.deckDk : EN.deck);   // deck (bow hazard)
+    if (j === 0 || j === 7) return i === 0 ? EN.orange : EN.deckDk;   // deck plating (bow hazard)
     if (j === 1 || j === 6) return i === 0 ? EN.white : EN.navy;                          // topsides
     if (j === 2 || j === 5) return EN.hullRed;                                            // boot stripe
     return EN.navyDk;
   }, null, EN.navyDk);
+  const d1 = b.n;
+  // deck markings are draped onto the crowned deck (flat decals sank under its centre ridge)
   // bow hazard chevrons
-  hazardStrip(b, -0.3, -1.45, 0.3, -1.45, 0.392, 0.12, 5);
-  // walkway lines
-  b.decal([[-0.62, 0.345, -0.6], [-0.5, 0.345, -0.6], [-0.5, 0.345, 1.7], [-0.62, 0.345, 1.7]], EN.deckDk);
-  b.decal([[0.62, 0.345, -0.6], [0.5, 0.345, -0.6], [0.5, 0.345, 1.7], [0.62, 0.345, 1.7]], EN.deckDk);
+  hazardDrape(b, -0.3, -1.45, 0.3, -1.45, 0.12, 5, EN.orange, EN.black, d0, d1, 0.009, 1);
+  // walkway lines + bow marker
+  b.drape([[[-0.68, -0.9], [-0.56, -0.9], [-0.56, 1.75], [-0.68, 1.75]], [[0.56, -0.9], [0.68, -0.9], [0.68, 1.75], [0.56, 1.75]]], EN.deck, d0, d1, 0.005, 1);
+  b.drape([[[-0.22, -1.61], [0, -1.61], [0, -1.565], [-0.22, -1.565]], [[0, -1.61], [0.22, -1.61], [0.22, -1.565], [0, -1.565]]], EN.white, d0, d1, 0.005, 1);
   // bridge
   b.block({ x: 0, y: 0.34, z: 0.35, w: 0.9, d: 1.1, h: 0.34, tw: 0.8, td: 0.94, oz: 0.05, bev: 0.05, top: EN.white, bevS: EN.edgeLt, side: EN.deckDk, front: EN.deck });
   b.block({ x: 0, y: 0.68, z: 0.22, w: 0.62, d: 0.5, h: 0.16, tw: 0.5, td: 0.4, oz: 0.04, bev: 0.03, top: EN.edgeLt, bevS: EN.white, side: EN.deck });
@@ -902,12 +1001,24 @@ function buildGunboatHull() {
   b.block({ x: 0, y: 1.14, z: 0.32, w: 0.46, d: 0.07, h: 0.05, top: EN.edgeLt, side: EN.gun });
   // funnel with warning band
   b.lathe([0, 0.34, 1.12], [0, 1, 0], [[0, 0.17], [0.22, 0.15], [0.28, 0.15], [0.34, 0.14]], 6,
-    (i) => (i === 1 ? EN.orange : EN.gunDk), null, GL(EM.engine, 0.3), { sx: 1, sy: 1.4 });
+    (i) => (i === 1 ? EN.orange : EN.gunDk), null, S(lin('#141414'), EM.emberDim.map((v) => v * 0.4)), { sx: 1, sy: 1.4 });
   // aft AA mount (static, facing aft)
   b.lathe([0, 0.34, 1.6], [0, 1, 0], [[0, 0.2], [0.1, 0.18], [0.14, 0.12]], 6, EN.gun, null, EN.gunLt);
   for (const x of [-0.06, 0.06]) b.lathe([x, 0.44, 1.64], [0, 0, 1], [[0, 0.03], [0.4, 0.025]], 5, EN.gunDk, null, EN.black);
-  // stern light
-  b.decal([[-0.2, 0.36, 1.96], [0.2, 0.36, 1.96], [0.2, 0.36, 1.9], [-0.2, 0.36, 1.9]], GL(EM.eyeRed));
+  // life rafts (orange canisters) + ammo lockers either side of the bridge
+  for (const sg of [-1, 1]) {
+    for (const z of [-0.05, 0.28, 0.61]) b.lathe([0.58 * sg, 0.4, z - 0.12], [0, 0, 1], [[0, 0.055], [0.24, 0.055]], 5, (i, j) => (j <= 1 ? EN.orange : EN.orangeDk), EN.white, null, { phase: Math.PI / 2 });
+    b.block({ x: 0.5 * sg, y: 0.34, z: -0.62, w: 0.22, d: 0.3, h: 0.14, bev: 0.02, top: EN.navy, bevS: EN.edge, side: EN.navyDk });
+    b.block({ x: 0.5 * sg, y: 0.34, z: 1.35, w: 0.2, d: 0.34, h: 0.12, bev: 0.02, top: EN.gunLt, bevS: EN.edge, side: EN.gunDk });
+  }
+  // stern: depth-charge racks, hazard band, light
+  for (const sg of [-1, 1]) {
+    b.block({ x: 0.32 * sg, y: 0.34, z: 1.78, w: 0.3, d: 0.16, h: 0.1, top: EN.gunLt, side: EN.gunDk });
+    b.decal([[0.24 * sg, 0.442, 1.72], [0.28 * sg, 0.442, 1.72], [0.28 * sg, 0.442, 1.84], [0.24 * sg, 0.442, 1.84]], EN.gunXDk);
+    b.decal([[0.36 * sg, 0.442, 1.72], [0.4 * sg, 0.442, 1.72], [0.4 * sg, 0.442, 1.84], [0.36 * sg, 0.442, 1.84]], EN.gunXDk);
+  }
+  hazardDrape(b, -0.55, 1.93, 0.55, 1.93, 0.07, 7, EN.orange, EN.black, d0, d1, 0.005, 1);
+  b.drape([[[-0.09, 1.815], [0.09, 1.815], [0.09, 1.855], [-0.09, 1.855]]], GL(EM.eyeRed), d0, d1, 0.006, 1);
   return b;
 }
 function buildGunboatTurret() {
@@ -934,12 +1045,14 @@ function buildCarrier() {
   };
   const ST = [[-1.0, 0.1, 0.08, 0.02], [-0.9, 0.3, 0.24, 0.03], [-0.62, 0.42, 0.32, 0.04], [0.5, 0.42, 0.32, 0.04],
     [0.8, 0.3, 0.24, 0.06], [1.0, 0.16, 0.12, 0.08]];
+  const c0 = b.n;
   b.loft(ST.map(ring), (i, j) => {
     const top = j === 1 || j === 2, upper = j === 0 || j === 3;
     if (top) return EN.yellow;
     if (upper) return i === 0 ? EN.yellow : EN.yellowDk;
     return EN.khaki;
   }, EN.khaki, EN.khaki);
+  const c1 = b.n;
   // olive chevrons across the back (friendly "cargo" livery)
   for (let k = 0; k < 3; k++) {
     const z = -0.3 + k * 0.28, y = 0.362;
@@ -949,24 +1062,31 @@ function buildCarrier() {
   // big friendly cockpit
   b.lathe([0, 0.14, -0.66], [0, 0.35, -1], [[0, 0.22], [0.1, 0.19], [0.2, 0.11], [0.25, 0.0]], 8,
     (i, j) => (j === 1 || j === 2 ? S(lin('#7fe7ff'), rgb(0.05, 0.3, 0.4)) : S(lin('#2aa9d6'), rgb(0.01, 0.1, 0.16))), null, null, { phase: Math.PI / 8, sy: 0.8 });
+  // cabin windows along the shoulders (draped onto the sloped shoulder facet; flat quads floated ~7 cm off it)
+  const WIN = S(lin('#2aa9d6'), rgb(0.02, 0.12, 0.2)), winQ = [];
+  for (const sg of [-1, 1]) for (let k = 0; k < 3; k++) {
+    const z = -0.5 + k * 0.14;
+    winQ.push([[0.21 * sg, z], [0.35 * sg, z], [0.35 * sg, z + 0.08], [0.21 * sg, z + 0.08]]);
+  }
+  b.drape(winQ, WIN, c0, c1, 0.004, 1);
   // cargo hatch outline
   b.decal([[-0.2, 0.362, 0.55], [0.2, 0.362, 0.55], [0.2, 0.362, 0.62], [-0.2, 0.362, 0.62]], EN.yellowDk);
   // tail
   b.block({ x: 0, y: 0.18, z: 0.92, w: 0.05, d: 0.26, h: 0.26, td: 0.14, oz: 0.06, top: EN.yellow, side: EN.khaki });
   const f0 = b.n;
   // stub wing
-  b.wing([{ x: 0.36, y: 0.06, zl: -0.14, zt: 0.26, t: 0.08 }, { x: 0.66, y: 0.08, zl: -0.12, zt: 0.24, t: 0.06 }],
+  b.wing([{ x: 0.36, y: 0.06, zl: -0.14, zt: 0.26, t: 0.08 }, { x: 0.56, y: 0.08, zl: -0.12, zt: 0.24, t: 0.06 }],
     (i, j) => (j >= 4 ? EN.khaki : j === 0 ? EN.white : EN.yellow), null, EN.khaki);
   // ducted lift fan ring
-  b.lathe([0.95, -0.06, 0.06], [0, 1, 0], [[0, 0.4], [0.06, 0.42], [0.18, 0.4], [0.2, 0.34], [0.02, 0.33]], 12,
-    (i, j) => (i === 1 ? (j % 3 === 0 ? EN.khaki : EN.yellow) : i === 2 ? EN.white : i === 3 ? EN.khaki : EN.yellowDk), null, null);
+  b.lathe([0.8, -0.06, 0.06], [0, 1, 0], [[0, 0.32], [0.06, 0.34], [0.18, 0.32], [0.2, 0.27], [0.02, 0.26]], 12,
+    (i, j) => (i === 1 ? (j % 3 === 0 ? EN.khaki : EN.yellow) : i === 2 ? EN.edge : i === 3 ? EN.khaki : EN.yellowDk), null, null);
   // beacon on duct
-  b.block({ x: 1.36, y: 0.1, z: 0.06, w: 0.07, d: 0.1, h: 0.05, top: GL(EM.green), side: GL(EM.green, 0.5) });
+  b.block({ x: 1.13, y: 0.1, z: 0.06, w: 0.06, d: 0.1, h: 0.05, top: GL(EM.green), side: GL(EM.green, 0.5) });
   // tailplane
   b.wing([{ x: 0.05, y: 0.12, zl: 0.78, zt: 1.0, t: 0.03 }, { x: 0.36, y: 0.14, zl: 0.86, zt: 1.02, t: 0.02 }],
     (i, j) => (j === 0 ? EN.white : EN.yellow), null, EN.khaki);
   // engine glows on the rear of the body
-  b.decal([[0.12, 0.24, 0.98], [0.2, 0.22, 0.97], [0.2, 0.18, 0.99], [0.12, 0.2, 1.0]], GL(EM.amber), [0, 0, 1]);
+  b.decal([[0.12, 0.24, 0.98], [0.2, 0.22, 0.97], [0.2, 0.18, 0.99], [0.12, 0.2, 1.0]], GL(scl(EM.amber, 0.6)), [0, 0, 1]);
   b.mirrorX(f0);
   return b;
 }
@@ -974,10 +1094,10 @@ function buildCarrierFan() {
   const b = new GB();
   for (let k = 0; k < 5; k++) {
     const f = b.n;
-    b.block({ x: 0.17, y: 0, z: 0, w: 0.3, d: 0.08, h: 0.018, top: EN.gunDk, side: EN.gunXDk });
+    b.block({ x: 0.14, y: 0, z: 0, w: 0.24, d: 0.07, h: 0.018, top: EN.gunDk, side: EN.gunXDk });
     b.xform(f, M(0, 0, 0, 0.35, (k * TAU) / 5, 0));
   }
-  b.lathe([0, -0.02, 0], [0, 1, 0], [[0, 0.07], [0.05, 0.06], [0.07, 0.0]], 6, GL(EM.amber, 0.5));
+  b.lathe([0, -0.02, 0], [0, 1, 0], [[0, 0.07], [0.05, 0.06], [0.07, 0.0]], 6, (i, j) => (j & 1 ? EN.gunLt : GL(scl(EM.amber, 0.4), 0.4)));
   return b;
 }
 
@@ -990,6 +1110,7 @@ function buildBomber() {
     [-w * 0.55, -bt, z], [-w, -bt * 0.3, z], [-w, tp * 0.35, z], [-w * 0.5, tp * 0.9, z]];
   const ST = [[-1.78, 0.02, 0.02, 0.02], [-1.6, 0.16, 0.14, 0.1], [-1.3, 0.3, 0.26, 0.2], [-0.8, 0.38, 0.32, 0.26],
     [-0.76, 0.38, 0.32, 0.26], [0.4, 0.38, 0.3, 0.26], [0.44, 0.38, 0.3, 0.26], [1.2, 0.3, 0.24, 0.22], [1.72, 0.16, 0.16, 0.14]];
+  const s0 = b.n;
   b.loft(ST.map(ring), (i, j) => {
     const line = i === 3 || i === 5;
     if (i === 0) return EN.gunDk;
@@ -998,35 +1119,36 @@ function buildBomber() {
     if (j === 2 || j === 6) return EN.gun;
     return EN.gunXDk;
   }, null, EN.gunDk);
-  // menacing eye slits on the nose
-  b.decal([[0.05, 0.25, -1.36], [0.2, 0.2, -1.3], [0.19, 0.22, -1.2], [0.05, 0.27, -1.24]], GL(EM.eyeRed), [0, 1, -0.3]);
-  b.decal([[-0.05, 0.25, -1.36], [-0.2, 0.2, -1.3], [-0.19, 0.22, -1.2], [-0.05, 0.27, -1.24]], GL(EM.eyeRed), [0, 1, -0.3]);
+  const s1 = b.n;
+  // menacing eye slits on the nose (draped: flat quads half-sank into the curved nose)
+  //  kept inside the top facet (|x| < ½·halfwidth) so the quad never spans the shoulder crease
+  b.drape([[[0.03, -1.41], [0.135, -1.35], [0.14, -1.27], [0.03, -1.32]], [[-0.03, -1.32], [-0.14, -1.27], [-0.135, -1.35], [-0.03, -1.41]]],
+    GL(EM.eyeRed), s0, s1, 0.008, 1);
   // dorsal turret
   b.lathe([0, 0.3, -0.4], [0, 1, 0], [[0, 0.2], [0.07, 0.18], [0.12, 0.1]], 8, EN.gunDk, null, EN.gun, { phase: Math.PI / 8 });
   b.decal([[-0.05, 0.43, -0.52], [0.05, 0.43, -0.52], [0.05, 0.43, -0.44], [-0.05, 0.43, -0.44]], GL(EM.eyeOrange));
   for (const x of [-0.05, 0.05]) b.lathe([x, 0.38, -0.5], [0, 0, -1], [[0, 0.025], [0.3, 0.02]], 5, EN.gunXDk, null, EN.black);
-  // spine hazard
-  hazardStrip(b, 0, 0.55, 0, 1.05, 0.29, 0.16, 5);
+  // spine hazard (draped onto the tapering spine)
+  hazardDrape(b, 0, 0.55, 0, 1.05, 0.16, 5, EN.orange, EN.black, s0, s1, 0.017, 1);   // lift covers the ridge sag of 1-cell quads
   const f0 = b.n;
   // big swept wing
-  b.wing([{ x: 0.3, y: -0.02, zl: -0.62, zt: 0.72, t: 0.13 }, { x: 0.95, y: 0.0, zl: -0.3, zt: 0.78, t: 0.11 },
-    { x: 1.0, y: 0.0, zl: -0.27, zt: 0.78, t: 0.11 }, { x: 1.75, y: 0.04, zl: 0.12, zt: 0.86, t: 0.08 },
-    { x: 1.8, y: 0.04, zl: 0.14, zt: 0.86, t: 0.08 }, { x: 2.2, y: 0.07, zl: 0.38, zt: 0.94, t: 0.06 }, { x: 2.52, y: 0.09, zl: 0.62, zt: 0.98, t: 0.04 }],
+  b.wing([{ x: 0.3, y: -0.02, zl: -0.62, zt: 0.72, t: 0.13 }, { x: 1.35, y: 0.02, zl: -0.07, zt: 0.82, t: 0.1 },
+    { x: 1.4, y: 0.02, zl: -0.04, zt: 0.82, t: 0.1 }, { x: 2.2, y: 0.07, zl: 0.38, zt: 0.94, t: 0.06 }, { x: 2.52, y: 0.09, zl: 0.62, zt: 0.98, t: 0.04 }],
   (i, j) => {
     if (j >= 4) return EN.gunXDk;
-    if (i === 1 || i === 3) return j === 0 ? EN.edge : EN.gunXDk;                 // panel lines
-    if (i === 5) return j === 3 ? EN.black : ((j & 1) ? EN.black : EN.orange);   // hazard tip
+    if (i === 1) return j === 0 ? EN.edge : EN.gunXDk;                            // panel line
+    if (i === 3) return j === 3 ? EN.black : ((j & 1) ? EN.black : EN.orange);   // hazard tip
     if (j === 0) return EN.edgeLt;
     if (j === 3) return EN.gunDk;
     return i === 2 ? EN.gunLt : EN.gun;
   }, null, EN.orange);
   // engine nacelles
   for (const x of [0.95, 1.75]) {
-    b.lathe([x, -0.06, -0.7], [0, 0, 1], [[0, 0.1], [0.08, 0.16], [0.3, 0.17], [1.3, 0.16], [1.55, 0.12], [1.62, 0.12]], 8, (i, j) => {
+    b.lathe([x, -0.06, -0.7], [0, 0, 1], [[0, 0.1], [0.08, 0.165], [1.3, 0.16], [1.55, 0.12], [1.62, 0.12]], 6, (i, j) => {
       if (i === 0) return EN.edgeLt;
-      if (i === 3) return EN.gunDk;
-      return (j === 1 || j === 2) ? EN.gunLt : EN.gun;
-    }, EN.gunXDk, GL(EM.engineHot, 0.6), { phase: Math.PI / 8 });
+      if (i === 2) return EN.gunDk;
+      return (j === 1) ? EN.gunLt : EN.gun;
+    }, EN.gunXDk, GL(EM.engineHot, 0.6), { phase: Math.PI / 6 });
     b.lathe([x, -0.06, 0.92], [0, 0, 1], [[0, 0.1], [0.34, 0.0]], 6, GL(EM.engine, 0.5));
   }
   // tail fins + tailplane
@@ -1068,17 +1190,24 @@ function buildCrawlerHull() {
   for (const s of [-1, 1]) {
     b.decal([[0.55 * s, 1.0, -1.98], [1.15 * s, 1.0, -1.98], [1.1 * s, 0.94, -2.06], [0.6 * s, 0.94, -2.06]], GL(EM.eyeRed), [0, 0.5, -1]);
   }
-  // raised armour plates on deck
+  // raised armour plates on deck + camo + plate seams
   b.block({ x: 0, y: 1.18, z: -1.4, w: 2.4, d: 0.9, h: 0.1, tw: 2.2, td: 0.78, top: EN.sand, side: EN.edge });
+  const CAMO = [lit('#8a7a4e'), lit('#6f7a45')];
+  const camo = [[[-1.5, -0.6], [-0.7, -0.9], [-0.5, -0.2], [-1.3, 0.1]], [[0.8, 0.3], [1.55, 0.1], [1.5, 0.9], [0.9, 1.1]],
+    [[-1.4, 0.9], [-0.9, 0.7], [-0.8, 1.2], [-1.5, 1.3]], [[1.0, -1.0], [1.5, -1.1], [1.55, -0.5], [1.1, -0.45]]];
+  camo.forEach((q, k) => b.decal(q.map(([x, z]) => [x, 1.183, z]), CAMO[k & 1]));
+  for (const z of [-0.85, 1.3]) b.decal([[-1.52, 1.184, z], [1.52, 1.184, z], [1.52, 1.184, z + 0.04], [-1.52, 1.184, z + 0.04]], EN.sandDk);
+  for (const sg of [-1, 1]) b.decal([[1.52 * sg, 1.184, -1.85], [1.56 * sg, 1.184, -1.85], [1.56 * sg, 1.184, 2.0], [1.52 * sg, 1.184, 2.0]], EN.edgeLt);
   // rear engine deck: vents with glow
   for (let k = 0; k < 5; k++) {
     const z = 1.45 + k * 0.16;
-    b.decal([[-1.2, 1.185, z], [-0.2, 1.185, z], [-0.2, 1.185, z + 0.08], [-1.2, 1.185, z + 0.08]], k === 2 ? GL(EM.engine, 0.3) : EN.gunXDk);
-    b.decal([[0.2, 1.185, z], [1.2, 1.185, z], [1.2, 1.185, z + 0.08], [0.2, 1.185, z + 0.08]], k === 2 ? GL(EM.engine, 0.3) : EN.gunXDk);
+    const vs = k === 2 ? GL(scl(EM.engine, 0.5), 0.3) : EN.gunXDk;
+    b.decal([[-1.2, 1.185, z], [-0.2, 1.185, z], [-0.2, 1.185, z + 0.08], [-1.2, 1.185, z + 0.08]], vs);
+    b.decal([[0.2, 1.185, z], [1.2, 1.185, z], [1.2, 1.185, z + 0.08], [0.2, 1.185, z + 0.08]], vs);
   }
   // exhaust stacks
   for (const s of [-1, 1]) {
-    b.lathe([1.45 * s, 1.1, 2.0], [0, 1, 0], [[0, 0.2], [0.5, 0.18], [0.55, 0.2], [0.62, 0.2]], 6, (i) => (i === 1 ? EN.gunLt : EN.gunDk), null, GL(EM.engine, 0.5));
+    b.lathe([1.45 * s, 1.1, 2.0], [0, 1, 0], [[0, 0.2], [0.5, 0.18], [0.55, 0.2], [0.62, 0.2]], 6, (i) => (i === 1 ? EN.gunLt : EN.gunDk), null, S(lin('#161412'), EM.emberDim.map((v) => v * 0.66)));
   }
   // sponson mounts for the side guns
   for (const s of [-1, 1]) b.lathe([1.45 * s, 1.1, -1.55], [0, 1, 0], [[0, 0.52], [0.1, 0.5]], 8, EN.gunDk, null, EN.gun, { phase: Math.PI / 8 });
@@ -1098,11 +1227,15 @@ function buildCrawlerTurret() {
   b.block({ x: 0, y: 0.1, z: -1.2, w: 1.1, d: 0.6, h: 0.42, tw: 0.9, td: 0.5, oz: 0.04, bev: 0.06, top: EN.gun, bevS: EN.edge, side: EN.gunDk, front: EN.gunXDk });
   for (const x of [-0.26, 0.26]) {
     b.lathe([x, 0.3, -1.45], [0, 0, -1], [[0, 0.17], [0.3, 0.15], [0.35, 0.15], [0.45, 0.15], [0.8, 0.14], [0.85, 0.14], [0.95, 0.14], [1.4, 0.13], [1.45, 0.13], [1.55, 0.13], [1.75, 0.16], [1.95, 0.16], [1.95, 0.08]], 8, (i, j) => {
-      if (i === 2 || i === 5 || i === 8) return GL(EM.eyeOrange, 0.4);          // glowing coils
+      if (i === 2 || i === 5 || i === 8) return GL(scl(EM.eyeOrange, 0.6), 0.4);   // glowing coils
       if (i === 10) return EN.edge;
       return (j === 1 || j === 2) ? EN.gunLt : EN.gunDk;
     }, null, GL(EM.eyeRed, 0.3), { phase: Math.PI / 8 });
   }
+  // camo patches + engine grille on the turret roof
+  b.decal([[-0.65, 0.626, -0.2], [-0.2, 0.626, -0.35], [-0.1, 0.626, 0.1], [-0.55, 0.626, 0.25]], lit('#8a7a4e'));
+  b.decal([[0.15, 0.626, 0.35], [0.6, 0.626, 0.2], [0.62, 0.626, 0.6], [0.25, 0.626, 0.7]], lit('#6f7a45'));
+  for (let k = 0; k < 3; k++) b.decal([[-0.45, 0.627, 0.45 + k * 0.1], [-0.05, 0.627, 0.45 + k * 0.1], [-0.05, 0.627, 0.49 + k * 0.1], [-0.45, 0.627, 0.49 + k * 0.1]], EN.gunXDk);
   // eye strip + hatch + hazard on turret rear
   b.decal([[-0.5, 0.63, -0.52], [0.5, 0.63, -0.52], [0.44, 0.63, -0.4], [-0.44, 0.63, -0.4]], GL(EM.eyeRed));
   b.lathe([0.35, 0.62, 0.25], [0, 1, 0], [[0, 0.24], [0.06, 0.22], [0.09, 0.0]], 6, EN.oliveDk);
@@ -1163,7 +1296,7 @@ export function createEnemy(type) {
       const { g, pivot, ud } = enemyShell('dart', 0.6, '#48505b');
       const mat = bodyMat(0.55, 0.3);
       pivot.add(new THREE.Mesh(GG('dart', buildDart), mat));
-      ud.muzzles = [new THREE.Vector3(0, 0, -0.74)];
+      ud.muzzles = [new THREE.Vector3(0, 0, -0.68)];
       ud.setFlash = flashFn([mat]);
       ud.update = (dt, t) => { mat.uEmitScale.value = 0.85 + Math.sin(t * 17) * 0.15; pivot.rotation.z = Math.sin(t * 2.3) * 0.06; };
       ud.dispose = () => mat.dispose();
@@ -1180,7 +1313,7 @@ export function createEnemy(type) {
       rotor.add(disc);
       pivot.add(rotor);
       ud.rotor = rotor;
-      ud.muzzles = [new THREE.Vector3(-0.8, 0.04, -0.62), new THREE.Vector3(0.8, 0.04, -0.62)];
+      ud.muzzles = [new THREE.Vector3(-0.76, 0.04, -0.62), new THREE.Vector3(0.76, 0.04, -0.62)];
       ud.setFlash = flashFn([mat]);
       ud.update = (dt, t) => {
         rotor.rotation.y -= dt * 24;
@@ -1253,7 +1386,7 @@ export function createEnemy(type) {
       pivot.add(new THREE.Mesh(GG('carrier', buildCarrier), mat));
       const fanGeo = GG('carrier.fan', buildCarrierFan);
       const fanL = new THREE.Mesh(fanGeo, mat), fanR = new THREE.Mesh(fanGeo, mat);
-      fanL.position.set(-0.95, 0.0, 0.06); fanR.position.set(0.95, 0.0, 0.06);
+      fanL.position.set(-0.8, 0.0, 0.06); fanR.position.set(0.8, 0.0, 0.06);
       pivot.add(fanL, fanR);
       ud.muzzles = [new THREE.Vector3(0, 0, -1.0)];
       ud.fans = [fanL, fanR];
@@ -1336,34 +1469,59 @@ const TMP_MUZ2 = [new THREE.Vector3(), new THREE.Vector3()];
 // =============================================================================
 // BOSS — flying fortress "ARCLIGHT"
 // =============================================================================
+/** diagonal hazard stripes draped over the surface of triangles [from,to) */
+function hazardDrape(b, x0, z0, x1, z1, width, n, cA, cB, from, to, lift = 0.005, sub = 2) {
+  const dx = x1 - x0, dz = z1 - z0, L = Math.hypot(dx, dz) || 1;
+  const ux = dx / L, uz = dz / L, px = -uz * width / 2, pz = ux * width / 2;
+  const step = L / n, sk = width * 0.45;
+  const A = [], B = [];
+  for (let k = 0; k < n; k++) {
+    const a = k * step, c = (k + 1) * step;
+    const p = (q, side) => [x0 + ux * (q + side * sk) + px * side, z0 + uz * (q + side * sk) + pz * side];
+    (k % 2 ? B : A).push([p(a, -1), p(c, -1), p(c, 1), p(a, 1)]);
+  }
+  b.drape(A, cA, from, to, lift, sub); b.drape(B, cB, from, to, lift, sub);
+}
+/** block whose base sits on the surface of triangles [from,to) at its centre */
+function blockOn(b, from, to, o, sink = 0.04) {
+  const y = b.surfaceY(o.x, o.z, from, to);
+  return b.block({ ...o, y: (y === null ? 0 : y) - sink });
+}
+
 function buildBossHull() {
   const b = new GB();
   // ---- central spine (8-sided armoured section)
-  const ring = ([z, w, tp, bt]) => [[-w * 0.45, tp, z], [w * 0.45, tp, z], [w, tp * 0.55, z], [w, -bt * 0.4, z], [w * 0.55, -bt, z],
-    [-w * 0.55, -bt, z], [-w, -bt * 0.4, z], [-w, tp * 0.55, z]];
-  const ST = [[-3.95, 0.3, 0.16, 0.14], [-3.35, 0.95, 0.42, 0.34], [-2.45, 1.42, 0.6, 0.45], [-2.35, 1.46, 0.61, 0.45],
-    [-1.2, 1.72, 0.68, 0.5], [2.6, 1.78, 0.68, 0.5], [2.7, 1.76, 0.67, 0.5], [3.6, 1.6, 0.58, 0.45], [4.2, 1.45, 0.48, 0.4]];
+  const ring = ([z, w, tp, bt]) => [[-w * 0.45, tp, z], [w * 0.45, tp, z], [w, tp * 0.5, z], [w, -bt * 0.4, z], [w * 0.55, -bt, z],
+    [-w * 0.55, -bt, z], [-w, -bt * 0.4, z], [-w, tp * 0.5, z]];
+  const ST = [[-4.2, 0.2, 0.12, 0.1], [-3.55, 0.85, 0.4, 0.3], [-2.6, 1.35, 0.58, 0.42], [-2.5, 1.38, 0.59, 0.42],
+    [-1.4, 1.7, 0.66, 0.48], [2.4, 1.78, 0.66, 0.5], [2.5, 1.76, 0.65, 0.5], [3.5, 1.6, 0.58, 0.45], [4.1, 1.45, 0.5, 0.4]];
+  const s0 = b.n;
   b.loft(ST.map(ring), (i, j) => {
     const line = i === 2 || i === 5;
-    if (j === 0) return line ? BO.steelXDk : (i === 0 ? BO.panel : BO.plate);
-    if (j === 1 || j === 7) return line ? BO.steelDk : BO.trim;           // lit bevels = readable outline
+    if (j === 0) return line ? BO.black : (i <= 1 ? BO.panel : BO.plate);
+    if (j === 1 || j === 7) return line ? BO.steelDk : BO.trim;           // lit bevels outline the spine
     if (j === 2 || j === 6) return BO.steel;
     return BO.steelXDk;
   }, null, BO.steelDk);
-  // prow visor (magenta sensor)
-  b.decal([[-0.34, 0.47, -3.3], [0.34, 0.47, -3.3], [0.22, 0.5, -3.05], [-0.22, 0.5, -3.05]], GL(EM.magenta), [0, 1, -0.3]);
-  // front armour wedge
-  b.block({ x: 0, y: 0.6, z: -2.3, w: 1.7, d: 1.6, h: 0.22, tw: 1.3, td: 1.3, oz: 0.12, bev: 0.06, top: BO.panel, bevS: BO.trimLt, side: BO.steel });
-  hazardStrip(b, -0.6, -3.0, 0.6, -3.0, 0.521, 0.14, 7, [0, 1, 0], BO.hazard, BO.black);
+  const s1 = b.n;
+  // prow "face": two slanted magenta eye slits
+  for (const sg of [-1, 1]) b.drape([[[0.08 * sg, -3.42], [0.46 * sg, -3.02], [0.4 * sg, -2.9], [0.06 * sg, -3.24]]], GL(EM.magenta), s0, s1, 0.006, 2);
+  hazardDrape(b, -0.5, -2.62, 0.5, -2.62, 0.16, 7, BO.hazard, BO.black, s0, s1);
+  // front armour wedge + crest
+  b.block({ x: 0, y: 0.56, z: -1.85, w: 1.7, d: 1.3, h: 0.2, tw: 1.3, td: 1.05, oz: 0.08, bev: 0.06, top: BO.panel, bevS: BO.trimLt, side: BO.steel });
+  b.block({ x: 0, y: 0.64, z: -0.85, w: 0.3, d: 0.8, h: 0.16, tw: 0.2, td: 0.7, bev: 0.03, top: GL(scl(EM.magenta, 0.8), 0.4), bevS: BO.trim, side: BO.steelDk });
+  // dorsal spikes along the spine shoulders
+  for (const sg of [-1, 1]) for (const z of [-1.3, -0.35, 2.05, 2.75]) {
+    const x = 1.45 * sg, y = 0.5;
+    b.spike([[x - 0.12, y, z - 0.22], [x + 0.12, y, z - 0.22], [x + 0.12 * sg, y, z + 0.22], [x - 0.12 * sg, y, z + 0.18]], [x + 0.22 * sg, y + 0.42, z + 0.1], (k) => (k & 1 ? BO.trim : BO.steel));
+  }
   // rear armour deck with violet vents
-  b.block({ x: 0, y: 0.66, z: 3.05, w: 2.6, d: 1.3, h: 0.2, tw: 2.4, td: 1.1, bev: 0.05, top: BO.plate, bevS: BO.trim, side: BO.steel });
+  b.block({ x: 0, y: 0.6, z: 3.05, w: 2.6, d: 1.3, h: 0.2, tw: 2.4, td: 1.1, bev: 0.05, top: BO.plate, bevS: BO.trim, side: BO.steel });
   for (let k = 0; k < 4; k++) {
     const z = 2.7 + k * 0.2;
-    b.decal([[-1.0, 0.862, z], [-0.25, 0.862, z], [-0.25, 0.862, z + 0.09], [-1.0, 0.862, z + 0.09]], k & 1 ? BO.black : GL(EM.violet, 0.3));
-    b.decal([[0.25, 0.862, z], [1.0, 0.862, z], [1.0, 0.862, z + 0.09], [0.25, 0.862, z + 0.09]], k & 1 ? BO.black : GL(EM.violet, 0.3));
+    b.decal([[-1.0, 0.802, z], [-0.25, 0.802, z], [-0.25, 0.802, z + 0.09], [-1.0, 0.802, z + 0.09]], k & 1 ? BO.black : GL(EM.violet, 0.3));
+    b.decal([[0.25, 0.802, z], [1.0, 0.802, z], [1.0, 0.802, z + 0.09], [0.25, 0.802, z + 0.09]], k & 1 ? BO.black : GL(EM.violet, 0.3));
   }
-  // spine energy conduit (core → prow)
-  b.block({ x: 0, y: 0.66, z: -1.05, w: 0.16, d: 0.9, h: 0.07, top: GL(EM.magenta), side: BO.steelDk });
   // ---- engine block + 5 nozzles
   b.block({ x: 0, y: -0.35, z: 3.9, w: 4.0, d: 0.9, h: 0.8, tw: 3.8, td: 0.8, bev: 0.08, top: BO.plate, bevS: BO.trim, side: BO.steelDk, back: BO.steelXDk });
   for (const x of [-1.5, -0.75, 0, 0.75, 1.5]) {
@@ -1372,22 +1530,25 @@ function buildBossHull() {
   }
   const f0 = b.n;
   // ---- inner wing (static)
-  b.wing([{ x: 1.5, y: -0.05, zl: -2.05, zt: 3.75, t: 0.6 }, { x: 2.5, y: -0.03, zl: -1.8, zt: 3.55, t: 0.56 },
-    { x: 2.56, y: -0.03, zl: -1.78, zt: 3.54, t: 0.56 }, { x: 3.7, y: 0.0, zl: -1.45, zt: 3.25, t: 0.5 }], (i, j) => {
+  b.wing([{ x: 1.5, y: -0.05, zl: -2.0, zt: 3.75, t: 0.62 }, { x: 2.45, y: -0.03, zl: -1.75, zt: 3.55, t: 0.56 },
+    { x: 2.52, y: -0.03, zl: -1.73, zt: 3.54, t: 0.56 }, { x: 3.7, y: 0.0, zl: -1.4, zt: 3.2, t: 0.5 }], (i, j) => {
     if (j >= 4) return BO.steelXDk;
     if (i === 1) return BO.black;                         // panel seam
     if (j === 0) return BO.trimLt;
     if (j === 3) return BO.steelDk;
     return j === 1 ? BO.panel : BO.plate;
   }, null, BO.steel);
-  // armour plate + hazard on inner wing
-  b.block({ x: 2.6, y: 0.36, z: 0.0, w: 1.4, d: 1.4, h: 0.14, tw: 1.26, td: 1.26, top: BO.panel, side: BO.trim });
-  // energy conduit core → wing
-  b.block({ x: 2.35, y: 0.3, z: 0.7, w: 2.3, d: 0.16, h: 0.12, top: GL(EM.magenta), side: BO.steelDk });
+  const f1 = b.n;
+  // armour plates + ribs
+  blockOn(b, f0, f1, { x: 2.65, z: -0.75, w: 1.5, d: 1.1, h: 0.16, tw: 1.36, td: 0.96, bev: 0.04, top: BO.panel, bevS: BO.trim, side: BO.steel });
+  for (const z of [1.55, 1.85]) blockOn(b, f0, f1, { x: 2.4, z, w: 1.5, d: 0.1, h: 0.12, top: BO.trim, side: BO.steelDk });
+  // energy conduits: core → wing, core → pod
+  blockOn(b, f0, f1, { x: 2.5, z: 0.7, w: 2.3, d: 0.11, h: 0.12, top: GL(EM.magenta), side: BO.steelDk }, 0.06);
+  blockOn(b, f0, f1, { x: 1.9, z: -1.25, w: 1.3, d: 0.12, h: 0.1, ry: 0.55, top: GL(EM.magenta, 0.4), side: BO.steelDk }, 0.05);
   // pod pylon
-  b.block({ x: 2.6, y: -0.2, z: -1.6, w: 0.9, d: 1.4, h: 0.5, tw: 0.7, td: 1.2, top: BO.plate, side: BO.steelDk, front: BO.steelXDk });
-  // red warning lights near the rear
-  b.decal([[3.3, 0.3, 3.0], [3.5, 0.3, 3.0], [3.5, 0.3, 3.15], [3.3, 0.3, 3.15]], GL(EM.red));
+  b.block({ x: 2.6, y: -0.25, z: -1.6, w: 0.95, d: 1.4, h: 0.55, tw: 0.75, td: 1.2, top: BO.plate, side: BO.steelDk, front: BO.steelXDk });
+  // red warning lights near the rear corners
+  b.drape([[[3.2, 2.95], [3.45, 2.95], [3.45, 3.1], [3.2, 3.1]]], GL(EM.red), f0, f1, 0.006, 1);
   b.mirrorX(f0);
   return b;
 }
@@ -1401,8 +1562,8 @@ function buildBossFlames() {
         col.push(...cb, ...cb, ...ct);
       }
     };
-    cone(0.22, 1.1, rgb(0.6, 0.2, 1.0, 1.4), rgb(0.3, 0.0, 0.6, 0), 7);
-    cone(0.12, 0.6, rgb(1.0, 0.6, 1.0, 2.2), rgb(0.8, 0.2, 1.0, 0.1), 6);
+    cone(0.22, 1.1, rgb(0.6, 0.2, 1.0, 1.0), rgb(0.3, 0.0, 0.6, 0), 7);
+    cone(0.12, 0.6, rgb(1.0, 0.55, 1.0, 1.5), rgb(0.8, 0.2, 1.0, 0.1), 6);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -1415,123 +1576,142 @@ function buildBossCoreFrame() {
   const b = new GB();
   const N = 12;
   const ring = (r, y) => Array.from({ length: N }, (_, k) => { const a = (k * TAU) / N + Math.PI / N; return [Math.cos(a) * r, y, Math.sin(a) * r]; });
-  // outer collar (open ring: outer wall → lip → inner wall)
-  b.loft([ring(1.45, 0.25), ring(1.4, 0.55), ring(1.2, 0.72), ring(0.98, 0.7), ring(0.9, 0.2)], (i, j) => {
+  b.loft([ring(1.48, 0.1), ring(1.44, 0.5), ring(1.24, 0.7), ring(1.0, 0.68), ring(0.92, 0.1)], (i, j) => {
     if (i === 0) return (j & 1) ? BO.steel : BO.steelDk;
-    if (i === 1) return (j % 3 === 0) ? GL(EM.magenta, 0.4) : BO.trim;
+    if (i === 1) return (j % 3 === 1) ? GL(EM.magenta, 0.4) : BO.trim;
     if (i === 2) return BO.panel;
     return BO.steelXDk;
   });
-  // well floor
-  b.lathe([0, 0.2, 0], [0, 1, 0], [[0, 0.9], [0, 0.0]], N, BO.black);
+  b.lathe([0, 0.12, 0], [0, 1, 0], [[0, 0.95], [0, 0.0]], N, BO.black);
+  // four buttress claws around the crown
+  for (let k = 0; k < 4; k++) {
+    const f = b.n, a = Math.PI / 4 + (k * TAU) / 4;
+    b.block({ x: 1.55, y: 0.0, z: 0, w: 0.5, d: 0.55, h: 0.62, tw: 0.3, td: 0.4, ox: -0.08, bev: 0.05, top: BO.panel, bevS: BO.trimLt, side: BO.steel });
+    b.spike([[1.72, 0.1, -0.22], [1.72, 0.1, 0.22], [1.72, 0.5, 0]], [2.05, 0.18, 0], (q) => (q === 1 ? BO.trim : BO.steelDk));
+    b.xform(f, M(0, 0, 0, 0, -a, 0));
+  }
   return b;
 }
 function buildBossOrb() {
   const b = new GB();
-  const geo = new THREE.IcosahedronGeometry(0.72, 1);
+  const geo = new THREE.IcosahedronGeometry(0.64, 1);
   const p = geo.attributes.position.array;
   for (let i = 0; i < p.length; i += 9) {
     const t = i / 9, k = hash3(t, 1.7, 3.1);
-    const e = k > 0.66 ? EM.magentaHot : k > 0.33 ? EM.magenta : scl(EM.magenta, 0.55);
-    b.triO([p[i], p[i + 1] + 0.42, p[i + 2]], [p[i + 3], p[i + 4] + 0.42, p[i + 5]], [p[i + 6], p[i + 7] + 0.42, p[i + 8]], [0, 0.42, 0], GL(e, 0.5));
+    const e = scl(EM.magenta, k > 0.7 ? 0.95 : k > 0.35 ? 0.66 : 0.42);
+    const cy = 0.36;
+    b.triO([p[i], p[i + 1] + cy, p[i + 2]], [p[i + 3], p[i + 4] + cy, p[i + 5]], [p[i + 6], p[i + 7] + cy, p[i + 8]], [0, cy, 0], GL(e, 0.55));
   }
   geo.dispose();
   return b;
 }
 function buildBossOrbDead() {
   const b = new GB();
-  const geo = new THREE.IcosahedronGeometry(0.6, 1);
+  const geo = new THREE.IcosahedronGeometry(0.55, 1);
   const p = geo.attributes.position.array;
   for (let i = 0; i < p.length; i += 9) {
     const t = i / 9, k = hash3(t, 4.7, 1.1);
-    const s = k > 0.8 ? GL(EM.emberDim, 0.3) : S(lin(k > 0.4 ? '#1f1a1d' : '#2e2629'));
-    const d = (v) => [p[v] * (0.9 + k * 0.15), p[v + 1] * 0.8 + 0.3, p[v + 2] * (0.9 + k * 0.15)];
-    b.triO(d(i), d(i + 3), d(i + 6), [0, 0.3, 0], s);
+    const st = k > 0.8 ? GL(EM.emberDim, 0.3) : S(lin(k > 0.4 ? '#1f1a1d' : '#2e2629'));
+    const d = (v) => [p[v] * (0.9 + k * 0.15), p[v + 1] * 0.75 + 0.28, p[v + 2] * (0.9 + k * 0.15)];
+    b.triO(d(i), d(i + 3), d(i + 6), [0, 0.28, 0], st);
   }
   geo.dispose();
   return b;
 }
-/** right-hand shutter (mirror for left): quarter-dome armour shell */
+/** right-hand shutter (the left one is the same mesh with scale.x = −1): quarter-dome shell */
 function buildBossShutter() {
   const b = new GB();
-  const prof = [[0.0, 1.02], [0.34, 0.97], [0.66, 0.8], [0.9, 0.52], [1.02, 0.2]];     // (x, y) outer arc
-  const inner = [[0.0, 0.86], [0.3, 0.82], [0.58, 0.68], [0.8, 0.44], [0.9, 0.2]];
+  const prof = [[0.0, 1.04], [0.34, 0.99], [0.66, 0.82], [0.9, 0.54], [1.02, 0.2]];     // (x, y) outer arc
+  const inner = [[0.0, 0.9], [0.3, 0.86], [0.58, 0.7], [0.8, 0.46], [0.9, 0.2]];
   const zs = [[-1.02, 0.55], [-0.74, 0.88], [-0.3, 1.0], [0.3, 1.0], [0.74, 0.88], [1.02, 0.55]];
-  const ringAt = ([z, s]) => [...prof.map(([x, y]) => [x * s + 0.02, 0.2 + (y - 0.2) * (0.6 + s * 0.4), z]),
-    ...inner.slice().reverse().map(([x, y]) => [x * s + 0.02, 0.2 + (y - 0.2) * (0.6 + s * 0.4), z])];
+  const ringAt = ([z, sc]) => [...prof.map(([x, y]) => [x * sc + 0.012, 0.2 + (y - 0.2) * (0.6 + sc * 0.4), z]),
+    ...inner.slice().reverse().map(([x, y]) => [x * sc + 0.012, 0.2 + (y - 0.2) * (0.6 + sc * 0.4), z])];
   const rings = zs.map(ringAt);
   const NP = prof.length;
   b.loft(rings, (i, j) => {
-    if (j >= NP) return BO.steelXDk;                           // inner face / edges
+    if (j >= NP) return j === 2 * NP - 1 ? GL(EM.magenta, 0.35) : BO.steelXDk;   // inner lip of the seam glows
     if (j === NP - 1) return BO.steelDk;
-    if (i === 0 || i === rings.length - 2) return BO.trim;      // front / back lips
-    if (j === 0) return GL(EM.magenta, 0.4);                  // centre seam glows (hint of the core)
+    if (i === 0 || i === rings.length - 2) return BO.trim;
+    if (j === 0) return BO.trimLt;                             // seam edge
     return (i + j) & 1 ? BO.plate : BO.panel;
   }, BO.steel, BO.steel);
   return b;
 }
-function buildBossWing() {   // right wing, part-local (part at x=+5)
+function buildBossWing() {   // right wing, part-local (part at x=+5, z=+0.6); forward-swept claw
   const b = new GB();
-  b.wing([{ x: -1.5, y: 0.0, zl: -1.55, zt: 2.6, t: 0.5 }, { x: -0.2, y: 0.02, zl: -1.2, zt: 2.4, t: 0.42 },
-    { x: -0.12, y: 0.02, zl: -1.18, zt: 2.39, t: 0.42 }, { x: 1.2, y: 0.05, zl: -0.4, zt: 2.1, t: 0.3 }, { x: 2.1, y: 0.07, zl: 0.5, zt: 1.8, t: 0.18 }],
-  (i, j) => {
+  const w0 = b.n;
+  b.wing([{ x: -1.6, y: 0.0, zl: -2.0, zt: 2.6, t: 0.5 }, { x: -0.3, y: 0.02, zl: -2.15, zt: 2.2, t: 0.44 },
+    { x: -0.22, y: 0.02, zl: -2.16, zt: 2.16, t: 0.44 }, { x: 1.0, y: 0.05, zl: -2.5, zt: 0.95, t: 0.3 },
+    { x: 1.95, y: 0.08, zl: -3.05, zt: -1.3, t: 0.14 }], (i, j) => {
     if (j >= 4) return BO.steelXDk;
     if (i === 1) return BO.black;
     if (j === 0) return BO.trimLt;
-    if (j === 3) return i === 3 ? BO.hazard : BO.steelDk;
+    if (j === 3) return BO.steelDk;
     return j === 1 ? BO.panel : BO.plate;
   }, BO.steel, BO.trim);
+  const w1 = b.n;
+  // claw tip
+  b.spike([[1.78, 0.04, -2.75], [2.12, 0.04, -2.75], [1.95, 0.2, -2.7]], [2.22, 0.06, -3.85], (k) => (k === 1 ? BO.trimLt : k === 2 ? BO.trim : BO.steelDk), BO.steelDk);
+  // serrated trailing edge
+  for (const [x, te] of [[-1.1, 2.42], [-0.05, 1.95], [0.85, 1.2]]) {
+    b.spike([[x - 0.3, 0.02, te - 0.35], [x + 0.26, 0.02, te - 0.4], [x - 0.02, 0.2, te - 0.35]], [x + 0.28, 0.03, te + 0.62], (k) => (k === 2 ? BO.trim : BO.steelDk), BO.steelXDk);
+  }
+  // part boundary: hazard band along the root
+  hazardDrape(b, -1.42, -1.5, -1.42, 2.1, 0.2, 9, BO.hazard, BO.black, w0, w1);
   // big cannon nacelle
-  b.block({ x: 0.1, y: 0.2, z: 0.2, w: 1.1, d: 2.2, h: 0.36, tw: 0.9, td: 1.9, oz: 0.1, bev: 0.08, top: BO.panel, bevS: BO.trimLt, side: BO.steel, front: BO.steelXDk });
-  b.lathe([0.1, 0.38, -0.9], [0, 0, -1], [[0, 0.26], [0.2, 0.22], [1.0, 0.2], [1.05, 0.26], [1.3, 0.26], [1.3, 0.12]], 8, (i, j) => {
+  b.block({ x: -0.15, y: 0.12, z: -0.25, w: 1.05, d: 2.4, h: 0.42, tw: 0.86, td: 2.1, oz: 0.1, bev: 0.08, top: BO.panel, bevS: BO.trimLt, side: BO.steel, front: BO.steelXDk });
+  b.lathe([-0.15, 0.36, -1.4], [0, 0, -1], [[0, 0.25], [0.2, 0.21], [1.05, 0.19], [1.1, 0.25], [1.35, 0.25], [1.35, 0.12]], 8, (i, j) => {
     if (i === 3) return BO.trimLt;
     return (j === 1 || j === 2) ? BO.trim : BO.steel;
   }, null, GL(EM.magentaHot, 0.6), { phase: Math.PI / 8 });
-  // glowing coil rings on the barrel
-  for (const z of [-1.25, -1.55]) b.lathe([0.1, 0.38, z], [0, 0, -1], [[0, 0.225], [0.08, 0.225]], 8, GL(EM.magenta, 0.4), null, null, { phase: Math.PI / 8 });
+  for (const z of [-1.75, -2.05]) b.lathe([-0.15, 0.36, z], [0, 0, -1], [[0, 0.215], [0.09, 0.215]], 8, GL(EM.magenta, 0.4), null, null, { phase: Math.PI / 8 });
   // engine nozzle at the rear
-  b.lathe([0.1, 0.05, 1.9], [0, 0, 1], [[0, 0.36], [0.3, 0.4], [0.5, 0.34], [0.5, 0.22]], 8, (i) => (i === 1 ? BO.trim : BO.steelDk), null, GL(EM.violet, 0.6), { phase: Math.PI / 8 });
-  // energy line + armour plates + tip light
-  b.block({ x: -0.6, y: 0.24, z: 0.1, w: 1.8, d: 0.14, h: 0.08, top: GL(EM.magenta), side: BO.steelDk });
-  b.block({ x: 1.05, y: 0.18, z: 0.9, w: 0.9, d: 1.1, h: 0.1, tw: 0.8, td: 1.0, top: BO.panel, side: BO.trim });
-  b.decal([[1.8, 0.2, 1.1], [2.02, 0.2, 1.1], [2.02, 0.2, 1.35], [1.8, 0.2, 1.35]], GL(EM.red));
-  hazardStrip(b, 1.4, 1.65, 2.0, 1.55, 0.2, 0.16, 5, [0, 1, 0], BO.hazard, BO.black);
+  b.lathe([-0.15, 0.05, 1.75], [0, 0, 1], [[0, 0.36], [0.3, 0.4], [0.5, 0.34], [0.5, 0.22]], 8, (i) => (i === 1 ? BO.trim : BO.steelDk), null, GL(EM.violet, 0.6), { phase: Math.PI / 8 });
+  // energy line root → nacelle, armour plate outboard, tip light
+  blockOn(b, w0, w1, { x: -1.0, z: 0.15, w: 0.75, d: 0.1, h: 0.1, top: GL(EM.magenta), side: BO.steelDk }, 0.05);
+  blockOn(b, w0, w1, { x: 0.95, z: -0.9, w: 0.8, d: 1.1, h: 0.12, tw: 0.7, td: 1.0, top: BO.panel, side: BO.trim }, 0.05);
+  b.drape([[[1.62, -2.35], [1.86, -2.5], [1.92, -2.3], [1.7, -2.18]]], GL(EM.red), w0, w1, 0.006, 1);
   return b;
 }
-function buildBossPod() {    // part-local (part at x=±2.6, z=−2.8); symmetric
+function buildBossPod() {    // part-local (part at x=±2.6, z=−2.8); symmetric forked mandible cannon
   const b = new GB();
   const ring = ([z, w, tp, bt]) => [[-w * 0.5, tp, z], [w * 0.5, tp, z], [w, tp * 0.4, z], [w * 0.8, -bt, z], [-w * 0.8, -bt, z], [-w, tp * 0.4, z]];
-  b.loft([[-1.05, 0.42, 0.36, 0.3], [-0.9, 0.52, 0.44, 0.36], [0.9, 0.56, 0.46, 0.38], [1.1, 0.5, 0.4, 0.34], [1.5, 0.36, 0.3, 0.26]].map(ring), (i, j) => {
-    if (j === 0) return i === 0 ? BO.trimLt : BO.panel;
-    if (j === 1 || j === 5) return i === 1 ? BO.trim : BO.steel;
+  const s0 = b.n;
+  b.loft([[-1.15, 0.44, 0.34, 0.28], [-0.95, 0.58, 0.46, 0.36], [0.25, 0.64, 0.5, 0.4], [0.35, 0.64, 0.5, 0.4], [1.1, 0.6, 0.46, 0.38], [1.55, 0.42, 0.32, 0.28]].map(ring), (i, j) => {
+    const line = i === 2;
+    if (j === 0) return line ? BO.black : (i === 0 ? BO.trimLt : BO.panel);
+    if (j === 1 || j === 5) return line ? BO.steelDk : BO.trim;
     if (j === 2 || j === 4) return BO.steelDk;
     return BO.steelXDk;
   }, BO.steelDk, BO.steelDk);
-  // twin prongs (mandibles) with an energy lens between them
-  for (const s of [-1, 1]) {
-    b.block({ x: 0.3 * s, y: -0.22, z: -1.45, w: 0.26, d: 0.9, h: 0.44, tw: 0.2, td: 0.8, oz: 0.05, bev: 0.05, top: BO.plate, bevS: BO.trimLt, side: BO.steelDk, front: BO.steel });
+  const s1 = b.n;
+  // prongs with blade tips
+  for (const sg of [-1, 1]) {
+    b.block({ x: 0.32 * sg, y: -0.24, z: -1.5, w: 0.3, d: 1.0, h: 0.5, tw: 0.22, td: 0.9, oz: 0.05, bev: 0.05, top: BO.plate, bevS: BO.trimLt, side: BO.steelDk, front: BO.steel });
+    b.spike([[0.32 * sg - 0.14, -0.2, -1.98], [0.32 * sg + 0.14, -0.2, -1.98], [0.32 * sg, 0.2, -1.98]], [0.32 * sg - 0.06 * sg, 0.0, -2.5], (k) => (k === 2 ? BO.trimLt : BO.steel));
   }
-  b.lathe([0, 0.02, -1.45], [0, 0, -1], [[0, 0.2], [0.1, 0.18], [0.22, 0.0]], 8, GL(EM.magentaHot, 0.5), null, null, { phase: Math.PI / 8 });
-  // side vents glowing
-  for (const s of [-1, 1]) {
-    for (let k = 0; k < 3; k++) {
-      const z = -0.3 + k * 0.28;
-      b.decal([[0.2 * s, 0.445, z], [0.42 * s, 0.37, z], [0.42 * s, 0.37, z + 0.12], [0.2 * s, 0.445, z + 0.12]], k === 1 ? GL(EM.magenta, 0.4) : BO.black, [0.3 * s, 1, 0]);
-    }
+  // energy lens between the prongs
+  b.lathe([0, 0.02, -1.3], [0, 0, -1], [[0, 0.21], [0.14, 0.19], [0.3, 0.0]], 8, (i, j) => GL((j & 1) ? EM.magentaHot : EM.magenta, 0.5), null, null, { phase: Math.PI / 8 });
+  // hazard chevrons on top mark it as a separate target
+  hazardDrape(b, 0, -0.6, 0, 0.1, 0.5, 5, BO.hazard, BO.black, s0, s1);
+  // side vents
+  for (const sg of [-1, 1]) for (let k = 0; k < 3; k++) {
+    const z = 0.45 + k * 0.24;
+    b.drape([[[0.2 * sg, z], [0.5 * sg, z], [0.5 * sg, z + 0.1], [0.2 * sg, z + 0.1]]], k === 1 ? GL(EM.magenta, 0.4) : BO.black, s0, s1, 0.005, 2);
   }
-  b.block({ x: 0, y: 0.44, z: 0.5, w: 0.5, d: 0.7, h: 0.1, tw: 0.4, td: 0.6, top: BO.panel, side: BO.trim });
   return b;
 }
 function buildBossTurret() { // part-local; barrels along −z
   const b = new GB();
-  b.lathe([0, -0.2, 0], [0, 1, 0], [[0, 0.62], [0.16, 0.6], [0.22, 0.5], [0.24, 0.0]], 8,
-    (i, j) => (i === 0 ? BO.steelDk : i === 1 ? ((j & 1) ? BO.trim : BO.trimLt) : BO.steelXDk), null, null, { phase: Math.PI / 8 });
-  b.block({ x: 0, y: 0.02, z: 0.02, w: 0.8, d: 0.9, h: 0.34, tw: 0.62, td: 0.74, oz: 0.05, bev: 0.06, top: BO.panel, bevS: BO.trimLt, side: BO.steel, front: BO.steelDk });
+  b.lathe([0, -0.22, 0], [0, 1, 0], [[0, 0.66], [0.16, 0.64], [0.21, 0.54], [0.24, 0.0]], 10,
+    (i, j) => (i === 0 ? BO.steelDk : i === 1 ? ((j & 1) ? BO.trim : BO.trimLt) : BO.steelXDk), null, null, { phase: Math.PI / 10 });
+  b.block({ x: 0, y: 0.0, z: 0.04, w: 0.82, d: 0.92, h: 0.36, tw: 0.64, td: 0.76, oz: 0.05, bev: 0.06, top: BO.panel, bevS: BO.trimLt, side: BO.steel, front: BO.steelDk });
   for (const x of [-0.14, 0.14]) {
-    b.lathe([x, 0.2, -0.4], [0, 0, -1], [[0, 0.08], [0.62, 0.065], [0.62, 0.085], [0.74, 0.085], [0.74, 0.04]], 6,
+    b.lathe([x, 0.2, -0.4], [0, 0, -1], [[0, 0.08], [0.62, 0.065], [0.62, 0.085], [0.76, 0.085], [0.76, 0.04]], 6,
       (i) => (i === 2 ? BO.trimLt : BO.steelDk), null, GL(EM.magentaHot, 0.5), { phase: Math.PI / 6 });
   }
-  b.decal([[-0.18, 0.365, -0.24], [0.18, 0.365, -0.24], [0.14, 0.365, -0.14], [-0.14, 0.365, -0.14]], GL(EM.magenta));
+  b.decal([[-0.2, 0.365, -0.24], [0.2, 0.365, -0.24], [0.15, 0.365, -0.13], [-0.15, 0.365, -0.13]], GL(EM.magenta));
+  b.decal([[-0.22, 0.365, 0.2], [0.22, 0.365, 0.2], [0.22, 0.365, 0.3], [-0.22, 0.365, 0.3]], BO.hazard);
   return b;
 }
 
@@ -1561,7 +1741,7 @@ export function createBoss() {
     { keep: () => 1, crumple: 0.14, seed: 7, shards: 14, shardSize: 0.3, band: 2, dir: [0, 1, 0] }).build());
   const frame = new THREE.Mesh(frameGeo, coreMat);
   const orbGeo = GG('boss.orb', buildBossOrb), orbDead = GG('boss.orbDead', buildBossOrbDead);
-  const orbMat = bodyMat(0.3, 0.1); allMats.push(orbMat);
+  const orbMat = bodyMat(0.5, 0.1); allMats.push(orbMat);
   const orb = new THREE.Mesh(orbGeo, orbMat);
   const shutterGeo = G('boss.shutter', () => buildBossShutter().build());
   // left shutter = same geometry mirrored by scale.x = −1 (three flips the winding for us)
@@ -1587,7 +1767,7 @@ export function createBoss() {
     hingeR.rotation.z = -e * 118 * DEG; hingeL.rotation.z = e * 118 * DEG;
   };
   // ---- wings
-  const wingKeep = { keep: (x) => -0.35 - x, crumple: 0.16, seed: 11, dir: [1, 0, 0], shards: 16, shardSize: 0.4, band: 0.7 };
+  const wingKeep = { keep: (x) => -0.4 - x, crumple: 0.16, seed: 11, dir: [1, 0, 0], shards: 16, shardSize: 0.42, band: 0.7 };
   const mkWing = (side) => {
     const m = partMat();
     const intact = GG('boss.wing', buildBossWing);
@@ -1595,7 +1775,7 @@ export function createBoss() {
     const mesh = new THREE.Mesh(intact, m);
     if (side < 0) mesh.scale.x = -1;
     const part = makePart(side < 0 ? 'wingL' : 'wingR', 1.5, [{ mesh, intact, wreck, sag: [0.05, -0.12, -0.1 * side] }],
-      [new THREE.Vector3(0.1 * side, 0.38, -2.25)]);
+      [new THREE.Vector3(-0.15 * side, 0.36, -2.8)]);
     part.position.set(5 * side, 0, 0.6);
     return part;
   };
@@ -1607,7 +1787,7 @@ export function createBoss() {
     const intact = GG('boss.pod', buildBossPod);
     const wreck = G('boss.pod.wreck', () => wreckOf(gbOf('boss.pod', buildBossPod), podKeep).build());
     const part = makePart(side < 0 ? 'podL' : 'podR', 1.0, [{ mesh: new THREE.Mesh(intact, m), intact, wreck, sag: [0.1, -0.1, 0.06 * side] }],
-      [new THREE.Vector3(0, 0.02, -1.7)]);
+      [new THREE.Vector3(0, 0.02, -1.66)]);
     part.position.set(2.6 * side, 0, -2.8);
     return part;
   };
@@ -1620,7 +1800,7 @@ export function createBoss() {
     const intact = GG('boss.turret', buildBossTurret);
     const wreck = G('boss.turret.wreck', () => wreckOf(gbOf('boss.turret', buildBossTurret), turKeep).build());
     const part = makePart('t' + k, 0.6, [{ mesh: new THREE.Mesh(intact, m), intact, wreck, sag: [0.12, -0.08, 0.1 * (k & 1 ? 1 : -1)] }],
-      [new THREE.Vector3(-0.14, 0.2, -1.16), new THREE.Vector3(0.14, 0.2, -1.16)]);
+      [new THREE.Vector3(-0.14, 0.2, -1.2), new THREE.Vector3(0.14, 0.2, -1.2)]);
     part.position.set(p[0], p[1], p[2]);
     return part;
   });
@@ -1632,7 +1812,7 @@ export function createBoss() {
   ud.update = (dt, t) => {
     const pulse = 0.8 + Math.sin(t * 3.2) * 0.2;
     for (let i = 0; i < allMats.length; i++) allMats[i].uEmitScale.value = pulse;
-    orbMat.uEmitScale.value = core.userData.destroyed ? 0.8 : (0.35 + openT * 0.9) * (1 + Math.sin(t * 9) * 0.15);
+    orbMat.uEmitScale.value = core.userData.destroyed ? 0.8 : (0.3 + openT * 0.8) * (1 + Math.sin(t * 9) * 0.12);
     orb.rotation.y += dt * (0.5 + openT * 2.5);
     const fl = 1 + Math.sin(t * 37) * 0.08 + Math.sin(t * 23) * 0.05;
     flames.scale.set(1, 1, fl);
@@ -1654,14 +1834,14 @@ function glyphTex(text) {
   const W = wide ? 256 : 128, H = 128;
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
-  const size = wide ? 88 : 104;
+  const size = wide ? 94 : 104;
   g.font = `900 ${size}px "Arial Black", "Segoe UI Black", "Helvetica Neue", Arial, system-ui, sans-serif`;
   g.textAlign = 'center'; g.textBaseline = 'alphabetic';
   const m = g.measureText(text);
   const asc = m.actualBoundingBoxAscent || size * 0.72, desc = m.actualBoundingBoxDescent || 0;
   const y = H / 2 + (asc - desc) / 2;
   g.lineJoin = 'round'; g.miterLimit = 2;
-  g.lineWidth = wide ? 20 : 24; g.strokeStyle = 'rgba(6,8,16,0.92)'; g.strokeText(text, W / 2, y);
+  g.lineWidth = wide ? 30 : 28; g.strokeStyle = 'rgba(5,6,12,0.95)'; g.strokeText(text, W / 2, y);
   const gr = g.createLinearGradient(0, y - asc, 0, y);
   gr.addColorStop(0, '#ffffff'); gr.addColorStop(1, '#e6ecf5');
   g.fillStyle = gr; g.fillText(text, W / 2, y);
@@ -1687,65 +1867,71 @@ function haloTex() {
 }
 
 const ITEM_COL = {
-  red: { body: '#ff2b2b', glow: rgb(1.0, 0.1, 0.06), halo: rgb(1.0, 0.25, 0.15) },
-  blue: { body: '#2a7dff', glow: rgb(0.12, 0.42, 1.0), halo: rgb(0.25, 0.55, 1.0) },
-  H: { body: '#22d552', glow: rgb(0.12, 1.0, 0.3), halo: rgb(0.3, 1.0, 0.45) },
-  N: { body: '#b03cff', glow: rgb(0.62, 0.16, 1.0), halo: rgb(0.7, 0.35, 1.0) },
-  B: { body: '#ff8414', glow: rgb(1.0, 0.45, 0.05), halo: rgb(1.0, 0.55, 0.2) },
-  medal: { body: '#ffc21f', glow: rgb(1.0, 0.72, 0.15), halo: rgb(1.0, 0.8, 0.35) },
-  '1UP': { body: '#5bff6e', glow: rgb(0.4, 1.0, 0.25), halo: rgb(0.55, 1.0, 0.4) },
+  red: { body: '#ff3a2e', glow: rgb(1.0, 0.16, 0.08, 1.6), halo: rgb(1.0, 0.2, 0.1) },
+  blue: { body: '#3a86ff', glow: rgb(0.14, 0.45, 1.0, 1.6), halo: rgb(0.2, 0.5, 1.0) },
+  H: { body: '#2fe060', glow: rgb(0.14, 1.0, 0.32, 1.3), halo: rgb(0.14, 0.7, 0.24) },
+  N: { body: '#b64cff', glow: rgb(0.66, 0.2, 1.0, 1.6), halo: rgb(0.65, 0.25, 1.0) },
+  B: { body: '#ff8a1c', glow: rgb(1.0, 0.46, 0.06, 1.6), halo: rgb(1.0, 0.5, 0.12) },
+  medal: { body: '#ffffff', glow: rgb(1.0, 0.7, 0.18, 1.0), halo: rgb(1.0, 0.72, 0.2) },
+  '1UP': { body: '#2fd84e', glow: rgb(0.25, 1.0, 0.3, 0.6), halo: rgb(0.16, 0.5, 0.16) },
 };
-const WHITE_S = S([1, 1, 1]);
-const SILVER = lit('#dfe5ec'), SILVER_DK = lit('#8e98a4');
+const SILVER = lit('#c9d0d9'), SILVER_DK = lit('#7d8793'), ITEM_DARK = lit('#23272e');
+/** facet shades: albedo is tinted by material.color, emission by uEmitTint */
+const FAC = (k, e) => S([k, k, k], [e, e, e]);
 
-function buildGem() {         // power crystal: 6-sided bipyramid along z
+function buildGem() {         // power crystal: brilliant-cut gem lying flat, long axis z
   const b = new GB();
-  const ring = (z, r) => Array.from({ length: 6 }, (_, k) => { const a = (k * TAU) / 6; return [Math.cos(a) * r, Math.sin(a) * r, z]; });
-  const R = [ring(-0.46, 0.0), ring(-0.14, 0.27), ring(0.12, 0.27), ring(0.42, 0.0)];
-  b.loft(R, (i, j) => S((j & 1) ? [1, 1, 1] : [0.7, 0.7, 0.7], (i === 1) ? [0.55, 0.55, 0.55] : Z3));
+  const hex = (y, sx, sz) => Array.from({ length: 6 }, (_, k) => {
+    const a = (k * TAU) / 6 + Math.PI / 6; return [Math.cos(a) * sx, y, Math.sin(a) * sz];
+  });
+  const R = [hex(-0.22, 0.001, 0.001), hex(0.0, 0.34, 0.46), hex(0.09, 0.3, 0.4), hex(0.15, 0.17, 0.23)];
+  b.loft(R, (i, j) => (i === 0 ? FAC((j & 1) ? 0.55 : 0.4, 0.5) : i === 1 ? FAC(1, 0.35) : FAC((j & 1) ? 0.95 : 0.72, (j & 1) ? 0.9 : 0.45)),
+    null, FAC(0.9, 0.95));
   return b;
 }
-function buildCapsule() {     // pill along x with a glowing belt (tinted by uEmitTint)
+function buildCapsule() {     // pill along x with a glowing belt
   const b = new GB();
-  b.lathe([-0.45, 0, 0], [1, 0, 0], [[0, 0], [0.05, 0.13], [0.12, 0.2], [0.2, 0.23], [0.23, 0.23], [0.67, 0.23], [0.7, 0.23], [0.78, 0.2], [0.85, 0.13], [0.9, 0]], 10, (i, j) => {
-    if (i === 3 || i === 5) return S(lin('#2a2f38'));
-    if (i === 4) return S([0.12, 0.12, 0.12], (j & 1) ? rgb(1, 1, 1, 2.0) : rgb(1, 1, 1, 1.4));
+  b.lathe([-0.48, 0, 0], [1, 0, 0], [[0, 0], [0.05, 0.14], [0.13, 0.22], [0.22, 0.26], [0.27, 0.26], [0.69, 0.26], [0.74, 0.26], [0.83, 0.22], [0.91, 0.14], [0.96, 0]], 10, (i, j) => {
+    if (i === 3 || i === 5) return ITEM_DARK;
+    if (i === 4) return S([0.5, 0.5, 0.5], (j & 1) ? [1.25, 1.25, 1.25] : [0.8, 0.8, 0.8]);
     return (j & 1) ? SILVER : SILVER_DK;
   });
   return b;
 }
-function buildBombItem() {    // chunky bomb with fins, along z
+function buildBombItem() {    // cartoon bomb: round orange body, silver tail fins, nose along −z
   const b = new GB();
-  b.lathe([0, 0, 0.36], [0, 0, -1], [[0, 0.0], [0.06, 0.13], [0.16, 0.22], [0.46, 0.25], [0.6, 0.23], [0.72, 0.16], [0.8, 0.0]], 8, (i, j) => {
-    if (i === 2) return S([0.12, 0.12, 0.12], rgb(1, 1, 1, 1.8));
+  b.lathe([0, 0, 0.3], [0, 0, -1], [[0, 0.0], [0.03, 0.16], [0.1, 0.25], [0.24, 0.31], [0.4, 0.3], [0.52, 0.24], [0.6, 0.14], [0.64, 0.0]], 10, (i, j) => {
     if (i === 0) return SILVER_DK;
-    return S((j & 1) ? [1, 1, 1] : [0.72, 0.72, 0.72], rgb(1, 1, 1, 0.25));
-  }, null, null, { phase: Math.PI / 8 });
+    if (i === 2) return S([0.45, 0.45, 0.45], [1.1, 1.1, 1.1]);
+    return S((j & 1) ? [1, 1, 1] : [0.78, 0.78, 0.78], [0.18, 0.18, 0.18]);
+  }, null, null, { phase: Math.PI / 10 });
+  b.lathe([0, 0, 0.26], [0, 0, 1], [[0, 0.13], [0.16, 0.1]], 8, SILVER_DK, null, ITEM_DARK);
   for (let k = 0; k < 4; k++) {
     const f = b.n;
-    b.block({ x: 0.22, y: -0.012, z: 0.34, w: 0.2, d: 0.2, h: 0.024, tw: 0.2, td: 0.12, oz: 0.04, top: SILVER, side: SILVER_DK });
+    b.block({ x: 0.2, y: -0.014, z: 0.36, w: 0.24, d: 0.22, h: 0.028, tw: 0.24, td: 0.12, oz: 0.05, top: SILVER, side: SILVER_DK });
     b.xform(f, M(0, 0, 0, 0, 0, (k * TAU) / 4 + Math.PI / 4));
   }
   return b;
 }
-function buildMedal() {       // coin facing +y with a raised star
+function buildMedal() {       // coin facing +y: gold rim, raised star; tinted gold by vertex colour
   const b = new GB();
-  const GOLD = S(lin('#ffc21f'), rgb(1, 0.62, 0.1, 0.55)), GOLD_LT = S(lin('#ffe07a'), rgb(1, 0.8, 0.3, 1.5)), GOLD_DK = S(lin('#b07a10'), rgb(0.6, 0.35, 0.05, 0.3));
-  b.lathe([0, -0.06, 0], [0, 1, 0], [[0, 0], [0, 0.34], [0.02, 0.42], [0.1, 0.42], [0.12, 0.34], [0.12, 0]], 14,
-    (i, j) => (i === 0 || i === 4 ? GOLD : i === 2 ? ((j & 1) ? GOLD_LT : GOLD) : GOLD_DK), null, null);
+  const G0 = lin('#ffc21a'), G1 = lin('#ffe07a'), G2 = lin('#b37a06');
+  const GOLD = S(G0, rgb(1, 0.6, 0.08, 0.28)), GOLD_LT = S(G1, rgb(1, 0.8, 0.3, 0.7)), GOLD_DK = S(G2, rgb(0.6, 0.32, 0.03, 0.12));
+  b.lathe([0, -0.06, 0], [0, 1, 0], [[0, 0], [0, 0.33], [0.02, 0.43], [0.1, 0.43], [0.12, 0.33], [0.12, 0]], 16,
+    (i, j) => (i === 0 || i === 4 ? GOLD_DK : i === 2 ? ((j & 1) ? GOLD_LT : GOLD) : GOLD), null, null);
   const star = (y, dir) => {
     const pts = [];
-    for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + (k * TAU) / 10, r = k & 1 ? 0.12 : 0.28; pts.push([Math.cos(a) * r, y, Math.sin(a) * r]); }
-    const apex = [0, y + 0.05 * dir, 0];
-    for (let k = 0; k < 10; k++) b.triN(pts[k], pts[(k + 1) % 10], apex, [0, dir, 0], k & 1 ? GOLD_LT : S(lin('#fff2b0'), rgb(1, 0.9, 0.5, 2.0)));
+    for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + (k * TAU) / 10, r = k & 1 ? 0.12 : 0.29; pts.push([Math.cos(a) * r, y, Math.sin(a) * r]); }
+    const apex = [0, y + 0.06 * dir, 0];
+    for (let k = 0; k < 10; k++) b.triN(pts[k], pts[(k + 1) % 10], apex, [0, dir, 0], k & 1 ? GOLD : GOLD_LT);
   };
-  star(0.062, 1); star(-0.062, -1);
+  star(0.061, 1); star(-0.061, -1);
   return b;
 }
-function buildOneUp() {       // hexagonal emerald badge
+function buildOneUp() {       // bevelled emerald hexagon badge
   const b = new GB();
-  b.lathe([0, -0.07, 0], [0, 1, 0], [[0, 0], [0, 0.38], [0.03, 0.44], [0.11, 0.44], [0.14, 0.38], [0.14, 0]], 6,
-    (i, j) => (i === 2 ? S((j & 1) ? [1, 1, 1] : [0.75, 0.75, 0.75], rgb(1, 1, 1, 1.4)) : i === 4 ? S([0.8, 0.8, 0.8], rgb(1, 1, 1, 0.5)) : S([0.55, 0.55, 0.55], rgb(1, 1, 1, 0.3))),
+  b.lathe([0, -0.08, 0], [0, 1, 0], [[0, 0], [0, 0.4], [0.035, 0.47], [0.125, 0.47], [0.16, 0.4], [0.16, 0]], 6,
+    (i, j) => (i === 2 ? FAC((j & 1) ? 1 : 0.8, 0.55) : i === 4 ? FAC(0.9, 0.9) : i === 3 ? FAC(0.85, 0.7) : FAC(0.6, 0.4)),
     null, null, { phase: Math.PI / 6 });
   return b;
 }
@@ -1755,6 +1941,7 @@ function itemSprite(tex, sx, sy) {
   const s = new THREE.Sprite(m); s.scale.set(sx, sy, 1);
   return s;
 }
+const LETTER_Y = 0.36, LETTER_Z = 0.1;   // hover over the body, nudged toward the camera so it stays centred on screen
 
 export function createItem(kind) {
   const g = new THREE.Group(); g.name = 'item:' + kind;
@@ -1762,82 +1949,92 @@ export function createItem(kind) {
   const ud = g.userData;
   ud.kind = kind; ud.radius = 0.6; ud.muzzles = [];
   const phase = Math.random() * TAU;
-  const halo = itemSprite(haloTex(), 1.7, 1.7);
-  halo.material.blending = THREE.AdditiveBlending; halo.material.depthTest = true;
-  halo.position.y = -0.1; halo.renderOrder = 3; halo.userData.noShadow = true;
+  const halo = itemSprite(haloTex(), 1.55, 1.55);
+  halo.material.blending = THREE.AdditiveBlending;
+  halo.position.y = -0.25; halo.renderOrder = 3; halo.userData.noShadow = true;
   g.add(halo);
   let letter = null;
   let mat, mesh, spin = () => {};
+  let haloK = 0.36;
+  ud.debrisColor = new THREE.Color();
   const setHue = (key) => {
     const c = ITEM_COL[key];
     mat.color.set(c.body);
     mat.uEmitTint.value.setRGB(c.glow[0], c.glow[1], c.glow[2]);
-    halo.material.color.setRGB(c.halo[0] * 1.3, c.halo[1] * 1.3, c.halo[2] * 1.3);
-    ud.debrisColor.set(c.body);
+    halo.material.color.setRGB(c.halo[0], c.halo[1], c.halo[2]);
+    ud.debrisColor.set(key === 'medal' ? '#ffc21a' : c.body);
   };
-  ud.debrisColor = new THREE.Color();
   switch (kind) {
     case 'P': {
-      mat = bodyMat(0.25, 0.1);
-      mesh = new THREE.Mesh(GG('item.gem', buildGem), mat); mesh.scale.setScalar(1.05);
-      letter = itemSprite(glyphTex('P'), 0.72, 0.72);
+      mat = bodyMat(0.5, 0.1);   // contract range: roughness 0.5–0.85, metalness 0.1–0.5
+      mesh = new THREE.Mesh(GG('item.gem', buildGem), mat);
+      letter = itemSprite(glyphTex('P'), 0.7, 0.7);
       ud.color = 'red';
       ud.setColor = (c) => { ud.color = c === 'blue' ? 'blue' : 'red'; setHue(ud.color); };
       ud.setColor('red');
-      spin = (dt) => { mesh.rotation.z += dt * 2.6; };
+      spin = (dt, t) => { mesh.rotation.z = Math.sin(t * 2.4 + phase) * 0.9; mesh.rotation.y += dt * 0.6; };
       break;
     }
     case 'S': {
-      mat = bodyMat(0.35, 0.3);
+      mat = bodyMat(0.5, 0.1);   // contract range: roughness 0.5–0.85, metalness 0.1–0.5
       mesh = new THREE.Mesh(GG('item.capsule', buildCapsule), mat);
       const texH = glyphTex('H'), texN = glyphTex('N');
-      letter = itemSprite(texH, 0.66, 0.66);
+      letter = itemSprite(texH, 0.68, 0.68);
       ud.subKind = 'H';
-      ud.setKind = (k) => { ud.subKind = k === 'N' ? 'N' : 'H'; setHue(ud.subKind); letter.material.map = ud.subKind === 'N' ? texN : texH; mat.color.set('#ffffff'); };
+      ud.setKind = (k) => {
+        ud.subKind = k === 'N' ? 'N' : 'H'; setHue(ud.subKind);
+        letter.material.map = ud.subKind === 'N' ? texN : texH;
+        mat.color.set('#ffffff');
+      };
       ud.setKind('H');
       spin = (dt) => { mesh.rotation.x += dt * 3.2; };
       break;
     }
     case 'B': {
-      mat = bodyMat(0.4, 0.2);
+      mat = bodyMat(0.5, 0.1);   // contract range: roughness 0.5–0.85, metalness 0.1–0.5
       mesh = new THREE.Mesh(GG('item.bomb', buildBombItem), mat);
-      letter = itemSprite(glyphTex('B'), 0.66, 0.66);
+      letter = itemSprite(glyphTex('B'), 0.68, 0.68);
       setHue('B');
-      spin = (dt) => { mesh.rotation.z += dt * 2.4; };
+      spin = (dt, t) => { mesh.rotation.z += dt * 2.2; mesh.rotation.y = Math.sin(t * 1.7 + phase) * 0.35; };
       break;
     }
     case 'medal': {
-      mat = bodyMat(0.3, 0.2);
+      mat = bodyMat(0.5, 0.1);   // contract range: roughness 0.5–0.85, metalness 0.1–0.5
       mesh = new THREE.Mesh(GG('item.medal', buildMedal), mat);
-      mesh.rotation.x = 0.3;
       setHue('medal');
-      mat.color.set('#ffffff'); mat.uEmitTint.value.setRGB(1, 1, 1);
-      halo.scale.setScalar(1.45);
-      spin = (dt) => { mesh.rotation.z += dt * 5.5; };
+      haloK = 0.34;
+      halo.scale.setScalar(1.35);
+      spin = (dt) => { mesh.rotation.z += dt * 4.2; };
+      pivot.rotation.x = 0.33;          // face the camera
       break;
     }
     case '1UP': {
-      mat = bodyMat(0.3, 0.15);
+      mat = bodyMat(0.5, 0.1);   // contract range: roughness 0.5–0.85, metalness 0.1–0.5
       mesh = new THREE.Mesh(GG('item.oneup', buildOneUp), mat);
-      letter = itemSprite(glyphTex('1UP'), 0.98, 0.49);
+      letter = itemSprite(glyphTex('1UP'), 1.04, 0.52);
       setHue('1UP');
-      spin = (dt) => { mesh.rotation.y += dt * 1.6; };
+      pivot.rotation.x = 0.33;
+      spin = (dt, t) => { mesh.rotation.y += dt * 1.4; mesh.rotation.z = Math.sin(t * 2 + phase) * 0.25; };
       break;
     }
     default: throw new Error(`models.createItem: unknown kind "${kind}"`);
   }
   pivot.add(mesh);
-  if (letter) { letter.position.y = 0.5; letter.renderOrder = 4; letter.userData.noShadow = true; g.add(letter); }
+  if (letter) {
+    letter.material.color.setScalar(0.9);
+    letter.position.set(0, LETTER_Y, LETTER_Z); letter.renderOrder = 4; letter.userData.noShadow = true;
+    g.add(letter);
+  }
   ud.letter = letter;
   ud.halo = halo;
   ud.setFlash = (v) => mat.emissive.setScalar(Math.max(0, Math.min(1, v)) * FLASH_K);
   ud.update = (dt, t) => {
-    spin(dt);
-    const bob = Math.sin(t * 3.4 + phase) * 0.08;
+    spin(dt, t);
+    const bob = Math.sin(t * 3.4 + phase) * 0.07;
     pivot.position.y = bob;
-    if (letter) letter.position.y = 0.5 + bob;
-    halo.material.opacity = 0.62 + Math.sin(t * 6 + phase) * 0.18;
-    mat.uEmitScale.value = 1 + Math.sin(t * 6 + phase) * 0.2;
+    if (letter) letter.position.y = LETTER_Y + bob;
+    halo.material.opacity = haloK + Math.sin(t * 6 + phase) * 0.1;
+    mat.uEmitScale.value = 1 + Math.sin(t * 6 + phase) * 0.18;
   };
   ud.dispose = () => { mat.dispose(); halo.material.dispose(); if (letter) letter.material.dispose(); };
   ud.update(0, 0);
@@ -1851,6 +2048,15 @@ const _m4a = new THREE.Matrix4(), _m4b = new THREE.Matrix4(), _v3 = new THREE.Ve
 function shadowKey(model) {
   const ud = model.userData;
   return ud.kind || model.name || model.uuid;
+}
+function pristineOf(kind) {
+  try {
+    if (kind === 'player') return createPlayer();
+    if (kind === 'boss') return createBoss();
+    if (ENEMY_TYPES.includes(kind)) return createEnemy(kind);
+    if (ITEM_KINDS.includes(kind)) return createItem(kind);
+  } catch (_) { /* fall back to the model itself */ }
+  return null;
 }
 function bakeShadow(model) {
   model.updateWorldMatrix(true, true);
@@ -1878,24 +2084,42 @@ function bakeShadow(model) {
   x0 -= margin; x1 += margin; z0 -= margin; z1 += margin;
   const ppu = Math.min(64, 256 / Math.max(x1 - x0, z1 - z0));
   const W = Math.max(8, Math.ceil((x1 - x0) * ppu)), H = Math.max(8, Math.ceil((z1 - z0) * ppu));
-  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-  const c = cv.getContext('2d');
-  c.fillStyle = '#000'; c.fillRect(0, 0, W, H);
-  c.fillStyle = '#fff'; c.strokeStyle = '#fff'; c.lineWidth = 0.8; c.lineJoin = 'round';
+  x1 = x0 + W / ppu; z1 = z0 + H / ppu;            // quad matches the texel grid exactly
+  // Rasterise the projected triangles in JS on a supersampled grid. (Canvas 2D +
+  // getImageData was ~10× slower and forces a GPU read-back on phones.)
+  const SS = ppu >= 40 ? 3 : 2, SW = W * SS, SH = H * SS, sp = ppu * SS;
+  const mask = new Uint8Array(SW * SH);
   for (const arr of tris) {
     for (let i = 0; i < arr.length; i += 6) {
-      c.beginPath();
-      c.moveTo((arr[i] - x0) * ppu, (arr[i + 1] - z0) * ppu);
-      c.lineTo((arr[i + 2] - x0) * ppu, (arr[i + 3] - z0) * ppu);
-      c.lineTo((arr[i + 4] - x0) * ppu, (arr[i + 5] - z0) * ppu);
-      c.closePath(); c.fill(); c.stroke();
+      const ax = (arr[i] - x0) * sp, ay = (arr[i + 1] - z0) * sp;
+      const bx = (arr[i + 2] - x0) * sp, by = (arr[i + 3] - z0) * sp;
+      const cx = (arr[i + 4] - x0) * sp, cy = (arr[i + 5] - z0) * sp;
+      const area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      if (Math.abs(area) < 1e-4) continue;          // edge-on (vertical) faces cast no footprint
+      const sg = area > 0 ? 1 : -1;
+      const mnx = Math.max(0, Math.floor(Math.min(ax, bx, cx))), mxx = Math.min(SW - 1, Math.ceil(Math.max(ax, bx, cx)));
+      const mny = Math.max(0, Math.floor(Math.min(ay, by, cy))), mxy = Math.min(SH - 1, Math.ceil(Math.max(ay, by, cy)));
+      for (let y = mny; y <= mxy; y++) {
+        const py = y + 0.5;
+        for (let x = mnx; x <= mxx; x++) {
+          const px = x + 0.5;
+          if (sg * ((bx - ax) * (py - ay) - (by - ay) * (px - ax)) < 0) continue;
+          if (sg * ((cx - bx) * (py - by) - (cy - by) * (px - bx)) < 0) continue;
+          if (sg * ((ax - cx) * (py - cy) - (ay - cy) * (px - cx)) < 0) continue;
+          mask[y * SW + x] = 1;
+        }
+      }
     }
   }
-  // soften: two box-blur passes (separable) on the green channel
-  const img = c.getImageData(0, 0, W, H), d = img.data;
+  // box-downsample to coverage, then soften with two separable box-blur passes
   const rad = Math.max(1, Math.round(ppu * 0.05));
   const buf = new Float32Array(W * H), tmp = new Float32Array(W * H);
-  for (let i = 0; i < W * H; i++) buf[i] = d[i * 4 + 1];
+  const k255 = 255 / (SS * SS);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let s = 0;
+    for (let j = 0; j < SS; j++) { const row = (y * SS + j) * SW + x * SS; for (let i = 0; i < SS; i++) s += mask[row + i]; }
+    buf[y * W + x] = s * k255;
+  }
   for (let pass = 0; pass < 2; pass++) {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       let s = 0, n = 0;
@@ -1908,11 +2132,19 @@ function bakeShadow(model) {
       buf[y * W + x] = s / n;
     }
   }
-  for (let i = 0; i < W * H; i++) { const v = buf[i]; d[i * 4] = v; d[i * 4 + 1] = v; d[i * 4 + 2] = v; d[i * 4 + 3] = 255; }
-  c.putImageData(img, 0, 0);
-  const tex = new THREE.CanvasTexture(cv);
+  // RGBA (alphaMap samples .g). DataTexture rows run bottom-up (v=0 ↔ +z), grid rows top-down (z0 first).
+  const data = new Uint8Array(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    const dst = (H - 1 - y) * W * 4;
+    for (let x = 0; x < W; x++) {
+      const v = Math.min(255, Math.round(buf[y * W + x])), o = dst + x * 4;
+      data[o] = v; data[o + 1] = v; data[o + 2] = v; data[o + 3] = 255;
+    }
+  }
+  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
   tex.colorSpace = THREE.NoColorSpace;
   tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
   const geo = new THREE.PlaneGeometry(x1 - x0, z1 - z0);
   geo.rotateX(-Math.PI / 2);
   geo.translate((x0 + x1) / 2, 0.02, (z0 + z1) / 2);
@@ -1930,7 +2162,14 @@ function bakeShadow(model) {
 export function createShadow(model) {
   const key = shadowKey(model);
   let s = SHADOW.get(key);
-  if (!s) { s = bakeShadow(model); SHADOW.set(key, s); }
+  if (!s) {
+    // Bake from a pristine instance of the same kind, so the cached silhouette never
+    // depends on the pose of the model passed in (banked, turret yawed, parts destroyed…).
+    const ref = pristineOf(model.userData.kind);
+    s = bakeShadow(ref || model);
+    if (ref && ref.userData.dispose) ref.userData.dispose();
+    SHADOW.set(key, s);
+  }
   const m = new THREE.Mesh(s.geo, s.mat);
   m.name = 'shadow:' + key;
   m.renderOrder = -1;

@@ -1067,7 +1067,7 @@ const SFX = {
   shot:       { gap: 0.045, max: 3, pri: 1, lv: 12, bake: [2, 0.09], jit: 0.6 },
   laser:      { gap: 0.045, max: 1, pri: 2, lv: -14, hold: 0.09 },
   missile:    { gap: 0.06,  max: 4, pri: 2, lv: 6, bake: [1, 0.6], jit: 0.75 },
-  hit:        { gap: 0.04,  max: 4, pri: 1, lv: 12.5, bake: [2, 0.1], jit: 1 },
+  hit:        { gap: 0.04,  max: 4, pri: 1, lv: 10.5, bake: [2, 0.1], jit: 1 },
   hitArmor:   { gap: 0.05,  max: 3, pri: 2, lv: 11, bake: [1, 0.3], jit: 0.75 },
   explodeS:   { gap: 0.025, max: 6, pri: 3, lv: 0, verb: 1, bake: [2, 1.1], jit: 1.5 },
   explodeM:   { gap: 0.04,  max: 5, pri: 4, lv: 0, verb: 1, bake: [1, 2.2], jit: 1.25 },
@@ -1086,7 +1086,7 @@ const SFX = {
   pause:      { gap: 0.1,   max: 1, pri: 8, lv: 11.5 },
   bossDown:   { gap: 1.0,   max: 1, pri: 10, lv: 3, verb: 1 },
   stageStart: { gap: 0.5,   max: 1, pri: 9, lv: 2, verb: 1 },
-  graze:      { gap: 0.03,  max: 3, pri: 1, lv: 7.5, bake: [1, 0.18], jit: 1.5 },
+  graze:      { gap: 0.03,  max: 3, pri: 1, lv: 6.5, bake: [1, 0.18], jit: 1.5 },
   lock:       { gap: 0.06,  max: 2, pri: 3, lv: 9, bake: [1, 0.26] },
 };
 for (const k in SFX) { SFX[k].fn = SFXFN[k]; SFX[k].lvg = Math.pow(10, (SFX[k].lv || 0) / 20); }

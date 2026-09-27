@@ -382,6 +382,14 @@ function checkTall(lx0, ld0, lx1, ld1, top) {
   if (top > MAX_H + 1e-3) { VIOL++; if (VIOL_LOG && VIOL_LOG.length < 40) VIOL_LOG.push(['height', +top.toFixed(2)]); }
 }
 
+// same check for round things (lathes, cylinders, cones): world centre + radius
+function checkTallRound(lx, ld, r, top) {
+  if (top <= TALL + 1e-4) return;
+  const x = wx(lx, ld), d = wd(lx, ld);
+  if (blocked(x - r, x + r, d - r, d + r, -0.02)) { VIOL++; if (VIOL_LOG && VIOL_LOG.length < 40) VIOL_LOG.push([+(x - r).toFixed(2), +(x + r).toFixed(2), +(d - r).toFixed(2), +(d + r).toFixed(2), +top.toFixed(2)]); }
+  if (top > MAX_H + 1e-3) { VIOL++; if (VIOL_LOG && VIOL_LOG.length < 40) VIOL_LOG.push(['height', +top.toFixed(2)]); }
+}
+
 // visibility cull for vertical faces: the camera sits at x≈0 and far toward +z (low d),
 // so faces whose normal points up-screen (+d) and away from the centre line are never seen.
 function wallHidden(nx, nd, px) { return nd >= -0.02 && nx * px >= 0.45 * Math.abs(nx); }
@@ -560,7 +568,7 @@ function hip(x0, d0, x1, d1, h0, rh, c) {
 }
 // vertical cylinder (open bottom)
 function cyl(cx, cd, r, h0, h1, segs, cs, ct = cs, top = true) {
-  checkTall(cx - r, cd - r, cx + r, cd + r, h1);
+  checkTallRound(cx, cd, r, h1);
   const y0 = GROUND_Y + h0, y1 = GROUND_Y + h1, g = h0 < 0.05;
   let u = 0;
   for (let i = 0; i < segs; i++) {
@@ -576,7 +584,7 @@ function cyl(cx, cd, r, h0, h1, segs, cs, ct = cs, top = true) {
 }
 // cone / pyramid
 function cone(cx, cd, r, h0, h1, segs, c, rot = 0) {
-  checkTall(cx - r, cd - r, cx + r, cd + r, h1);
+  checkTallRound(cx, cd, r, h1);
   if (!room(segs * 3)) return;
   setTile(0);
   const y0 = GROUND_Y + h0, y1 = GROUND_Y + h1;
@@ -593,7 +601,7 @@ const LR = new Float32Array(8), LH = new Float32Array(8), LK = new Float32Array(
 function lathe(cx, cd, n, segs, c, rot, sx = 1, sd = 1, jitter = 0) {
   let top = 0, rm = 0;
   for (let i = 0; i < n; i++) { top = Math.max(top, LH[i]); rm = Math.max(rm, LR[i]); }
-  checkTall(cx - rm * sx, cd - rm * sd, cx + rm * sx, cd + rm * sd, top);
+  checkTallRound(cx, cd, rm * Math.max(sx, sd) * (1 + jitter * 0.5), top);
   if (!room((n - 1) * segs * 6)) return;
   setTile(0);
   for (let r = 0; r < n - 1; r++) {
@@ -692,7 +700,7 @@ function jit(c, a, out = TC) {
 function tint(c, t, k, out = TC) { out[0] = lerp(c[0], t[0], k); out[1] = lerp(c[1], t[1], k); out[2] = lerp(c[2], t[2], k); return out; }
 
 function treeRound(x, d, r, h, c, base = 0) {
-  if (base + h > TALL && !canPlace(x, d, r * 1.16)) return;
+  if (base + h > TALL && !canPlace(x, d, r * 1.13)) return;
   frame(x, d, rand() * TAU);
   const b = base + 0.05;
   LR[0] = 0; LH[0] = b + h * 0.12; LK[0] = 0.62;

@@ -685,8 +685,20 @@ function boom(E, b, t, sz, r, v) {
   const o = E.osc('sine', 170 * r, t, t + body * 2.5);
   o.frequency.exponentialRampToValueAtTime(34, t + 0.07 + sz * 0.16);
   const g2 = E.gain(0);
-  pluck(g2.gain, t, (0.55 + sz * 0.1) * v, 0.05 + sz * 0.11, 0.003);
+  pluck(g2.gain, t, (0.45 + sz * 0.08) * v, 0.05 + sz * 0.11, 0.003);
   o.connect(g2); g2.connect(b.out);
+  // mid-band punch (a 700 Hz thud + a falling knock): what carries the hit on phone speakers,
+  // which can't reproduce the sub
+  const n2 = E.noise(t, t + 0.35 + sz * 0.2, 1);
+  const b2 = E.filt('bandpass', 720 * r, 0.8, t);
+  const g4 = E.gain(0);
+  pluck(g4.gain, t, (0.5 + sz * 0.05) * v, 0.045 + sz * 0.035, 0.001);
+  n2.connect(b2); b2.connect(g4); g4.connect(b.out);
+  const kn = E.osc('triangle', 440 * r, t, t + 0.3 + sz * 0.2);
+  kn.frequency.exponentialRampToValueAtTime(120 * r, t + 0.07 + sz * 0.03);
+  const g5 = E.gain(0);
+  pluck(g5.gain, t, 0.3 * v, 0.05 + sz * 0.04, 0.002);
+  kn.connect(g5); g5.connect(b.out);
   // debris crackle (medium and up)
   if (sz >= 0.6) {
     const c = E.noise(t + 0.02, t + body * 3, 1, E.crackleBuf);
@@ -1064,14 +1076,14 @@ const FANFARE_PAD = [50, 57, 62, 65];
 //          repeated calls (seconds after the last call), bake: [variants, seconds] pre-rendered
 //          at startup (frequent sounds; played back with ±jit semitones of random pitch) }
 const SFX = {
-  shot:       { gap: 0.045, max: 3, pri: 1, lv: 12, bake: [2, 0.09], jit: 0.6 },
+  shot:       { gap: 0.045, max: 3, pri: 1, lv: 10, bake: [2, 0.09], jit: 0.6 },
   laser:      { gap: 0.045, max: 1, pri: 2, lv: -14, hold: 0.09 },
   missile:    { gap: 0.06,  max: 4, pri: 2, lv: 6, bake: [1, 0.6], jit: 0.75 },
   hit:        { gap: 0.04,  max: 4, pri: 1, lv: 10.5, bake: [2, 0.1], jit: 1 },
   hitArmor:   { gap: 0.05,  max: 3, pri: 2, lv: 11, bake: [1, 0.3], jit: 0.75 },
   explodeS:   { gap: 0.025, max: 6, pri: 3, lv: 0, verb: 1, bake: [2, 1.1], jit: 1.5 },
-  explodeM:   { gap: 0.04,  max: 5, pri: 4, lv: 0, verb: 1, bake: [1, 2.2], jit: 1.25 },
-  explodeL:   { gap: 0.07,  max: 3, pri: 6, lv: 1, verb: 1, bake: [1, 3.4], jit: 1 },
+  explodeM:   { gap: 0.04,  max: 5, pri: 4, lv: 1, verb: 1, bake: [1, 2.2], jit: 1.25 },
+  explodeL:   { gap: 0.07,  max: 3, pri: 6, lv: 2, verb: 1, bake: [1, 3.4], jit: 1 },
   bomb:       { gap: 0.3,   max: 2, pri: 9, lv: 3, verb: 1 },
   item:       { gap: 0.04,  max: 3, pri: 5, lv: 9, bake: [1, 0.5] },
   powerup:    { gap: 0.15,  max: 2, pri: 7, lv: 6.5 },
@@ -2174,13 +2186,18 @@ async function renderOffline(name, seconds, o) {
     cues.push([at, () => X.playSfx(name, o.opts || null, at)]);
   } else if (getSong(name)) {
     kind = 'music';
-    X.music(name, PRE - 0.05);
+    X.music(name, PRE - MUSIC_LEAD);
   } else if (name === 'stress' || name === 'stressRaw') {
     kind = 'stress';
     stressCues(X, PRE, seconds, name === 'stressRaw', cues);
   } else if (name === 'gameplay' || name === 'gameplayLaser' || name === 'firefight') {
     kind = 'stress';
     gameplayCues(X, PRE, seconds, cues, name === 'gameplayLaser', name !== 'firefight');
+  } else if (name === 'runStart') {
+    // what main.js startGame() does: play('stageStart') and music('stage') in the same frame
+    kind = 'music';
+    X.music('stage', PRE - MUSIC_LEAD);
+    cues.push([PRE - MUSIC_LEAD, () => X.playSfx('stageStart', null, PRE - MUSIC_LEAD)]);
   } else if (name === 'vulcan' || name === 'laserBeam') {
     kind = 'stress';
     weaponCues(X, PRE, seconds, name === 'laserBeam', cues);
@@ -2309,7 +2326,8 @@ function weaponCues(X, P, seconds, laser, cues) {
 // track, or a scenario: 'stress' (30 explosions + bomb + shot spam over boss music via
 // play()), 'stressRaw' (same, bypassing voice limiting), 'gameplay' / 'gameplayLaser' (stage
 // music + a firefight exactly as game.js calls it), 'firefight' (the same without music),
-// 'vulcan' / 'laserBeam' (the weapon alone), 'calib' (small-signal gain of the master chain).
+// 'vulcan' / 'laserBeam' (the weapon alone), 'runStart' (stageStart fanfare + stage music, as
+// at the start of a run), 'calib' (small-signal gain of the master chain).
 export async function __renderForTest(nameOrTrack, seconds, opts) {
   const r = await renderOffline(nameOrTrack, seconds || 2, opts);
   return r.stats;

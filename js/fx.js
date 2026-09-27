@@ -104,10 +104,11 @@ const VERT = /* glsl */`
 attribute vec3 iPos;
 attribute vec2 iScale;
 attribute vec4 iColor;
-attribute vec3 iMisc; // rot, frame, flat
+attribute vec4 iMisc; // rot, frame, flat, core
 uniform vec2 uGrid;
 varying vec2 vUv;
 varying vec4 vColor;
+varying float vCore;
 #include <fog_pars_vertex>
 void main() {
   vec2 p = position.xy;
@@ -126,6 +127,7 @@ void main() {
   vec2 cell = vec2(mod(f, uGrid.x), uGrid.y - 1.0 - floor(f / uGrid.x));
   vUv = (uv + cell) / uGrid;
   vColor = iColor;
+  vCore = iMisc.w;
   #include <fog_vertex>
 }`;
 
@@ -134,9 +136,10 @@ uniform sampler2D uMap;
 uniform float uCore;
 varying vec2 vUv;
 varying vec4 vColor;
+varying float vCore;
 void main() {
   vec4 t = texture2D(uMap, vUv);
-  vec3 col = (vColor.rgb * t.r + vec3(t.g) * uCore * (0.6 + 0.4 * max(vColor.r, max(vColor.g, vColor.b)))) * vColor.a;
+  vec3 col = (vColor.rgb * t.r + vec3(t.g) * uCore * vCore * (0.6 + 0.4 * max(vColor.r, max(vColor.g, vColor.b)))) * vColor.a;
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -169,9 +172,9 @@ export class SpriteBatch {
     this.pos = new Float32Array(max * 3);
     this.scale = new Float32Array(max * 2);
     this.color = new Float32Array(max * 4);
-    this.misc = new Float32Array(max * 3);
+    this.misc = new Float32Array(max * 4);
     const mk = (arr, n) => { const a = new THREE.InstancedBufferAttribute(arr, n); a.setUsage(THREE.DynamicDrawUsage); return a; };
-    this.aPos = mk(this.pos, 3); this.aScale = mk(this.scale, 2); this.aColor = mk(this.color, 4); this.aMisc = mk(this.misc, 3);
+    this.aPos = mk(this.pos, 3); this.aScale = mk(this.scale, 2); this.aColor = mk(this.color, 4); this.aMisc = mk(this.misc, 4);
     geo.setAttribute('iPos', this.aPos);
     geo.setAttribute('iScale', this.aScale);
     geo.setAttribute('iColor', this.aColor);
@@ -193,12 +196,12 @@ export class SpriteBatch {
     this.mesh.renderOrder = renderOrder;
   }
   begin() { this.count = 0; }
-  push(x, y, z, sx, sy, rot, frame, flat, r, g, b, a) {
+  push(x, y, z, sx, sy, rot, frame, flat, r, g, b, a, core = 1) {
     if (this.count >= this.max) return;
     const i = this.count++;
     let k = i * 3;
     this.pos[k] = x; this.pos[k + 1] = y; this.pos[k + 2] = z;
-    this.misc[k] = rot; this.misc[k + 1] = frame; this.misc[k + 2] = flat;
+    k = i * 4; this.misc[k] = rot; this.misc[k + 1] = frame; this.misc[k + 2] = flat; this.misc[k + 3] = core;
     k = i * 2; this.scale[k] = sx; this.scale[k + 1] = sy;
     k = i * 4; this.color[k] = r; this.color[k + 1] = g; this.color[k + 2] = b; this.color[k + 3] = a;
   }
@@ -206,7 +209,7 @@ export class SpriteBatch {
     const n = this.count;
     this.geo.instanceCount = n;
     if (n === 0) return;
-    for (const [a, size] of [[this.aPos, 3], [this.aScale, 2], [this.aColor, 4], [this.aMisc, 3]]) {
+    for (const [a, size] of [[this.aPos, 3], [this.aScale, 2], [this.aColor, 4], [this.aMisc, 4]]) {
       a.clearUpdateRanges(); a.addUpdateRange(0, n * size); a.needsUpdate = true;
     }
   }
@@ -385,8 +388,8 @@ export class Debris {
 // FX facade: owns the batches + particles + debris, and the explosion "recipes".
 // ---------------------------------------------------------------------------
 const rnd = (a, b) => a + Math.random() * (b - a);
-const WHITE_HOT = [3.2, 2.6, 1.8, 1];
-const FIRE_A = [3.0, 1.35, 0.35, 1];
+const WHITE_HOT = [2.4, 1.7, 0.9, 1];
+const FIRE_A = [2.5, 1.0, 0.25, 1];
 const FIRE_B = [1.2, 0.18, 0.05, 0];
 const SMOKE_A = [0.22, 0.2, 0.2, 0.55];
 const SMOKE_B = [0.12, 0.11, 0.11, 0];
@@ -428,8 +431,8 @@ export class FX {
     const scroll = ground;
     const p = this.p;
     // flash
-    p.emit(x, y + 0.3, z, 0, 0, 0, 0.16, 1.4 * size, 3.2 * size, WHITE_HOT, [2.0, 0.8, 0.3, 0], F.GLOW, layer, { scroll });
-    p.emit(x, y + 0.3, z, 0, 0, 0, 0.22, 0.8 * size, 4.5 * size, [1.8, 1.4, 1.0, 0.9], [1, 0.4, 0.1, 0], F.FLARE, layer, { scroll, vrot: 3 });
+    p.emit(x, y + 0.3, z, 0, 0, 0, 0.13, 1.0 * size, 2.3 * size, WHITE_HOT, [1.6, 0.6, 0.2, 0], F.GLOW, layer, { scroll });
+    p.emit(x, y + 0.3, z, 0, 0, 0, 0.18, 0.6 * size, 3.0 * size, [1.3, 0.9, 0.55, 0.8], [0.8, 0.3, 0.1, 0], F.FLARE, layer, { scroll, vrot: 3 });
     // fireballs
     const nf = Math.round((5 + 5 * size) * q);
     for (let i = 0; i < nf; i++) {
@@ -491,6 +494,10 @@ export class FX {
   }
   trail(x, y, z, r, g, b, a = 0.6, s = 0.35, life = 0.35) {
     this.p.emit(x, y, z, rnd(-0.3, 0.3), 0, rnd(0.5, 1.5), life, s, s * 2.2, [r, g, b, a], [r * 0.3, g * 0.3, b * 0.3, 0], F.GLOW, 0, { drag: 1 });
+  }
+  missileTrail(x, z, r, g, b) {
+    this.p.emit(x, 0.02, z, rnd(-0.2, 0.2), 0, rnd(0.3, 0.8), 0.42, 0.5, 1.15, [0.6, 0.6, 0.66, 0.42], [0.45, 0.45, 0.5, 0], F.SMOKE, 2, { drag: 1.5, vrot: rnd(-2, 2) });
+    this.p.emit(x, 0.05, z, 0, 0, 0, 0.14, 0.42, 0.18, [r, g, b, 0.9], [r * 0.4, g * 0.4, b * 0.4, 0], F.GLOW, 0, { drag: 0 });
   }
   smokePuff(x, y, z, s = 0.5, life = 0.7) {
     this.p.emit(x, y, z, rnd(-0.4, 0.4), 0.3, rnd(0.8, 1.6), life, s, s * 2.6, [0.3, 0.3, 0.32, 0.45], [0.2, 0.2, 0.2, 0], F.SMOKE, 2, { drag: 1, vrot: rnd(-1, 1) });

@@ -396,12 +396,14 @@ function wallHidden(nx, nd, px) { return nd >= -0.02 && nx * px >= 0.45 * Math.a
 
 // --- flat pieces --------------------------------------------------------------------
 // uv mode: us=0 → constant uv; else (x/us, d/vs) in LOCAL coords, or swapped when sw
-let UVS = 0, UVV = 0, UVSW = false, UVX = 0, UVD = 0;
-function uvMode(us, vs, sw = false, ox = 0, od = 0) { UVS = us; UVV = vs; UVSW = sw; UVX = ox; UVD = od; }
+let UVS = 0, UVV = 0, UVSW = false, UVX = 0, UVD = 0, UVC = 1, UVN = 0;
+function uvMode(us, vs, sw = false, ox = 0, od = 0, rot = 0) { UVS = us; UVV = vs; UVSW = sw; UVX = ox; UVD = od; UVC = Math.cos(rot); UVN = Math.sin(rot); }
 function fv(lx, y, ld, c, k) {
-  if (UVS === 0) vtx(lx, y, ld, c, k, 0, 0);
-  else if (UVSW) vtx(lx, y, ld, c, k, (ld - UVD) / UVS, (lx - UVX) / UVV);
-  else vtx(lx, y, ld, c, k, (lx - UVX) / UVS, (ld - UVD) / UVV);
+  if (UVS === 0) { vtx(lx, y, ld, c, k, 0, 0); return; }
+  const px = lx - UVX, pd = ld - UVD;
+  const rx = px * UVC + pd * UVN, rd = pd * UVC - px * UVN;
+  if (UVSW) vtx(lx, y, ld, c, k, rd / UVS, rx / UVV);
+  else vtx(lx, y, ld, c, k, rx / UVS, rd / UVV);
 }
 // rectangle decal (local frame) at relative height lay
 function flat(x0, d0, x1, d1, lay, c, k = 1) {
@@ -1261,7 +1263,7 @@ void main() {
               * (1.0 - smoothstep(0.05, 0.6, depth)) * (1.0 - calm * 0.8) * smoothstep(0.35, 0.65, fn);
   float wake = m.g * smoothstep(0.3, 0.72, fn + m.g * 0.3);
   float caps = smoothstep(0.84, 0.95, fine) * smoothstep(0.5, 0.78, fn) * uCaps * (1.0 - calm) * sh;
-  float foam = clamp(shoreLine * 0.8 + bands * 0.5 + wake * 0.7 + caps * 0.5, 0.0, 1.0);
+  float foam = clamp(shoreLine * mix(0.8, 0.45, calm) + bands * 0.5 + wake * 0.7 + caps * 0.5, 0.0, 1.0);
   col = mix(col, uFoam, foam);
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
@@ -1943,9 +1945,11 @@ function laneRoad(lx, dA, dB, style) {
 function crossRoad(c, style, x0 = -40, x1 = 40) {
   frameId(); setTile(0); uvMode(0, 0);
   if (style === 'gravel') {
-    flat(x0, c - 1.5, x1, c + 1.5, L_ROAD, P.gravel);
-    flat(x0, c - 0.75, x1, c - 0.5, L_WALK, P.dirt, 0.95);
-    flat(x0, c + 0.5, x1, c + 0.75, L_WALK, P.dirt, 0.95);
+    // gravel road between the paved centre lane; wheel ruts stop at every lane
+    flat(x0, c - 1.5, -1.1, c + 1.5, L_ROAD, P.gravel);
+    flat(1.1, c - 1.5, x1, c + 1.5, L_ROAD, P.gravel);
+    const segs = [[x0, -6.5], [-4.5, -1.1], [1.1, 4.5], [6.5, x1]];
+    for (const [a, b] of segs) { flat(a, c - 0.75, b, c - 0.5, L_WALK, P.dirt, 0.92); flat(a, c + 0.5, b, c + 0.75, L_WALK, P.dirt, 0.92); }
     return;
   }
   const taxi = style === 'taxi';
@@ -2364,7 +2368,7 @@ function countryParcels(w, ch, dA, dB, k) {
     // inner bands: long strip fields
     for (const [x0, x1] of inner) {
       if (k === 13 && x0 < 0 && rand() < 0.5) continue;
-      if (k === 15 && rand() < 0.6) continue;
+      if (rand() < 0.14 && b - a > 9 && canRect(x0 + 0.3, x1 - 0.3, a + 1, a + 7)) { smallFarm(x0, x1, a, b); continue; }
       splitField(x0, x1, a, b, 0);
     }
     // outer: per side, columns of fields/forest
@@ -2391,37 +2395,70 @@ function countryParcels(w, ch, dA, dB, k) {
   }
 }
 function splitField(x0, x1, a, b, outer) {
-  // one or two fields along d, separated by a hedge row
-  const n = b - a > 11 && rand() < 0.55 ? 2 : 1;
-  const cut = n === 2 ? rr(a + 5, b - 5) : b;
+  // one to three fields along d, separated by hedge rows or farm paths
+  const n = b - a > 11 ? (rand() < 0.45 ? 2 : rand() < 0.3 ? 3 : 1) : 1;
+  let fa = a;
   for (let i = 0; i < n; i++) {
-    const fa = i === 0 ? a : cut + 0.25, fb = i === 0 ? (n === 2 ? cut - 0.25 : b) : b;
+    const fb = i === n - 1 ? b : rr(fa + (b - a) / n * 0.7, fa + (b - a) / n * 1.25);
     field(x0 + 0.12, x1 - 0.12, fa + 0.12, fb - 0.12);
-    if (i === 0 && n === 2 && outer) hedge(x0 + 0.3, x1 - 0.3, cut, true);
+    if (i < n - 1) {
+      if (outer && rand() < 0.7) hedge(x0 + 0.3, x1 - 0.3, fb + 0.1, true);
+      else { frameId(); flat(x0, fb - 0.05, x1, fb + 0.25, L_BASE + 0.002, P.dirt, 0.95); }
+    }
+    fa = fb + 0.2;
   }
-  if (outer && rand() < 0.5) hedge(x1 - 0.05, x1 - 0.05, a + 0.3, false, b - 0.3);
-  if (outer && rand() < 0.35) { const x = rand() < 0.5 ? x0 + 0.5 : x1 - 0.5; const d = rr(a + 0.8, b - 0.8); if (canPlace(x, d, 0.8)) tree(x, d, 1.05, 0); }
+  if (outer && rand() < 0.7) hedge(x1 - 0.05, x1 - 0.05, a + 0.3, false, b - 0.3);
+  if (outer) for (let i = 0; i < 2; i++) if (rand() < 0.45) { const x = rand() < 0.5 ? x0 + 0.5 : x1 - 0.5; const d = rr(a + 0.8, b - 0.8); tree(x, d, rr(0.95, 1.15), rand() < 0.2 ? 1 : 0); }
 }
 function field(x0, x1, a, b) {
-  const c = jit(pick(CROPS), 0.1, TC2);
-  if (Math.abs(a - riverD((x0 + x1) / 2)) < 3.6 || Math.abs(b - riverD((x0 + x1) / 2)) < 3.6) return;
-  const rows = (x1 - x0) < (b - a) ? rand() < 0.75 : rand() < 0.25;
-  setTile(c === P.fallow ? 0 : T_ROWS);
-  uvMode(rr(1.3, 2.2), 1, rows);
+  const base = pick(CROPS);
+  const c = jit(base, 0.12, TC2);
+  const xm = (x0 + x1) / 2;
+  if (Math.abs(a - riverD(xm)) < 3.6 || Math.abs(b - riverD(xm)) < 3.6) return;
+  const long = (x1 - x0) < (b - a);
+  const rows = long ? rand() < 0.75 : rand() < 0.25;
+  const diag = rand() < 0.18 ? (rand() < 0.5 ? 0.6 : -0.6) : 0;
+  setTile(base === P.fallow ? 0 : T_ROWS);
+  uvMode(rr(1.3, 2.2), 1, rows, 0, 0, diag);
   frameId();
-  // clip against the river channel
   let fa = a, fb = b;
-  const rc = riverD((x0 + x1) / 2);
+  const rc = riverD(xm);
   if (fa < rc + 3.8 && fb > rc - 3.8) { if (rc - 3.8 - fa > fb - rc - 3.8) fb = rc - 3.8; else fa = rc + 3.8; }
-  if (fb - fa > 0.6) flat(x0, fa, x1, fb, L_BASE, c);
+  if (fb - fa > 0.6) {
+    // some fields are harvested in two passes: two tones
+    if (!LOWQ && rand() < 0.2 && fb - fa > 4) {
+      const m = rr(fa + 1.5, fb - 1.5);
+      flat(x0, fa, x1, m, L_BASE, c);
+      flat(x0, m, x1, fb, L_BASE, tint(c, P.cropY, 0.45, TC3));
+    } else flat(x0, fa, x1, fb, L_BASE, c);
+  }
   setTile(0); uvMode(0, 0);
   // hay bales on golden fields
-  if (!LOWQ && (c[0] > 0.3) && rand() < 0.35) {
-    for (let i = 0; i < 5; i++) {
+  if (!LOWQ && (base === P.cropY || base === P.cropGold) && rand() < 0.45) {
+    for (let i = 0; i < 6; i++) {
       const x = rr(x0 + 0.4, x1 - 0.4), d = rr(fa + 0.4, fb - 0.4);
-      frame(x, d, rr(0, TAU)); box(-0.12, -0.14, 0.12, 0.14, 0, 0.18, P.cropGold, P.cropY); frameId();
+      cyl(x, d, 0.14, 0, 0.18, 6, P.cropGold, P.cropY);
     }
   }
+}
+// barn, silo and a yard squeezed between two lanes
+function smallFarm(x0, x1, a, b) {
+  const cx = (x0 + x1) / 2;
+  frameId();
+  flat(x0 + 0.15, a + 0.4, x1 - 0.15, a + 7.2, L_BASE, jit(P.dirt, 0.08, TC3), 0.95);
+  frame(cx, a + 3.2, 0);
+  sideStyle(T_SHUTTER, 0.8, 0.5);
+  box(-0.95, -1.4, 0.95, 1.4, 0, 0.85, P.barn, P.barn, false);
+  plain(); topStyle(T_CORR, 0.25, 1);
+  gable(-1.05, -1.5, 1.05, 1.5, 0.85, 0.6, P.roofGrey, true);
+  plain(); shadowBox(-0.95, -1.4, 0.95, 1.4, 1.3);
+  frameId();
+  const sx = cx + (x0 < 0 ? 0.7 : -0.7), sd = a + 5.6;
+  cyl(sx, sd, 0.34, 0, 1.5, 8, P.metal, P.metal, false);
+  LR[0] = 0.34; LH[0] = 1.5; LK[0] = 1; LR[1] = 0; LH[1] = 1.78; LK[1] = 1.1;
+  frame(sx, sd, 0); lathe(0, 0, 2, 8, P.metalD, 0); frameId();
+  shadowDisc(sx, sd, 0.34, 1.7);
+  splitField(x0, x1, a + 7.6, b, 0);
 }
 function hedge(x0, x1, d, alongX, d1 = d) {
   const step = LOWQ ? 1.4 : 0.8;
@@ -2664,7 +2701,7 @@ function building(x0, x1, a, b, I, inner) {
   else { wallC = pick([P.wallBrick, P.wallB, P.wallSand, P.wallG]); tile = T_BRICK; tu = 1.8; tv = 1.1; }
   const wc = jit(wallC, 0.1, TC2);
   const rk = rand();
-  const roofC = jit(rk < 0.3 ? P.roofTar : rk < 0.5 ? P.roofLight : rk < 0.65 ? P.roofGrey : rk < 0.8 ? P.roofSlate : rk < 0.9 ? P.roofGreen : P.roofTerra, 0.08, TC3);
+  const roofC = jit(rk < 0.22 ? P.roofTar : rk < 0.48 ? P.roofLight : rk < 0.6 ? P.roofGrey : rk < 0.7 ? P.roofSlate : rk < 0.78 ? P.roofGreen : rk < 0.9 ? P.concrete : P.roofTerra, 0.08, TC3);
   frameId();
   sideStyle(tile, tu, tv);
   topStyle(T_GRAVEL, 1.5, 1.5);
@@ -2698,23 +2735,40 @@ function roofDetails(x0, x1, a, b, h) {
   const w = x1 - x0, l = b - a;
   const top = MAX_H - 0.05;
   const r = rand();
-  if (r < 0.14 && w > 1.2 && l > 1.2) { roofGarden(x0 + 0.15, x1 - 0.15, a + 0.15, b - 0.15, h); for (let i = 0; i < 2; i++) { const x = rr(x0 + 0.4, x1 - 0.4), d = rr(a + 0.4, b - 0.4); if (h + 0.5 < top) treeRound(x, d, 0.28, 0.45, jit(P.tree1, 0.1), h); } return; }
-  if (r < 0.2 && w > 1.4 && l > 1.4) { frameId(); flat((x0 + x1) / 2 - 0.35, (a + b) / 2 - 0.55, (x0 + x1) / 2 + 0.35, (a + b) / 2 + 0.55, h + 0.018, P.glassL, 1.15); flat((x0 + x1) / 2 - 0.45, (a + b) / 2 - 0.65, (x0 + x1) / 2 + 0.45, (a + b) / 2 + 0.65, h + 0.012, P.paving); }
-  const n = 1 + ((rand() * 3.5) | 0);
-  for (let i = 0; i < n; i++) {
-    const s = rr(0.16, 0.32);
-    if (w < 2 * s + 0.3 || l < 2 * s + 0.3) break;
-    const x = rr(x0 + s + 0.1, x1 - s - 0.1), d = rr(a + s + 0.1, b - s - 0.1);
-    const t = rand();
-    if (t < 0.45) box(x - s, d - s * 0.7, x + s, d + s * 0.7, h, Math.min(top, h + rr(0.1, 0.2)), P.metal, P.metal);
-    else if (t < 0.75) { if (h + 0.45 < top) { cyl(x, d, s * 0.62, h, h + 0.3, 6, P.roofBrown, P.roofBrown); cone(x, d, s * 0.66, h + 0.3, h + 0.42, 6, P.roofDark); } }
-    else box(x - s, d - s, x + s, d + s, h, Math.min(top, h + 0.28), P.wallG, P.roofDark);
+  const cx = (x0 + x1) / 2, cd = (a + b) / 2;
+  if (r < 0.12 && w > 1.2 && l > 1.2) {                       // roof garden with small trees
+    roofGarden(x0 + 0.15, x1 - 0.15, a + 0.15, b - 0.15, h);
+    for (let i = 0; i < 3; i++) { const x = rr(x0 + 0.4, x1 - 0.4), d = rr(a + 0.4, b - 0.4); if (h + 0.5 < top) treeRound(x, d, rr(0.22, 0.3), rr(0.38, 0.5), jit(P.tree1, 0.1), h); }
+    return;
+  }
+  if (r < 0.2 && w > 1.3 && l > 1.8) {                        // solar array
+    frameId(); setTile(T_GLASS); uvMode(0.5, 0.6);
+    for (let d = a + 0.3; d < b - 0.6; d += 0.62) flat(x0 + 0.25, d, x1 - 0.25, d + 0.45, h + 0.03, P.navy, 1.05);
+    setTile(0); uvMode(0, 0);
+  } else if (r < 0.26 && w > 1.4 && l > 1.4) {                // rooftop pool
+    frameId();
+    flat(cx - 0.45, cd - 0.6, cx + 0.45, cd + 0.6, h + 0.012, P.paving, 1.1);
+    flat(cx - 0.35, cd - 0.5, cx + 0.35, cd + 0.5, h + 0.02, P.glassL, 1.2);
+  } else if (r < 0.34 && w > 1.2 && l > 1.2) {                // skylights
+    for (let d = a + 0.4; d < b - 0.4; d += 0.7) box(cx - 0.3, d, cx + 0.3, d + 0.35, h, h + 0.08, P.metal, P.glassL);
+  }
+  // AC units in a row, stair house, water tank on legs
+  if (w > 0.8 && l > 1.0) {
+    const n = 1 + ((rand() * 3) | 0), ax = rr(x0 + 0.25, x1 - 0.45), ad = rr(a + 0.25, b - 0.35 - n * 0.32);
+    for (let i = 0; i < n; i++) box(ax, ad + i * 0.32, ax + 0.22, ad + i * 0.32 + 0.24, h, Math.min(top, h + 0.14), P.metal, P.concrete);
+  }
+  if (rand() < 0.55 && w > 1 && l > 1) { const x = rr(x0 + 0.35, x1 - 0.35), d = rr(a + 0.35, b - 0.35); box(x - 0.25, d - 0.3, x + 0.25, d + 0.3, h, Math.min(top, h + 0.3), P.wallG, P.roofDark); }
+  if (rand() < 0.3 && h + 0.7 < top && w > 1.1 && l > 1.1) {
+    const x = rr(x0 + 0.4, x1 - 0.4), d = rr(a + 0.4, b - 0.4);
+    for (const [ox, od] of [[-0.16, -0.16], [0.16, -0.16], [-0.16, 0.16], [0.16, 0.16]]) box(x + ox - 0.025, d + od - 0.025, x + ox + 0.025, d + od + 0.025, h, h + 0.3, P.hullDark, P.hullDark);
+    cyl(x, d, 0.24, h + 0.3, h + 0.58, 7, P.roofBrown, P.roofBrown);
+    cone(x, d, 0.26, h + 0.58, h + 0.7, 7, P.roofDark);
   }
   if (h > 2.9 && w > 1.9 && l > 1.9 && rand() < 0.4) {
-    setTile(T_HELI); uvMode(1.6, 1.6, false, (x0 + x1) / 2 - 0.8, (a + b) / 2 - 0.8);
-    flat((x0 + x1) / 2 - 0.8, (a + b) / 2 - 0.8, (x0 + x1) / 2 + 0.8, (a + b) / 2 + 0.8, h + 0.02, P.white);
+    setTile(T_HELI); uvMode(1.6, 1.6, false, cx - 0.8, cd - 0.8);
+    flat(cx - 0.8, cd - 0.8, cx + 0.8, cd + 0.8, h + 0.02, P.white);
     setTile(0); uvMode(0, 0);
-  } else if (h > 2.6 && rand() < 0.3) {
+  } else if (h > 2.6 && rand() < 0.35) {
     const x = rr(x0 + 0.2, x1 - 0.2), d = rr(a + 0.2, b - 0.2);
     box(x - 0.03, d - 0.03, x + 0.03, d + 0.03, h, Math.min(top, h + 0.5), P.metal, P.metal);
   }

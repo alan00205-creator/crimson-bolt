@@ -117,7 +117,7 @@ function setupComposer() {
   const rt = new THREE.WebGLRenderTarget(W, H, { type: THREE.HalfFloatType, samples });
   composer = new EffectComposer(renderer, rt);
   composer.addPass(new RenderPass(scene, camera));
-  bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 0.72, 0.42, 0.86);
+  bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 0.55, 0.38, 0.9);
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
 }
@@ -522,7 +522,7 @@ function exposeDebug() {
       game.world.reset(d);
       game.phase = 'stage'; game.scrollTarget = 7; game.boss = null;
       game.midbossDone = d > 600; game.warned = false;
-      skipTimeline(d);
+      game.skipTo(d);
     },
     power(level = 8, main = 'red', sub = 'H', subLevel = 4) { Object.assign(game.player, { level, main, sub, subLevel }); },
     killAll() { for (const e of game.enemies) { if (e.parts) for (const p of e.parts) game.damagePart(e, p, 1e6); game.damageEnemy(e, 1e6); } },
@@ -533,13 +533,6 @@ function exposeDebug() {
     },
     pause, resume, toTitle,
   };
-  function skipTimeline(d) {
-    import('./stage.js').then(({ TIMELINE }) => {
-      let i = 0;
-      while (i < TIMELINE.length && TIMELINE[i].d < d) i++;
-      game.tlIndex = i;
-    });
-  }
 }
 
 boot().catch((err) => { console.error(err); fail('啟動時發生錯誤：' + (err && err.message ? err.message : err)); });

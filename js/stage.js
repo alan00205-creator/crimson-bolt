@@ -305,7 +305,7 @@ function bossAI() {
     if (!s.init) {
       s.init = true; s.mode = 'enter'; s.a = 0; s.b = 0; s.mt = 0; s.open = 0;
       s.fixedYaw = true; s.yaw = Math.PI; e.invuln = true; e.armored = true;
-      e.x = 0; e.z = v.zTop - 9; s.baseZ = v.zTop + 11.5;
+      e.x = 0; e.z = v.zTop - 9; s.baseZ = v.zTop + 14;
     }
     // HP bar: all living parts
     let hp = 0, max = 0;

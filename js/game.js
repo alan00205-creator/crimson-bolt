@@ -387,6 +387,8 @@ export class Game {
     this.fx.update(dt, this.GROUND_Y, 5.5);
   }
 
+  // Debug: skip timeline events before distance d.
+  skipTo(d) { let i = 0; while (i < TIMELINE.length && TIMELINE[i].d < d) i++; this.tlIndex = i; }
   runTimeline() {
     const d = this.world.distance;
     while (this.tlIndex < TIMELINE.length && TIMELINE[this.tlIndex].d <= d) {
@@ -543,7 +545,7 @@ export class Game {
         fired = true;
       }
       if (fired) {
-        this.fx.muzzle(p.x, p.z - 1.0, 2.6, 1.5, 0.5, 0.55 + p.level * 0.05);
+        this.fx.muzzle(p.x, p.z - 1.0, 2.0, 1.0, 0.3, 0.5 + p.level * 0.04);
         this.audio.play('shot');
       }
     } else {
@@ -604,11 +606,11 @@ export class Game {
         ang += clamp(da, -8 * dt, 8 * dt);
         ps.vx[i] = Math.sin(ang) * sp; ps.vz[i] = Math.cos(ang) * sp;
         ps.trail[i] -= dt;
-        if (ps.trail[i] <= 0) { ps.trail[i] = 0.035; this.fx.trail(ps.x[i], 0.05, ps.z[i], 0.5, 1.6, 0.4, 0.5, 0.28, 0.3); }
+        if (ps.trail[i] <= 0) { ps.trail[i] = 0.022; this.fx.missileTrail(ps.x[i], ps.z[i], 0.6, 1.8, 0.5); }
       } else if (k === SK.NUKE) {
         ps.vz[i] = Math.max(-30, ps.vz[i] - 60 * dt);
         ps.trail[i] -= dt;
-        if (ps.trail[i] <= 0) { ps.trail[i] = 0.03; this.fx.trail(ps.x[i], 0.05, ps.z[i] + 0.3, 1.3, 0.6, 2.2, 0.55, 0.32, 0.32); }
+        if (ps.trail[i] <= 0) { ps.trail[i] = 0.022; this.fx.missileTrail(ps.x[i], ps.z[i] + 0.3, 1.4, 0.6, 2.2); }
       }
       ps.x[i] += ps.vx[i] * dt; ps.z[i] += ps.vz[i] * dt;
       const life = k === SK.HOMING ? 2.6 : 1.4;
@@ -1062,17 +1064,17 @@ export class Game {
       const k = ps.kind[i], x = ps.x[i], z = ps.z[i];
       if (k === SK.VULCAN) {
         const rot = flatRot(ps.vx[i], ps.vz[i]);
-        fx.bullets.push(x, 0.1, z, 0.3, 1.25, rot, F.STREAK, 1, 3.0, 1.55, 0.45, 1);
+        fx.bullets.push(x, 0.1, z, 0.36, 1.25, rot, F.STREAK, 1, 2.8, 0.9, 0.2, 0.9, 0.3);
       } else if (k === SK.LASER) {
         const w = ps.w[i];
         const fade = Math.min(1, ps.t[i] * 20);
         fx.bullets.push(x, 0.1, z, w * 1.35, 1.9, 0, F.STREAK, 1, 0.35 * fade, 1.35 * fade, 3.0 * fade, 1);
       } else if (k === SK.HOMING) {
-        fx.bullets.push(x, 0.1, z, 0.34, 0.9, flatRot(ps.vx[i], ps.vz[i]), F.STREAK, 1, 1.2, 3.0, 0.8, 1);
+        fx.bullets.push(x, 0.1, z, 0.34, 0.9, flatRot(ps.vx[i], ps.vz[i]), F.STREAK, 1, 1.2, 3.0, 0.8, 1, 0.6);
         fx.bullets.push(x, 0.1, z, 0.7, 0.7, 0, F.GLOW, 0, 0.5, 1.6, 0.4, 0.8);
       } else {
-        fx.bullets.push(x, 0.1, z, 0.42, 1.1, 0, F.STREAK, 1, 2.2, 1.0, 3.0, 1);
-        fx.bullets.push(x, 0.1, z, 0.7, 0.7, 0, F.GLOW, 0, 1.0, 0.4, 1.7, 0.5);
+        fx.bullets.push(x, 0.1, z, 0.36, 1.0, 0, F.STREAK, 1, 1.8, 0.8, 2.6, 1, 0.6);
+        fx.bullets.push(x, 0.1, z, 0.6, 0.6, 0, F.GLOW, 0, 0.9, 0.35, 1.5, 0.45);
       }
     }
     // laser root glow

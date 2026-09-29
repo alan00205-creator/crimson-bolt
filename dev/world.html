@@ -28,6 +28,7 @@
   button:hover { background: rgba(255, 255, 255, 0.14); }
   button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .biomes button { flex: 1 1 30%; font-size: 12px; padding: 4px 6px; }
+  .stages button { flex: 1 1 30%; font-weight: 600; letter-spacing: 0.03em; }
   .stats { font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--dim); white-space: pre; margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
   .stats b { color: var(--ink); font-weight: 600; }
   .warn { color: #ffb14a; }
@@ -47,7 +48,8 @@
 <div id="panel">
   <h1><b>赤電</b> World preview</h1>
   <p class="sub">Scrolling terrain · biomes · water · clouds · time of day</p>
-  <div class="row"><label>Distance <output id="dOut">0</output></label><input id="dist" type="range" min="0" max="1500" step="1" value="0"></div>
+  <div class="row btns stages" id="stages"></div>
+  <div class="row"><label>Distance <output id="dOut">0</output></label><input id="dist" type="range" min="0" max="1600" step="1" value="0"></div>
   <div class="row biomes btns" id="jumps"></div>
   <div class="row"><label>Scroll speed <output id="sOut">7</output></label><input id="speed" type="range" min="0" max="80" step="0.5" value="7"></div>
   <div class="row btns">
@@ -55,10 +57,12 @@
     <button id="quality" title="Toggle world quality (Q)">Quality: high</button>
     <button id="bloom" class="on" title="Bloom post-process like the game's HIGH setting (B)">Bloom</button>
     <button id="ph" class="on" title="Placeholder jet + enemy bullets for contrast checks (P)">Placeholders</button>
-    <button id="lanes" title="Overlay the guaranteed-clear lanes and cross roads (L)">Clear zones</button>
+    <button id="lanes" title="Overlay the guaranteed-clear lanes, cross roads and corridors (L)">Clear zones</button>
+    <button id="scan" title="Build every chunk of this stage (d 0–1600) at the current quality and report violations and build times (S)">Scan stage</button>
   </div>
   <div class="stats" id="stats"></div>
-  <div class="keys">Keys: ←/→ scrub ±10 · F fly · Q quality · B bloom · P placeholders · L zones · H hide UI</div>
+  <div class="stats" id="scanOut"></div>
+  <div class="keys">Keys: 1/2/3 stage · ←/→ scrub ±10 · F fly · Q quality · B bloom · P placeholders · L zones · S scan · H hide UI</div>
 </div>
 <script type="module">
 import * as THREE from 'three';
@@ -66,14 +70,16 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { World, GROUND_Y, LAYOUT, LANES_X, CROSS_ROAD_PERIOD } from '../js/world.js';
+import { World, GROUND_Y, LANES_X, CROSS_ROAD_PERIOD, WORLD_STAGES } from '../js/world.js';
 
 const $ = (id) => document.getElementById(id);
 const Q = new URLSearchParams(location.search);
+const STAGE_IDS = Object.keys(WORLD_STAGES);
 const opt = {
   d: +(Q.get('d') || 0), speed: Q.has('speed') ? +Q.get('speed') : 7, fly: Q.get('fly') !== '0',
   quality: Q.get('q') === 'low' ? 'low' : 'high', bloom: Q.get('bloom') !== '0', ph: Q.get('ph') !== '0',
   lanes: Q.get('lanes') === '1', ui: Q.get('ui') !== '0',
+  stage: STAGE_IDS.includes(Q.get('stage')) ? Q.get('stage') : 'coastal',
 };
 if (!opt.ui) document.body.classList.add('noui');
 
@@ -98,7 +104,7 @@ const sun = new THREE.DirectionalLight(0xfff1dc, 2.4);
 sun.position.set(-14, 30, 10);
 scene.add(hemi, sun, sun.target);
 
-const world = new World({ scene, renderer, sun, hemi, quality: opt.quality });
+const world = new World({ scene, renderer, sun, hemi, quality: opt.quality, stage: opt.stage });
 world.reset(opt.d);
 
 // --- placeholders: red jet + glowing enemy bullets (same recipe as the game) ---
@@ -183,19 +189,53 @@ zones.renderOrder = 20; zones.frustumCulled = false; scene.add(zones);
 function updateZones() {
   zones.visible = opt.lanes;
   if (!opt.lanes) return;
+  const st = WORLD_STAGES[world.stage];
   const d = world.distance, y = GROUND_Y + 0.05;
   let n = 0;
   const seg = (x0, z0, x1, z1) => { if (n >= ZMAX) return; const o = n * 6; zonePos.set([x0, y, z0, x1, y, z1], o); n++; };
-  const land = (dd) => dd >= 330 && dd < 1240;
+  const land = (dd) => dd >= st.clear.from && dd < st.clear.to;
   const z0 = 20, z1 = -45;
   const dA = d - z0, dB = d - z1;
-  const la = Math.max(dA, 330), lb = Math.min(dB, 1240);
+  const la = Math.max(dA, st.clear.from), lb = Math.min(dB, st.clear.to);
   if (lb > la) for (const lx of LANES_X) for (const s of [-1, 1]) seg(lx + s, d - la, lx + s, d - lb);
   for (let c = Math.ceil((dA - 20) / CROSS_ROAD_PERIOD) * CROSS_ROAD_PERIOD + 20; c < dB; c += CROSS_ROAD_PERIOD) {
     if (!land(c)) continue;
     for (const s of [-1.5, 1.5]) seg(-22, d - c - s, 22, d - c - s);
   }
+  // mid-boss / boss corridors (|x| < x over d0..d1)
+  for (const c of st.corridors) {
+    const a = Math.max(dA, c.d0), b = Math.min(dB, c.d1);
+    if (b <= a) continue;
+    for (const s of [-1, 1]) seg(s * c.x, d - a, s * c.x, d - b);
+    if (c.d0 >= dA) seg(-c.x, d - c.d0, c.x, d - c.d0);
+    if (c.d1 <= dB) seg(-c.x, d - c.d1, c.x, d - c.d1);
+  }
   zoneGeo.setDrawRange(0, n * 2); zoneGeo.attributes.position.needsUpdate = true;
+}
+
+// --- stage scan: build every chunk of the stage at the current quality (violations, build ms) ---
+function scan(d0 = 0, d1 = 1600) {
+  const ch = world.chunks[0];
+  const v0 = world.stats.violations, log0 = world.stats.violationLog.length;
+  let maxMs = 0, sumMs = 0, n = 0, maxVerts = 0, maxShadow = 0, maxK = 0;
+  for (let k = Math.floor(d0 / 40) - 1; k <= Math.ceil(d1 / 40) + 1; k++) {
+    world._maskSlot.fill(-99999);
+    world._build(ch, k);
+    sumMs += ch.ms; n++;
+    if (ch.ms > maxMs) { maxMs = ch.ms; maxK = k; }
+    maxVerts = Math.max(maxVerts, ch.n); maxShadow = Math.max(maxShadow, ch.sn);
+  }
+  world.reset(world.distance);
+  return { stage: world.stage, quality: world.quality, chunks: n, violations: world.stats.violations - v0,
+    log: world.stats.violationLog.slice(log0, log0 + 12), maxMs: +maxMs.toFixed(2), maxMsK: maxK, avgMs: +(sumMs / n).toFixed(2), maxVerts, maxShadow };
+}
+function showScan(r) {
+  $('scanOut').innerHTML = `scan <b>${r.stage}</b>/${r.quality} d 0–1600: ${r.chunks} chunks\n` +
+    `violations <b class="${r.violations ? 'warn' : ''}">${r.violations}</b>\n` +
+    `build avg <b>${r.avgMs}ms</b>  max <b>${r.maxMs}ms</b> (k ${r.maxMsK})\n` +
+    `verts <b>${r.maxVerts}</b>/${world.quality === 'low' ? 60000 : 96000}  shadow <b>${r.maxShadow}</b>/30000` +
+    (r.log.length ? '\n' + r.log.map((e) => JSON.stringify(e)).join('\n') : '');
+  console.log('[scan]', JSON.stringify(r));
 }
 
 // --- post-processing (HIGH quality in the game) --------------------------------
@@ -242,20 +282,43 @@ const toggles = {
 };
 for (const k in toggles) $(k).addEventListener('click', toggles[k]);
 setBtn('fly', opt.fly); setBtn('quality', opt.quality === 'high', 'Quality: ' + opt.quality); setBtn('bloom', opt.bloom); setBtn('ph', opt.ph); setBtn('lanes', opt.lanes);
-const jumps = $('jumps');
-for (const L of LAYOUT) {
+$('scan').addEventListener('click', () => showScan(scan()));
+// stage selector + one jump button per biome of the current stage
+const stagesEl = $('stages'), jumps = $('jumps');
+for (const id of STAGE_IDS) {
   const b = document.createElement('button');
-  b.textContent = `${L.biome} ${L.from}`;
-  b.addEventListener('click', () => world.reset(L.from + 10));
-  jumps.appendChild(b);
+  b.id = 'stage-' + id; b.textContent = id;
+  b.addEventListener('click', () => setStage(id, 0));
+  stagesEl.appendChild(b);
 }
+function buildJumps() {
+  jumps.textContent = '';
+  for (const L of world.layout) {
+    const b = document.createElement('button');
+    b.textContent = `${L.biome} ${L.from}`;
+    b.addEventListener('click', () => world.reset(L.from + 10));
+    jumps.appendChild(b);
+  }
+}
+function setStage(id, d = world.distance) {
+  opt.stage = id;
+  world.setStage(id);
+  world.reset(d);
+  for (const s of STAGE_IDS) setBtn('stage-' + s, s === id);
+  buildJumps();
+  $('scanOut').textContent = '';
+}
+for (const s of STAGE_IDS) setBtn('stage-' + s, s === opt.stage);
+buildJumps();
 $('toggle').addEventListener('click', () => $('panel').classList.toggle('open'));
 window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (k === 'arrowright') world.reset(world.distance + 10);
   else if (k === 'arrowleft') world.reset(Math.max(0, world.distance - 10));
+  else if (k >= '1' && k <= '9' && STAGE_IDS[+k - 1]) setStage(STAGE_IDS[+k - 1], 0);
   else if (k === 'f') toggles.fly(); else if (k === 'q') toggles.quality(); else if (k === 'b') toggles.bloom();
-  else if (k === 'p') toggles.ph(); else if (k === 'l') toggles.lanes(); else if (k === 'h') document.body.classList.toggle('noui');
+  else if (k === 'p') toggles.ph(); else if (k === 'l') toggles.lanes(); else if (k === 's') showScan(scan());
+  else if (k === 'h') document.body.classList.toggle('noui');
 });
 
 // --- stats: world-only draw calls / triangles measured with a direct render ------
@@ -272,12 +335,12 @@ function statsText() {
   const i = world.info();
   const w = stats.world;
   const warnC = w.calls > 70 ? ' warn' : '', warnT = w.tris > 150000 ? ' warn' : '';
-  return `d <b>${i.distance.toFixed(1)}</b>  biome <b>${i.biome}</b>\n` +
+  return `stage <b>${i.stage}</b>  d <b>${i.distance.toFixed(1)}</b>  biome <b>${i.biome}</b>\n` +
     `fps <b>${stats.fps.toFixed(0)}</b>   quality <b>${world.quality}</b>\n` +
     `world calls <b class="${warnC}">${w.calls}</b> / 70   tris <b class="${warnT}">${(w.tris / 1000).toFixed(1)}k</b> / 150k\n` +
     `frame calls <b>${stats.total.calls}</b>   tris <b>${(stats.total.tris / 1000).toFixed(1)}k</b>\n` +
     `chunks <b>${i.activeChunks}</b>  built <b>${i.builds}</b>  last <b>${i.lastBuildMs.toFixed(1)}ms</b>  max <b>${i.maxBuildMs.toFixed(1)}ms</b>\n` +
-    `clear-zone violations <b class="${i.violations ? 'warn' : ''}">${i.violations}</b>   water <b>${i.water ? 'on' : 'off'}</b>`;
+    `violations <b class="${i.violations ? 'warn' : ''}">${i.violations}</b>   water <b>${i.water ? 'on' : 'off'}</b>   deck <b>${i.deck ? 'on' : 'off'}</b>`;
 }
 
 // --- loop -----------------------------------------------------------------------
@@ -290,7 +353,7 @@ function frame(now) {
   ph.visible = opt.ph;
   if (opt.ph) updatePlaceholders(t);
   updateZones();
-  if (!dragging) { distEl.value = Math.min(1500, world.distance); }
+  if (!dragging) { distEl.value = Math.min(1600, world.distance); }
   $('dOut').textContent = world.distance.toFixed(0);
   $('sOut').textContent = opt.speed.toFixed(1);
   measureT += dt;
@@ -305,7 +368,7 @@ function frame(now) {
   if (logT > 2) {
     logT = 0;
     const i = world.info();
-    console.log(`[world] d=${i.distance.toFixed(0)} biome=${i.biome} fps=${stats.fps.toFixed(0)} worldCalls=${stats.world.calls} worldTris=${stats.world.tris} ` +
+    console.log(`[world] stage=${i.stage} d=${i.distance.toFixed(0)} biome=${i.biome} fps=${stats.fps.toFixed(0)} worldCalls=${stats.world.calls} worldTris=${stats.world.tris} ` +
       `frameCalls=${stats.total.calls} chunks=${i.activeChunks} buildMs=${i.lastBuildMs.toFixed(1)}/${i.maxBuildMs.toFixed(1)} violations=${i.violations}`);
   }
 }
@@ -313,10 +376,16 @@ requestAnimationFrame(frame);
 
 // hooks for automated checks
 window.__wd = {
-  THREE, world, renderer, scene, camera, opt, stats,
-  set(o) { Object.assign(opt, o); if (o.quality) world.setQuality(o.quality); if (o.d !== undefined) world.reset(o.d); },
+  THREE, world, renderer, scene, camera, opt, stats, WORLD_STAGES,
+  set(o) {
+    Object.assign(opt, o);
+    if (o.quality) { world.setQuality(o.quality); setBtn('quality', o.quality === 'high', 'Quality: ' + o.quality); }
+    if (o.stage) setStage(o.stage, o.d !== undefined ? o.d : 0);
+    else if (o.d !== undefined) world.reset(o.d);
+  },
   measure() { measure(); const i = world.info(); return { ...i, calls: stats.world.calls, tris: stats.world.tris }; },
   step(dt, speed) { world.update(dt, speed); },
+  scan,
 };
 </script>
 </body>

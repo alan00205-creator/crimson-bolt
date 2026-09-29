@@ -1,9 +1,16 @@
 // =============================================================================
 // world.js — CRIMSON BOLT (赤電) scrolling stage world
 //
-// Builds and scrolls the terrain under the gameplay plane:
-//   ocean (0–300) → coast (300–380) → country (380–640) → city (640–960)
-//   → airbase (960–1240) → endless dusk sea (1240–∞)
+// Builds and scrolls the terrain under the gameplay plane. Three stage worlds (WORLD_STAGES,
+// picked with world.setStage(id) before reset(d)):
+//   coastal  ocean (0–300) → coast (300–380) → country (380–640) → city (640–960)
+//            → airbase (960–1240) → endless dusk sea (1240–∞)
+//   canyon   dunes (0–260) → canyon (260–560) → mesa plateau (560–780) → refinery (780–1000)
+//            → desert fortress / airstrip (1000–1240) → endless dry lakebed (1240–∞)
+//   skies    a cloud-sea deck, no ground: stratosphere (0–420) → storm band (420–800)
+//            → golden high altitude (800–1240) → near-space dusk (1240–∞)
+// Stage data lives in one table per stage (see "stage table" at the end); the hot free
+// functions read it through the module pointer S, so switching stages allocates nothing.
 //
 // How it works
 //   • The stage is cut into 40-unit chunks along the stage distance d. A chunk is one
@@ -32,15 +39,19 @@
 //
 // Rules this module guarantees (see CONTRACT.md):
 //   • nothing solid above y = −1.8;  • lanes x∈LANES_X±1 and cross roads (d≡20 mod 40,
-//     width 3) are clear of anything taller than 0.25 in land biomes (from d≥330);
-//   • the mid-boss path (|x| < 4.6, d 570–780, see CRAWLER) is clear the same way;
+//     width 3) are clear of anything taller than 0.25 in land biomes (coastal from d≥330,
+//     canyon from d≥260 up to 1240, where the canyon terrain is also kept flat: h = 0);
+//   • the mid-boss path is clear the same way (coastal |x| < 4.6, d 570–780, see CRAWLER;
+//     canyon |x| < 5.5, d 560–780) and so is the canyon's lakebed boss arena (|x| < 9, d ≥ 1240);
 //   • ocean islands keep their land at |x| ≥ 8.2 (contract: > 7; core sails gunboats at ±7),
 //     decorative ships keep their hulls at |x| ≥ 8.4;
-//   • ≤ 5 generated textures (atlas 512², noise 256², waves 256², mask 128×512, clouds 256²).
+//   • ≤ 5 generated textures (atlas 512², noise 256², waves 256², mask 128×512, clouds 256²);
+//     the sky stage's cloud deck reuses the noise texture.
 // =============================================================================
 import * as THREE from 'three';
 
 export const GROUND_Y = -6;
+// coastal (stage 1) layout; every stage's layout is WORLD_STAGES[id].layout
 export const LAYOUT = [
   { biome: 'ocean',   from: 0,    to: 300 },
   { biome: 'coast',   from: 300,  to: 380 },
@@ -74,6 +85,10 @@ const SH_CAP = 30000;                        // shadow vertices per chunk
 // |x| 6.2) and can fight until ground d ≈ 755, then retreats to ≈ 775. Lanes cover |x| ≥ 4.5,
 // so clearing |x| < 4.6 over [570, 780] keeps its whole path free of anything tall.
 const CRAWLER = { d0: 570, d1: 780, x: 4.6 };
+
+// The current stage world (an entry of WORLD_STAGES, set at the end of the module and by
+// World.setStage). Module state like the emitter below: one World per page.
+let S = null;
 
 // y layers above the ground for flat decals (relative to GROUND_Y)
 const L_BASE = 0.006, L_ROAD = 0.014, L_WALK = 0.02, L_MARK = 0.026, L_SHADOW = 0.046;
@@ -160,9 +175,10 @@ const P = {
 // biome lookup
 // -----------------------------------------------------------------------------
 function biomeOf(d) {
-  if (d < LAYOUT[0].from) return LAYOUT[0].biome;
-  for (let i = 0; i < LAYOUT.length; i++) if (d >= LAYOUT[i].from && d < LAYOUT[i].to) return LAYOUT[i].biome;
-  return 'sea';
+  const L = S.layout;
+  if (d < L[0].from) return L[0].biome;
+  for (let i = 0; i < L.length; i++) if (d >= L[i].from && d < L[i].to) return L[i].biome;
+  return L[L.length - 1].biome;
 }
 
 // -----------------------------------------------------------------------------
@@ -294,7 +310,8 @@ function inlandH(x, d) {
   return h;
 }
 const CANAL_C = 877;                            // city canal (between the 860 and 900 cross roads)
-function terrainH(x, d) {
+// coastal ground height (relative to GROUND_Y); the world asks S.terrainH
+function coastalH(x, d) {
   if (d < 240) return oceanH(x, d);
   if (d < 400) return d < 280 ? Math.max(oceanH(x, d), coastH(x, d)) : coastH(x, d);
   if (d < 1228) return inlandH(x, d);
@@ -316,7 +333,7 @@ function landBase(d, out) {
 }
 function mixInto(out, c, t) { out[0] += (c[0] - out[0]) * t; out[1] += (c[1] - out[1]) * t; out[2] += (c[2] - out[2]) * t; }
 
-function groundColor(x, d, h, out) {
+function coastalColor(x, d, h, out) {
   if (d < 280) {                                 // islands
     if (h < 0.28) { out[0] = P.sand[0]; out[1] = P.sand[1]; out[2] = P.sand[2]; if (h < 0.02) mixInto(out, P.sandWet, sstep(0.02, -0.25, h)); }
     else { out[0] = P.jungle[0]; out[1] = P.jungle[1]; out[2] = P.jungle[2]; mixInto(out, P.grassL, vnoise(x * 0.4, d * 0.4) * 0.45); mixInto(out, P.sand, sstep(0.45, 0.28, h)); }
@@ -390,16 +407,22 @@ function vtx(lx, y, ld, c, k, u, v) {
 
 // --- clear-zone test (world coordinates) ---------------------------------------
 function blocked(x0, x1, dA, dB, m) {
-  if (dB > CLEAR_FROM - m && dA < CLEAR_TO + m) {
+  const cf = S.clear.from, ct = S.clear.to;
+  if (dB > cf - m && dA < ct + m) {
     for (let i = 0; i < 3; i++) {
       const lx = LANES_X[i];
       if (x1 > lx - LANE_HALF - m && x0 < lx + LANE_HALF + m) return true;
     }
     const k = Math.ceil((dA - CROSS_HALF - m - 20) / CHUNK);
     const c = k * CHUNK + 20;
-    if (c <= dB + CROSS_HALF + m && c >= CLEAR_FROM && c < CLEAR_TO) return true;
+    if (c <= dB + CROSS_HALF + m && c >= cf && c < ct) return true;
   }
-  if (dB > CRAWLER.d0 && dA < CRAWLER.d1 && x1 > -CRAWLER.x - m && x0 < CRAWLER.x + m) return true;
+  // mid-boss / boss corridors of the stage ({ d0, d1, x }: |x| < x over d0..d1)
+  const cor = S.corridors;
+  for (let i = 0; i < cor.length; i++) {
+    const c = cor[i];
+    if (dB > c.d0 && dA < c.d1 && x1 > -c.x - m && x0 < c.x + m) return true;
+  }
   return false;
 }
 // can a round prop of radius r stand at world (x,d)?
@@ -975,6 +998,8 @@ class Chunk {
     this.spin = new Float32Array(16 * 7); this.nspin = 0;
     // wakes for the water mask: x, d, dirX, dirD, len, width
     this.wakes = new Float32Array(8 * 6); this.nwake = 0;
+    // soft cloud-tower sprites (sky stage): x, y, d, size, squash, alpha, variant, yaw, shadow
+    this.puff = new Float32Array(PUFF_PER * 9); this.npuff = 0;
   }
 }
 
@@ -1390,6 +1415,73 @@ void main() {
   #include <colorspace_fragment>
   #include <fog_fragment>
 }`;
+// Cloud-sea deck (sky stage). Same seam rules as the water: st.y = d mod 256 and uTime wraps at
+// 1000 s, so every noise frequency along st.y is k/256 and every drift k/1000. The lower layer
+// seen through the gaps scrolls with its own 0.62·d mod 256 (slower = deeper) under the same rule.
+// Two fetches give three octaves each (noise G: masses/gaps, B: billow cells, R: lumps); a 3-4-5
+// rotated fetch keeps the value-noise lattice from lining up. Billow noise |2n − 1| turns the
+// value noise into rounded cumulus cells with dark creases between them; a second pair of taps
+// toward the sun lights them (a surface is lit where it rises away from the sun).
+const DECK_FRAG = /* glsl */`
+uniform sampler2D uNoise;
+uniform vec3 uScroll;             // (time, d mod 256, 0.62·d mod 256)
+uniform vec4 uLook;               // (cover, -, -, -)
+uniform vec3 uFlash;              // lightning under the deck: world x, world z, strength
+uniform vec3 uLit, uShade, uAbyss, uRim;
+varying vec3 vW;
+#include <fog_pars_fragment>
+// billow noise shaped into soft domes: 0 in the creases, rounded valleys and tops
+float dome(float n) { return smoothstep(0.0, 0.85, abs(n * 2.0 - 1.0)); }
+void main() {
+  float t = uScroll.x;
+  vec2 st = vec2(vW.x, uScroll.y - vW.z);                                  // stage coordinates
+  vec2 um = st * 0.00390625 + vec2(0.003, 0.002) * t;                         // period 256 u
+  vec2 ur = vec2(dot(st, vec2(4.0, -3.0)), dot(st, vec2(3.0, 4.0))) * 0.00390625 + vec2(-0.004, 0.006) * t;   // 51.2 u
+  vec4 m = texture2D(uNoise, um);
+  // taps 0.8 units toward the sun (screen lower-left = stage −x, −d)
+  const vec2 so = vec2(-0.6512, -0.4648);
+  vec4 ms = texture2D(uNoise, um + so * 0.00390625);
+  // the macro fetch warps the rotated one (≈ ±2 u): value noise has no gradient across its lattice
+  // lines, and unwarped they show up as long straight creases
+  vec4 r = texture2D(uNoise, ur + (m.rb - 0.5) * 0.075);
+  vec4 rs = texture2D(uNoise, ur + vec2(dot(so, vec2(4.0, -3.0)), dot(so, vec2(3.0, 4.0))) * 0.00390625 + (ms.rb - 0.5) * 0.075);
+  // billow height: rounded 6.4/3.2 u cells and 1.6 u lumps from the rotated fetch (5 texels per
+  // unit: smooth creases), riding on the 8/4 u swell of the unrotated one
+  float cell = dome(r.g), cell1 = dome(rs.g);
+  float h0 = cell * 0.66 + dome(r.b) * 0.12 + m.b * 0.22;
+  float h1 = cell1 * 0.66 + dome(rs.b) * 0.12 + ms.b * 0.22;
+  // coverage: 32/16 u masses with gaps between them (edges follow the billows); uLook.x = cover
+  float mass = m.g * 0.8 + h0 * 0.2;
+  float mass1 = ms.g * 0.8 + h1 * 0.2;
+  float edge = mix(0.72, 0.36, uLook.x);
+  float thick = smoothstep(edge - 0.03, edge + 0.07, mass);
+  float lit = clamp(0.52 + (h0 - h1) * 2.3 + (mass - mass1) * 3.0, 0.0, 1.0);
+  lit = lit * lit * (3.0 - 2.0 * lit);
+  vec3 top = mix(uShade, uLit, lit);
+  top *= mix(0.78, 1.0, smoothstep(0.0, 0.55, cell));                         // soft creases between the cells
+  top += uRim * thick * (1.0 - thick) * 2.4 * (0.25 + 0.75 * lit) * 0.35;     // bright thin edges
+  // the lower layer far below (slower, finer, bluer), shaded where the deck hangs sunward of it
+#ifndef LOW
+  vec2 s2 = vec2(vW.x * 1.25, uScroll.z - vW.z * 1.25);
+  vec4 l = texture2D(uNoise, s2 * 0.0078125 + vec2(0.002, -0.003) * t);
+  float lc = smoothstep(0.34, 0.72, l.g) * (0.45 + 0.55 * dome(l.b));
+  vec3 lower = mix(uAbyss, mix(uAbyss, uShade, 0.5), lc);
+  float over = smoothstep(edge - 0.03, edge + 0.07, texture2D(uNoise, um + vec2(-3.26, -2.32) * 0.00390625).g * 0.8 + 0.1);
+  lower *= mix(1.0, 0.62, over);
+#else
+  float lc = smoothstep(0.3, 0.8, m.r) * 0.5;                                // LOW: 4 fetches in all
+  vec3 lower = mix(uAbyss, mix(uAbyss, uShade, 0.5), lc);
+#endif
+  vec3 col = mix(lower, top, thick);
+  // lightning inside the storm band: a brief glow from under the deck
+  vec2 fd = vW.xz - uFlash.xy;
+  float fl = uFlash.z * exp(-dot(fd, fd) * 0.0065);
+  col += vec3(0.62, 0.7, 1.0) * fl * (0.6 + 0.5 * (1.0 - thick) + 0.2 * lc) * (0.6 + 0.4 * (1.0 - lit));
+  gl_FragColor = vec4(col, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  #include <fog_fragment>
+}`;
 
 // =============================================================================
 // time of day
@@ -1414,18 +1506,31 @@ const TOD_SRC = [
     deep: 0x223454, shallow: 0x2e4f63, wsky: 0x76699a, foam: 0xa89cb0, inland: 0x33404a, glint: 0xffb488, glintI: 1.05, gdir: [-0.08, 0.8, -0.6],
     cLit: 0xf2c1b4, cShade: 0x5e5684, shadow: 0x1a1230, shA: 0.4, shK: 1.5, caps: 0.22, cloud: 0.78, relief: 0.32, spark: 0.6, sheen: 0.14 },
 ];
-const TOD_COLS = ['sun', 'sky', 'gnd', 'fog', 'deep', 'shallow', 'wsky', 'foam', 'inland', 'glint', 'cLit', 'cShade', 'shadow'];
-const TOD_NUMS = ['sunI', 'hemiI', 'near', 'far', 'glintI', 'shA', 'shK', 'caps', 'cloud', 'relief', 'spark', 'sheen'];
+// dLit/dShade/dAbyss/dRim, cover and flash drive the sky stage's cloud deck (lit tops, shaded
+// billows, what shows through the gaps, the silver lining; deck coverage, lightning strength)
+const TOD_COLS = ['sun', 'sky', 'gnd', 'fog', 'deep', 'shallow', 'wsky', 'foam', 'inland', 'glint', 'cLit', 'cShade', 'shadow',
+  'dLit', 'dShade', 'dAbyss', 'dRim'];
+const TOD_NUMS = ['sunI', 'hemiI', 'near', 'far', 'glintI', 'shA', 'shK', 'caps', 'cloud', 'relief', 'spark', 'sheen', 'cover', 'flash'];
 // indices into the interpolated numeric array (order of TOD_NUMS)
 const N_SUNI = 0, N_HEMII = 1, N_NEAR = 2, N_FAR = 3, N_GLINTI = 4, N_SHA = 5, N_CAPS = 7, N_CLOUD = 8,
-  N_RELIEF = 9, N_SPARK = 10, N_SHEEN = 11;
-const TOD = TOD_SRC.map((k) => {
-  const o = { d: k.d, gdir: new THREE.Vector3().fromArray(k.gdir).normalize(), n: new Float64Array(TOD_NUMS.length) };
-  for (const c of TOD_COLS) o[c] = new THREE.Color(k[c]);
-  for (let i = 0; i < TOD_NUMS.length; i++) { o[TOD_NUMS[i]] = k[TOD_NUMS[i]]; o.n[i] = k[TOD_NUMS[i]]; }
-  return o;
-});
+  N_RELIEF = 9, N_SPARK = 10, N_SHEEN = 11, N_COVER = 12, N_FLASH = 13;
+// fields a stage's keys may leave out (water on dry stages, the deck on non-sky stages)
+const TOD_DEFAULTS = {
+  deep: 0x1f4a61, shallow: 0x2e7f82, wsky: 0x83a4c2, foam: 0xdbe3e4, inland: 0x3d5b52, glint: 0xfff0dc, glintI: 1.0, gdir: [0.08, 0.86, -0.5],
+  caps: 0.5, relief: 0.3, spark: 0.48, sheen: 0.11,
+  dLit: 0xf2f5fa, dShade: 0x9aabc6, dAbyss: 0x1d4274, dRim: 0xffffff, cover: 0.7, flash: 0,
+};
+function makeTod(src) {
+  return src.map((k0) => {
+    const k = { ...TOD_DEFAULTS, ...k0 };
+    const o = { d: k.d, gdir: new THREE.Vector3().fromArray(k.gdir).normalize(), n: new Float64Array(TOD_NUMS.length) };
+    for (const c of TOD_COLS) o[c] = new THREE.Color(k[c]);
+    for (let i = 0; i < TOD_NUMS.length; i++) { o[TOD_NUMS[i]] = k[TOD_NUMS[i]]; o.n[i] = k[TOD_NUMS[i]]; }
+    return o;
+  });
+}
 function todShadowK(d) {
+  const TOD = S.tod;
   let i = 0;
   while (i < TOD.length - 2 && d > TOD[i + 1].d) i++;
   return lerp(TOD[i].shK, TOD[i + 1].shK, sstep(TOD[i].d, TOD[i + 1].d, d));
@@ -1434,7 +1539,10 @@ function todShadowK(d) {
 const CLOUD_BIOME = { ocean: 1.0, coast: 0.85, country: 0.75, city: 0.45, base: 0.6, sea: 0.85 };
 
 // debugging hooks for the dev page (not part of the game contract)
-export const __worldDebug = { ISL, terrainH, biomeOf, blocked: (x0, x1, d0, d1) => blocked(x0, x1, d0, d1, 0) };
+export const __worldDebug = {
+  ISL, biomeOf, terrainH: (x, d) => S.terrainH(x, d), stage: () => S.id,
+  blocked: (x0, x1, d0, d1) => blocked(x0, x1, d0, d1, 0),
+};
 
 // =============================================================================
 // World
@@ -1443,11 +1551,13 @@ const _m4 = new THREE.Matrix4(), _m4b = new THREE.Matrix4();
 const _v3 = new THREE.Vector3(), _q = new THREE.Quaternion(), _s3 = new THREE.Vector3();
 const _Y = new THREE.Vector3(0, 1, 0);
 const CLOUD_MAX = 14;
+const PUFF_PER = 28, PUFF_MAX = 112;      // cloud-tower sprites per chunk / in all (≤ 4 chunks are laid out)
 
 export class World {
-  constructor({ scene, renderer = null, sun = null, hemi = null, quality = 'high' } = {}) {
+  constructor({ scene, renderer = null, sun = null, hemi = null, quality = 'high', stage = 'coastal' } = {}) {
     this.scene = scene; this.renderer = renderer; this.sun = sun; this.hemi = hemi;
     this.quality = quality === 'low' ? 'low' : 'high';
+    S = WORLD_STAGES[stage] || WORLD_STAGES.coastal;
     this._d = 0; this._t = 0; this._clock = 0; this._todD = NaN;
     this.root = new THREE.Group();
     this.root.name = 'World';
@@ -1508,8 +1618,11 @@ export class World {
 
     // water
     this._initWater();
+    // cloud-sea deck (sky stage)
+    this._initDeck();
     // clouds
     this._initClouds();
+    this._initPuffs();
     // spinners
     this._initSpinners();
 
@@ -1527,8 +1640,29 @@ export class World {
   }
 
   get distance() { return this._d; }
+  // current stage world id ('coastal' | 'canyon' | 'skies') and its biome layout
+  get stage() { return S.id; }
+  get layout() { return S.layout; }
 
   biomeAt(d) { return biomeOf(d); }
+
+  // Switch the stage world. Call it BEFORE reset(d): it drops every chunk (reset rebuilds them;
+  // without a reset, update() rebuilds the visible ones on its next call). Same stage = no-op.
+  setStage(id) {
+    const st = WORLD_STAGES[id];
+    if (!st) console.warn(`[world] unknown stage '${id}', using coastal`);
+    const next = st || WORLD_STAGES.coastal;
+    if (next === S) return false;
+    S = next;
+    for (const ch of this.chunks) { ch.k = null; ch.phase = 0; ch.mesh.visible = false; ch.smesh.visible = false; ch.nspin = 0; ch.npuff = 0; }
+    this._maskSlot.fill(-99999);
+    this.water.visible = false;
+    this.deck.visible = S.deck;
+    this.puffs.visible = S.deck; this.puffShadows.visible = S.deck;
+    this.radars.count = 0; this.rotors.count = 0; this.puffs.count = 0; this.puffShadows.count = 0;
+    this._applyTod();
+    return true;
+  }
 
   // ---------------------------------------------------------------------------
   _initWater() {
@@ -1549,6 +1683,26 @@ export class World {
     this.water.position.set(0, WATER_Y, -12);
     this.water.renderOrder = 1;       // after opaque terrain: early-z skips hidden water
     this.root.add(this.water);
+  }
+
+  // The sky stage's "ground": a sunlit cloud sea at GROUND_Y (so core's aircraft shadows lie on
+  // it), one opaque plane like the water. Hidden on the other stages; three's compile() walks
+  // hidden objects too, so main.js's precompile still builds both LOW/HIGH programs for it.
+  _initDeck() {
+    const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+      uNoise: { value: null }, uScroll: { value: new THREE.Vector3() }, uLook: { value: new THREE.Vector4(0.7, 0, 0, 0) },
+      uFlash: { value: new THREE.Vector3() },
+      uLit: { value: new THREE.Color() }, uShade: { value: new THREE.Color() }, uAbyss: { value: new THREE.Color() }, uRim: { value: new THREE.Color() },
+    }]);
+    uniforms.uNoise.value = this.tex.noise;
+    this.deckMat = new THREE.ShaderMaterial({ uniforms, vertexShader: WATER_VERT, fragmentShader: DECK_FRAG, fog: true });
+    const g = new THREE.PlaneGeometry(84, 124, 1, 1);
+    g.rotateX(-Math.PI / 2);
+    this.deck = new THREE.Mesh(g, this.deckMat);
+    this.deck.name = 'world-cloud-deck';
+    this.deck.position.set(0, GROUND_Y, -12);
+    this.deck.visible = S.deck;
+    this.root.add(this.deck);
   }
 
   _initClouds() {
@@ -1589,6 +1743,86 @@ export class World {
     this.cl = { cd: new Float64Array(CLOUD_MAX), x: new Float32Array(CLOUD_MAX), y: new Float32Array(CLOUD_MAX),
       s: new Float32Array(CLOUD_MAX), a: new Float32Array(CLOUD_MAX), r: new Float32Array(CLOUD_MAX), sq: new Float32Array(CLOUD_MAX) };
     this.cloudN = CLOUD_MAX;
+  }
+
+  // Cloud towers of the sky stage: stacks of soft, sun-lit cloud sprites that the chunks register
+  // (like spinners) and _placePuffs lays out each frame; real heights, so the camera's perspective
+  // gives them depth. Same shader as the low clouds (one program), plus soft shadows on the deck.
+  _initPuffs() {
+    const base = this.cloudGeo;
+    const mkGeo = (alpha, vari) => {
+      const geo = new THREE.InstancedBufferGeometry();
+      geo.index = base.index;
+      geo.setAttribute('position', base.getAttribute('position'));
+      geo.setAttribute('uv', base.getAttribute('uv'));
+      const aA = new THREE.InstancedBufferAttribute(alpha, 1); aA.setUsage(THREE.DynamicDrawUsage);
+      const aV = new THREE.InstancedBufferAttribute(vari, 2); aV.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('aAlpha', aA);
+      geo.setAttribute('aVar', aV);
+      return geo;
+    };
+    this.puffAlpha = new Float32Array(PUFF_MAX); this.puffVar = new Float32Array(PUFF_MAX * 2);
+    this.puffShAlpha = new Float32Array(PUFF_MAX); this.puffShVar = new Float32Array(PUFF_MAX * 2);
+    this.puffGeo = mkGeo(this.puffAlpha, this.puffVar);
+    this.puffShGeo = mkGeo(this.puffShAlpha, this.puffShVar);
+    const mkMat = (shadow) => new THREE.ShaderMaterial({
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTex: { value: null }, uLit: { value: new THREE.Color() }, uShade: { value: new THREE.Color() }, uK: { value: shadow ? 0.3 : 1 } }]),
+      vertexShader: CLOUD_VERT, fragmentShader: CLOUD_FRAG, fog: true, transparent: true, depthWrite: false, defines: shadow ? { SHADOW: '' } : {},
+    });
+    this.puffMat = mkMat(false); this.puffMat.uniforms.uTex.value = this.tex.cloud;
+    this.puffShadowMat = mkMat(true); this.puffShadowMat.uniforms.uTex.value = this.tex.cloud;
+    this.puffs = new THREE.InstancedMesh(this.puffGeo, this.puffMat, PUFF_MAX);
+    this.puffShadows = new THREE.InstancedMesh(this.puffShGeo, this.puffShadowMat, PUFF_MAX);
+    this.puffs.name = 'world-cloud-towers'; this.puffShadows.name = 'world-cloud-tower-shadows';
+    this.puffs.renderOrder = 0.5;          // over core's aircraft shadows (0), under the low clouds (1)
+    this.puffShadows.renderOrder = -2;
+    for (const m of [this.puffs, this.puffShadows]) {
+      m.frustumCulled = false; m.count = 0; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      m.visible = S.deck;
+      this.root.add(m);
+    }
+  }
+
+  _placePuffs(d) {
+    const C = this.chunks, pa = this.puffAlpha, pv = this.puffVar, sa = this.puffShAlpha, sv = this.puffShVar;
+    let n = 0, ns = 0;
+    for (let ci = 0; ci < C.length; ci++) {
+      const ch = C[ci];
+      if (ch.k === null || ch.phase < 3 || ch.npuff === 0) continue;
+      if (ch.k * CHUNK > d + 62 || ch.k * CHUNK + CHUNK < d - 34) continue;
+      const P = ch.puff;
+      for (let i = 0; i < ch.npuff && n < PUFF_MAX; i++) {
+        const o = i * 9;
+        const z = d - P[o + 2], s = P[o + 3];
+        const a = P[o + 5] * sstep(-64, -46, z);                         // fade in above the top edge
+        const v = P[o + 6], vu = (v & 1) * 0.5, vv = (v >> 1) * 0.5;
+        _q.setFromAxisAngle(_Y, P[o + 7]);
+        _s3.set(s, 1, s * P[o + 4]);
+        _v3.set(P[o], GROUND_Y + P[o + 1], z);
+        _m4.compose(_v3, _q, _s3);
+        this.puffs.setMatrixAt(n, _m4);
+        pa[n] = a; pv[n * 2] = vu; pv[n * 2 + 1] = vv;
+        n++;
+        const hgt = P[o + 8];
+        if (hgt > 0) {
+          // the tower's soft shadow under its base sprite, offset along the fixed sun direction
+          _v3.set(P[o] + hgt * SUNX, GROUND_Y + L_SHADOW + 0.03, z - hgt * SUND);
+          _m4.compose(_v3, _q, _s3);
+          this.puffShadows.setMatrixAt(ns, _m4);
+          sa[ns] = a; sv[ns * 2] = vu; sv[ns * 2 + 1] = vv;
+          ns++;
+        }
+      }
+    }
+    this.puffs.count = n; this.puffShadows.count = ns;
+    if (n) {
+      this.puffs.instanceMatrix.needsUpdate = true;
+      this.puffGeo.getAttribute('aAlpha').needsUpdate = true; this.puffGeo.getAttribute('aVar').needsUpdate = true;
+    }
+    if (ns) {
+      this.puffShadows.instanceMatrix.needsUpdate = true;
+      this.puffShGeo.getAttribute('aAlpha').needsUpdate = true; this.puffShGeo.getAttribute('aVar').needsUpdate = true;
+    }
   }
 
   _spawnCloud(i, cdist, zTop) {
@@ -1668,6 +1902,8 @@ export class World {
     const low = q === 'low';
     if (low) this.waterMat.defines.LOW = ''; else delete this.waterMat.defines.LOW;
     this.waterMat.needsUpdate = true;
+    if (low) this.deckMat.defines.LOW = ''; else delete this.deckMat.defines.LOW;
+    this.deckMat.needsUpdate = true;
     this.cloudN = low ? 7 : CLOUD_MAX;
     this.cloudShadows.visible = !low;
     if (!force) {
@@ -1710,7 +1946,7 @@ export class World {
     const kLo = Math.floor((d - 22) / CHUNK), kHi = Math.floor((d + 46) / CHUNK) + 1;  // +1 = built ahead
     // release slots outside [kLo, kHi]
     const C = this.chunks;
-    for (let i = 0; i < C.length; i++) { const ch = C[i]; if (ch.k !== null && (ch.k < kLo || ch.k > kHi)) { ch.k = null; ch.phase = 0; ch.mesh.visible = false; ch.smesh.visible = false; ch.nspin = 0; } }
+    for (let i = 0; i < C.length; i++) { const ch = C[i]; if (ch.k !== null && (ch.k < kLo || ch.k > kHi)) { ch.k = null; ch.phase = 0; ch.mesh.visible = false; ch.smesh.visible = false; ch.nspin = 0; ch.npuff = 0; } }
     // Chunks overlapping the view are built at once. The one ahead of the view is built in
     // three slices (ground, props, water mask + upload) on consecutive frames, and only on a
     // frame that did no other build — so a phone never pays for a whole chunk in one frame.
@@ -1739,7 +1975,7 @@ export class World {
   // ---------------------------------------------------------------------------
   _begin(ch, k) {
     ch.k = k; ch.phase = 0; ch.n = 0; ch.sn = 0;
-    ch.nspin = 0; ch.nwake = 0; ch.viol = 0; ch.ms = 0;
+    ch.nspin = 0; ch.npuff = 0; ch.nwake = 0; ch.viol = 0; ch.ms = 0;
     ch.mesh.visible = false; ch.smesh.visible = false;
   }
   // point the emitter at a chunk (state is saved on the chunk between slices)
@@ -1754,20 +1990,16 @@ export class World {
     const t0 = performance.now();
     const k = ch.k, d0 = k * CHUNK;
     const v0 = VIOL;
+    // per-stage salt: every stage has its own random stream per chunk (coastal's salt is 0)
     if (ch.phase === 0) {
       this._target(ch);
-      srand(k * 7919 + 1013);
-      const land = d0 + CHUNK > 280 && d0 < BASE_END + 6;
-      if (k <= 6 || land) this._ground(d0);
+      srand(k * 7919 + 1013 + S.salt);
+      if (S.hasGround(k, d0)) this._ground(d0);
     } else if (ch.phase === 1) {
       this._target(ch);
-      srand(k * 7919 + 2027);
-      LSEED = (k * 131) & 1023;
-      if (k <= 6) genOcean(this, ch, k, d0);
-      else if (k <= 9) genCoast(this, ch, k, d0);
-      else if (k <= 15) genCountry(this, ch, k, d0);
-      else if (k <= 23) genCity(this, ch, k, d0);
-      else if (k <= 30) genBase(this, ch, k, d0);
+      srand(k * 7919 + 2027 + S.salt);
+      LSEED = (k * 131 + S.salt) & 1023;
+      S.gen(this, ch, k, d0);
     } else {
       this._writeMask(ch, k, d0);
       this._upload(ch);
@@ -1796,10 +2028,13 @@ export class World {
   // synchronous full build (tools / profiling)
   _build(ch, k) { this._begin(ch, k); while (ch.phase < 3) this._step(ch); }
 
-  // ground grid (skips cells that are entirely under water)
+  // ground grid (skips cells that are entirely under water). Terrain is not a prop, so on stages
+  // whose ground units need flat lanes/roads/corridors (S.flatCheck) every grid vertex inside a
+  // clear zone is self-checked here instead: |h| > 0.04 there, or any h > MAX_H, is a violation.
   _ground(d0) {
     const GX = GROUND_XS, NX = GX.length, NZ = CHUNK + 1;
     const H = GRID_H, Cc = GRID_C;
+    const terrainH = S.terrainH, groundColor = S.groundColor, flatCheck = S.flatCheck;
     for (let j = 0; j < NZ; j++) {
       const d = d0 + j;
       for (let i = 0; i < NX; i++) {
@@ -1809,9 +2044,13 @@ export class World {
         groundColor(x, d, h, TC);
         const o = (j * NX + i) * 3;
         Cc[o] = TC[0]; Cc[o + 1] = TC[1]; Cc[o + 2] = TC[2];
+        if (flatCheck && (h > MAX_H || ((h > 0.04 || h < -0.04) && blocked(x, x, d, d, 0)))) {
+          VIOL++; if (VIOL_LOG && VIOL_LOG.length < 40) VIOL_LOG.push(['ground', x, d, +h.toFixed(3)]);
+        }
       }
     }
     setTile(0);
+    const wet = S.water !== null;        // dry stages never skip a cell (the mesa valley is low ground, not sea)
     const deep = WATER_REL - 0.3;
     const cc = [0, 0, 0];
     const put = (i, j) => {
@@ -1822,7 +2061,7 @@ export class World {
     for (let j = 0; j < NZ - 1; j++) {
       for (let i = 0; i < NX - 1; i++) {
         const a = H[j * NX + i], b = H[j * NX + i + 1], c = H[(j + 1) * NX + i + 1], e = H[(j + 1) * NX + i];
-        if (a < deep && b < deep && c < deep && e < deep) continue;
+        if (wet && a < deep && b < deep && c < deep && e < deep) continue;
         if (!room(6)) return;
         if ((i + j) & 1) { put(i, j); put(i + 1, j); put(i + 1, j + 1); put(i, j); put(i + 1, j + 1); put(i, j + 1); }
         else { put(i, j); put(i + 1, j); put(i, j + 1); put(i + 1, j); put(i + 1, j + 1); put(i, j + 1); }
@@ -1831,9 +2070,12 @@ export class World {
   }
 
   _writeMask(ch, k, d0) {
+    const W = S.water;
+    if (W === null) { ch.hasWater = false; return; }      // dry / sky stage: the mask is never read
+    const terrainH = S.terrainH;
     const slot = ((k % 8) + 8) % 8;
     let hasWater = false;
-    const sea = k >= 31;
+    const sea = k >= W.seaFromK;
     if (sea && this._maskSlot[slot] === -1) { ch.hasWater = true; return; } // already "open sea"
     const base = slot * ROWS_PER_CHUNK;
     const M = this.maskData;
@@ -1860,8 +2102,7 @@ export class World {
             g = Math.max(g, clamp((edge + core) * (1 - t) * 1.2, 0, 1));
           }
           // calm (inland) water: harbour basin, river, ponds, canal
-          if (d > 400 && d < BASE_END - 1) calm = 1;
-          else if (d > 290 && d < HARBOR_D1 + 1 && x > HARBOR_X0 - 1) calm = 0.55 * sstep(shoreD(x) - 6, shoreD(x) + 6, d) * sstep(HARBOR_X0 - 1, HARBOR_X0 + 2.5, x);
+          calm = W.calm(x, d);
         }
         const o = row + i * 4;
         M[o] = clamp(Math.round((h * 0.25 + 0.5) * 255), 0, 255);
@@ -1872,7 +2113,7 @@ export class World {
     }
     this._maskSlot[slot] = sea ? -1 : k;
     this._maskDirty = true;
-    ch.hasWater = hasWater || sea || k <= 6;
+    ch.hasWater = hasWater || sea || k <= W.alwaysK;
   }
 
   // ---------------------------------------------------------------------------
@@ -1908,13 +2149,34 @@ export class World {
     this.radars.count = nr; this.rotors.count = nt;
     if (nr) this.radars.instanceMatrix.needsUpdate = true;
     if (nt) this.rotors.instanceMatrix.needsUpdate = true;
-    this.water.visible = water || biomeOf(d) === 'ocean' || biomeOf(d) === 'sea';
+    this.water.visible = S.water !== null && (water || S.water.open(biomeOf(d)));
     // shader scroll uniforms
     const u = this.waterMat.uniforms;
     const dn = ((d % NOISE_SPAN) + NOISE_SPAN) % NOISE_SPAN;
     u.uScroll.value.set(t, ((d % MASK_SPAN) + MASK_SPAN) % MASK_SPAN, dn);
     this.uDN.value.x = dn;
+    if (S.deck) { this._placeDeck(t, d, dn); this._placePuffs(d); }
     this._updateClouds(dt);
+  }
+
+  // cloud-deck scroll (the lower layer at 0.62·d reads as deeper) and storm lightning: short
+  // double-flickers at a deterministic pseudo-random place/time, strength from the TOD 'flash'
+  _placeDeck(t, d, dn) {
+    const du = this.deckMat.uniforms;
+    const d2 = d * 0.62;
+    du.uScroll.value.set(t, dn, ((d2 % NOISE_SPAN) + NOISE_SPAN) % NOISE_SPAN);
+    const fa = this._todN[N_FLASH], f = du.uFlash.value;
+    let s = 0;
+    if (fa > 0.01) {
+      const T = this._clock / 2.6, i = Math.floor(T);
+      const e = (T - i) * 2.6 - 0.2 - hash2(i, 91) * 1.7;          // seconds since this period's strike
+      if (e > 0 && e < 0.45 && hash2(i, 37) < 0.72) {
+        s = e < 0.06 ? 1 : e < 0.11 ? 0.2 : e < 0.17 ? 0.8 : 0.8 * (1 - (e - 0.17) / 0.28);
+        f.x = (hash2(i, 53) - 0.5) * 26;
+        f.y = -4 - hash2(i, 59) * 38;
+      }
+    }
+    f.z = s * fa;
   }
 
   _updateClouds() {
@@ -1931,7 +2193,7 @@ export class World {
       // doubles in V8's lower tiers). Stage position under the cloud ≈ d − z; fades in above the top.
       alpha[i] = 0;
       if (i < n) {
-        const v = c.a[i] * CLOUD_BIOME[biomeOf(d - z)] * tod * sstep(-60, -40, z);
+        const v = c.a[i] * S.cloud[biomeOf(d - z)] * tod * sstep(-60, -40, z);
         alpha[i] = v < 0.55 ? v : 0.55;
       }
       _q.setFromAxisAngle(_Y, c.r[i]);
@@ -1947,14 +2209,14 @@ export class World {
     this.clouds.instanceMatrix.needsUpdate = true;
     this.cloudShadows.instanceMatrix.needsUpdate = true;
     this.cloudGeo.getAttribute('aAlpha').needsUpdate = true;
-    const bi = biomeOf(d), uk = this.cloudShadowMat.uniforms.uK;
-    const k = bi === 'city' || bi === 'ocean' || bi === 'sea' ? 0.16 : 0.32;
+    const uk = this.cloudShadowMat.uniforms.uK;
+    const k = S.cloudShadowK(biomeOf(d));
     if (uk.value !== k) uk.value = k;
   }
 
   // ---------------------------------------------------------------------------
   _applyTod() {
-    const d = this._d;
+    const d = this._d, TOD = S.tod;
     this._todD = d;
     let i = 0;
     while (i < TOD.length - 2 && d > TOD[i + 1].d) i++;
@@ -1983,21 +2245,33 @@ export class World {
     this.cloudShadowMat.uniforms.uShade.value.copy(o.shadow);
     this.shadowMat.color.copy(o.shadow);
     this.shadowMat.opacity = N[N_SHA];
+    if (S.deck) {
+      const du = this.deckMat.uniforms;
+      du.uLit.value.copy(o.dLit); du.uShade.value.copy(o.dShade); du.uAbyss.value.copy(o.dAbyss); du.uRim.value.copy(o.dRim);
+      du.uLook.value.x = N[N_COVER];
+      // the towers stand up into the sunlight: a touch brighter than the deck, same shade family
+      const pu = this.puffMat.uniforms;
+      pu.uLit.value.copy(o.dLit).lerp(o.dRim, 0.25); pu.uShade.value.copy(o.dShade).lerp(o.dLit, 0.12);
+      this.puffShadowMat.uniforms.uShade.value.copy(o.shadow);
+    }
   }
 
   // debugging / tooling -----------------------------------------------------------
   info() {
     let verts = 0, sverts = 0, active = 0;
     for (const ch of this.chunks) if (ch.k !== null && ch.phase === 3) { active++; verts += ch.n; sverts += ch.sn; }
-    return { distance: this._d, biome: biomeOf(this._d), activeChunks: active, triangles: (verts + sverts) / 3,
+    return { stage: S.id, distance: this._d, biome: biomeOf(this._d), activeChunks: active, triangles: (verts + sverts) / 3,
       violations: this.stats.violations, violationLog: this.stats.violationLog.slice(0, 12), lastBuildMs: this.stats.lastBuildMs, maxBuildMs: this.stats.maxBuildMs, builds: this.stats.builds,
-      water: this.water.visible, maxSliceMs: this.stats.maxSliceMs };
+      water: this.water.visible, deck: this.deck.visible, maxSliceMs: this.stats.maxSliceMs };
   }
 
   dispose() {
     this.scene.remove(this.root);
     for (const ch of this.chunks) { ch.geo.dispose(); ch.sgeo.dispose(); }
     this.water.geometry.dispose(); this.waterMat.dispose();
+    this.deck.geometry.dispose(); this.deckMat.dispose();
+    this.puffGeo.dispose(); this.puffShGeo.dispose(); this.puffMat.dispose(); this.puffShadowMat.dispose();
+    this.puffs.dispose(); this.puffShadows.dispose();
     this.cloudGeo.dispose(); this.cloudMat.dispose(); this.cloudShadowMat.dispose();
     this.radarGeo.dispose(); this.rotorGeo.dispose(); this.radars.dispose(); this.rotors.dispose();
     this.landMat.dispose(); this.shadowMat.dispose(); this.propMat.dispose();
@@ -2149,7 +2423,7 @@ function nearIsland(x, d, m) {
 function islandShoreX(I, d) {
   const sgn = I.x < 0 ? -1 : 1;
   let x = I.x;
-  for (let i = 0; i < 40 && terrainH(x, d) > WATER_REL; i++) x -= sgn * 0.2;
+  for (let i = 0; i < 40 && coastalH(x, d) > WATER_REL; i++) x -= sgn * 0.2;
   return x;
 }
 function oilRig(ch, x, d) {
@@ -2185,7 +2459,7 @@ function islandProps(ch, I) {
     const x = I.x + Math.cos(a) * q * R * I.sx, d = I.d + Math.sin(a) * q * R * I.sd;
     const rho = islandRho(I, x, d);
     if (rho > 0.9) continue;
-    const h = terrainH(x, d);
+    const h = coastalH(x, d);
     if (h < 0.05) continue;
     if (I.village && Math.hypot(x - vx, d - vd) < 2.3) continue;
     if (rho > 0.62) { if (rand() < 0.55) palm(x, d, rr(0.9, 1.25), h - 0.02); }
@@ -2208,7 +2482,7 @@ function islandProps(ch, I) {
       if (rand() < 0.2) continue;
       const x = vx + gx * 1.15 + rr(-0.2, 0.2), d = vd + gd * 1.3 + rr(-0.2, 0.2);
       if (islandRho(I, x, d) > 0.78) continue;
-      const h = terrainH(x, d);
+      const h = coastalH(x, d);
       if (h < 0.1) continue;
       house(x, d, rr(0.62, 0.85), rr(0.55, 0.75), rr(0.32, 0.45), rr(-0.3, 0.3), jit(pick(ISLE_WALLS), 0.06, TC2), jit(pick(ISLE_ROOFS), 0.1, TC3), rand() < 0.5 ? 0 : 1, 0.26, h - 0.04);
     }
@@ -2222,13 +2496,13 @@ function islandProps(ch, I) {
     // a hut on the beach, facing the centre line
     const hd = I.d + rr(-0.3, 0.3) * R * I.sd;
     const sx0 = islandShoreX(I, hd);
-    const x = sx0 + sgn * 1.1, h = terrainH(x, hd);
+    const x = sx0 + sgn * 1.1, h = coastalH(x, hd);
     if (h > 0.02) house(x, hd, 0.8, 0.65, 0.4, rr(-0.3, 0.3), P.wallCream, P.roofBrown, 1, 0.28, h - 0.03);
   }
   if (I.light) {
     // a small lighthouse on the island tip
     const td = I.d + (rand() < 0.5 ? -1 : 1) * R * I.sd * 0.62, tx = I.x + sgn * R * I.sx * 0.1;
-    const h = terrainH(tx, td);
+    const h = coastalH(tx, td);
     if (h > 0.05) lighthouse(tx, td, h - 0.05, 0.8);
   }
 }
@@ -2656,7 +2930,7 @@ function forest(x0, x1, a, b) {
       const f = forestF(xx, dd);
       if (f < 0.47 && rand() < 0.7) continue;
       if (!canPlace(xx, dd, 0.7)) continue;
-      const h = terrainH(xx, dd);
+      const h = coastalH(xx, dd);
       if (h < -0.02) continue;
       tree(xx, dd, rr(0.9, 1.15), rand() < 0.35 ? 1 : 0, h);
     }
@@ -3568,3 +3842,1403 @@ function baseEnd(ch, d0, d1) {
     flat(lx - 0.4, d, lx + 0.4, d + 0.12, L_MARK, P.paint, 0.9);
   }
 }
+
+// =============================================================================
+// SCORCHED CANYON (stage 2)
+//   dunes 0–260 · canyon 260–560 (wall foot at |x| 7.75–10.25) · mesa plateau 560–780 (mid-boss;
+//   the plateau drops into a valley beyond |x| 8–10.8) · refinery 780–1000 · desert fortress and
+//   airstrip 1000–1240 · endless dry lakebed 1240+ (boss arena).
+// Ground units run on the flat GROUND_Y plane, so the terrain itself is h = 0 on the lanes (always),
+// on the cross roads (from 256: side slots through the canyon walls, causeways over the valley),
+// on the mid-boss plateau and in the boss arena; _ground self-checks it (flatCheck). Canyon walls,
+// buttes and rims are stacked strata-banded prisms (rockBlock) over a smooth terrain ramp, so the
+// rock layers stay crisp on the 1-unit ground grid.
+// =============================================================================
+const CANYON_LAYOUT = [
+  { biome: 'dunes',    from: 0,    to: 260 },
+  { biome: 'canyon',   from: 260,  to: 560 },
+  { biome: 'mesa',     from: 560,  to: 780 },
+  { biome: 'refinery', from: 780,  to: 1000 },
+  { biome: 'fortress', from: 1000, to: 1240 },
+  { biome: 'lakebed',  from: 1240, to: Infinity },
+];
+const CY_REF = 780, CY_FORT = 1000, CY_LAKE = 1240;
+const CY_ROADS = 256;          // cross roads are flat and clear from here on (the first is at 260)
+const CY_VALLEY = -2.6;        // valley floor around the mesa plateau
+const CY_MIDBOSS = { d0: 560, d1: 780, x: 5.5 };
+const CY_ARENA = { d0: 1240, d1: Infinity, x: 9 };
+const CY_STRIP_A = 1028, CY_STRIP_B = 1214;   // the fortress airstrip along lane 0
+
+// desert palette
+// (kept mid-toned and saturated: pale sand under a desert sun washes the enemy bullets out)
+const CP = {
+  sandL: C(0xc39f72), sandM: C(0xb28a5e), sandD: C(0x93704c), sandR: C(0xab7650), dune: C(0xcaa678),
+  track: C(0xa48662), trackL: C(0xb6966d), rut: C(0x80644a), wash: C(0x8f7458),
+  slick: C(0xb9825a), slickL: C(0xc89a70), joint: C(0x6e4a35), lichen: C(0x6c6149), valley: C(0x96643f),
+  gravel: C(0x958977), stain: C(0x5b544d), pad: C(0xa8a195), padD: C(0x8c867c),
+  asphalt: C(0x6b645b), asphaltL: C(0x7d7568),
+  clay: C(0x6e7985), salt: C(0x9fabb6), saltL: C(0xc2ccd4), crack: C(0x59616b), tread: C(0x5e6670), lakeRim: C(0x8a806f),
+  rimTop: C(0xc49c70),
+  scrub: C(0x878556), sage: C(0x95997a), cactus: C(0x5d7c4b), deadwood: C(0x8a735a), palm: C(0x6a7a3c),
+  adobe: C(0xc6a07b), adobeL: C(0xdabb96), adobeD: C(0xa48262), dark: C(0x2e2824),
+  sandbag: C(0xb79f78), tent: C(0xa99a72), camo: C(0xb29c70), camoD: C(0x8b7854), burnt: C(0x4b413b), rust: C(0x8c5a3e),
+  tankW: C(0xe0ded8), tankS: C(0xb5b9bb), tankR: C(0x9c6a4e), steel: C(0x8e9499), steelD: C(0x5d6368),
+  pipeY: C(0xc6a24e), pipeR: C(0xa24a3c), pipeG: C(0x9ea3a6), flame: C(0xffb24a),
+};
+// sandstone strata, bottom to top (repeating): bands 0.55 tall, gently tilted along the stage
+const STRATA = [C(0xb4704a), C(0xdbb88c), C(0xc88a5b), C(0x9f5d3e), C(0xe4cba4), C(0xb06d4e), C(0xd19f6f), C(0x8f604b)];
+const STRATA_H = 0.55;
+function strataPhase(x, d) { return 3.4 + 0.22 * Math.sin(d * 0.019 + 0.7) + 0.12 * Math.sin(x * 0.061 + d * 0.011 + 2.1); }
+function strataCol(h, x, d, out) {
+  const b = (h + strataPhase(x, d)) / STRATA_H, i = Math.floor(b), f = b - i, n = STRATA.length;
+  const c0 = STRATA[((i % n) + n) % n], c1 = STRATA[(((i + 1) % n) + n) % n];
+  const t = sstep(0.82, 1, f);
+  out[0] = lerp(c0[0], c1[0], t); out[1] = lerp(c0[1], c1[1], t); out[2] = lerp(c0[2], c1[2], t);
+  return out;
+}
+function cset(out, c) { out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; return out; }
+
+// soft section weights along the stage (a partition of unity), shared by height and colour
+const CYW = new Float64Array(6);
+function cyWeights(d) {
+  const a = sstep(236, 276, d), b = sstep(545, 585, d), c = sstep(768, 800, d), e = sstep(985, 1015, d), f = sstep(1230, 1260, d);
+  CYW[0] = 1 - a; CYW[1] = a * (1 - b); CYW[2] = b * (1 - c); CYW[3] = c * (1 - e); CYW[4] = e * (1 - f); CYW[5] = f;
+}
+// 0 where ground units need flat ground (lanes ±1.08, cross roads ±1.58 from CY_ROADS), 1 away from it
+function cyFlatK(x, d) {
+  let k = 1;
+  for (let i = 0; i < 3; i++) {
+    const a = Math.abs(x - LANES_X[i]);
+    if (a < 2.05) { const s = sstep(1.08, 2.05, a); if (s < k) k = s; }
+  }
+  if (d > CY_ROADS - 3) {
+    const r = 1 - sstep(1.58, 3.5, crossDist(d));
+    if (r > 0) k *= 1 - r * sstep(CY_ROADS - 3, CY_ROADS, d);
+  }
+  return k;
+}
+function laneFree(x, r) {
+  for (let i = 0; i < 3; i++) if (Math.abs(x - LANES_X[i]) < LANE_HALF + 0.12 + r) return false;
+  return true;
+}
+// canPlace, plus lane clearance before the clear zone starts (the dune tracks are lanes too)
+const cyFree = (x, d, r) => canPlace(x, d, r) && (d >= S.clear.from + 2 || laneFree(x, r));
+
+// canyon wall foot |x| (s: 0 left, 1 right), 7.75 … 10.25, and the rim height 3.3 … 3.75
+function cyEdge(d, s) {
+  return 9 + 0.5 * Math.sin(d * 0.071 + s * 2.3) + 0.35 * Math.sin(d * 0.163 + 1.1 + s * 4.1) + 0.8 * (vnoise(d * 0.09 + s * 31.7, 5.5) - 0.5);
+}
+function cyRim(d, s) { return 3.3 + 0.45 * vnoise(d * 0.045 + s * 13.1, 7.7); }
+// mesa plateau edge |x|, 7.65 … 9.95 (close enough to the centre that the drop shows on screen)
+function cyMesaEdge(d, s) {
+  return 8.8 + 0.5 * Math.sin(d * 0.093 + s * 1.7) + 0.35 * Math.sin(d * 0.21 + 0.4 + s * 3.3) + 0.6 * (vnoise(d * 0.12 + s * 17.3, 3.3) - 0.5);
+}
+// dune phase: 0 → 0.7 is the long windward slope, 0.7 → 1 the slip face (it faces away from the sun)
+function cyDuneF(x, d) {
+  const u = x * 0.068 + d * 0.058 + 0.55 * fbm(x * 0.05 + 7.1, d * 0.05 - 3.3);
+  return u - Math.floor(u);
+}
+function cyDuneH(x, d) {
+  const ax = Math.abs(x);
+  const f = cyDuneF(x, d);
+  const ridge = f < 0.7 ? sstep(0, 0.7, f) : sstep(1, 0.7, f);            // long windward slope, steep slip face
+  const amp = 0.24 + 1.15 * sstep(6.8, 15, ax) + 0.22 * vnoise(x * 0.13 + 2.2, d * 0.13);
+  return amp * ridge * (0.7 + 0.3 * vnoise(x * 0.31 + 1.3, d * 0.31 - 4.1));
+}
+function cyCanyonH(x, d) {
+  const s = x < 0 ? 0 : 1, e = Math.abs(x) - cyEdge(d, s);
+  if (e < -0.35) return 0;
+  let h = cyRim(d, s) * (0.1 * sstep(-0.35, 0.5, e) + 0.9 * sstep(0.3, 2.5, e));
+  if (e > 2.5) h += 0.28 * (fbm(x * 0.21 + 2.2, d * 0.21 + 9.4) - 0.5);
+  return h;
+}
+function cyMesaH(x, d) {
+  const s = x < 0 ? 0 : 1, e = Math.abs(x) - cyMesaEdge(d, s);
+  if (e <= 0) return 0;
+  return CY_VALLEY * (0.45 * sstep(0, 0.8, e) + 0.55 * sstep(1.2, 2.3, e)) + 0.3 * sstep(2.5, 5, e) * fbm(x * 0.17 + 1.3, d * 0.17 + 5.5);
+}
+function cyBluffH(x, x0, amp, d) {
+  const ax = Math.abs(x);
+  if (ax <= x0) return 0;
+  return amp * sstep(x0, x0 + 5, ax) * (0.7 + 0.6 * fbm(x * 0.09 + 3.1, d * 0.09 - 1.7));
+}
+function canyonH(x, d) {
+  cyWeights(d);
+  let h = 0;
+  if (CYW[0] > 0) h += CYW[0] * cyDuneH(x, d);
+  if (CYW[1] > 0) h += CYW[1] * cyCanyonH(x, d);
+  if (CYW[2] > 0) h += CYW[2] * cyMesaH(x, d);
+  if (CYW[3] > 0) h += CYW[3] * cyBluffH(x, 19, 2.0, d);
+  if (CYW[4] > 0) h += CYW[4] * cyBluffH(x, 16.5, 1.1, d);
+  if (CYW[5] > 0) h += CYW[5] * cyBluffH(x, 21, 0.7, d);
+  return h === 0 ? 0 : h * cyFlatK(x, d);
+}
+// ground colour of one section (s = index into CYW) before rock and grain
+function cyFloor(s, x, d, h, n, out) {
+  switch (s) {
+    case 0: {    // dunes: painted from the dune phase too, so they read even where the ground is flat
+      const f = cyDuneF(x, d);
+      const crest = f < 0.7 ? sstep(0.2, 0.7, f) : 1 - sstep(0.7, 0.75, f);
+      const lee = f > 0.7 ? 1 - sstep(0.93, 1.0, f) : 0;
+      cset(out, CP.sandM); mixInto(out, CP.dune, crest * 0.6); mixInto(out, CP.sandD, lee * 0.7 + (1 - n) * 0.15);
+      mixInto(out, CP.dune, sstep(0.3, 1.1, h) * 0.3);
+      break;
+    }
+    case 1: {    // canyon floor: reddish sand, a dry wash meandering through it
+      cset(out, CP.sandR); mixInto(out, CP.sandM, n * 0.55);
+      const a = Math.abs(x - (2.9 * Math.sin(d * 0.043 + 1.3) + 1.3 * Math.sin(d * 0.11 + 0.4)));
+      if (a < 1.8) mixInto(out, CP.wash, sstep(1.8, 0.6, a) * 0.55);
+      break;
+    }
+    case 2: {    // mesa top: banded red slickrock, sand pockets, lichen
+      cset(out, CP.slick);
+      mixInto(out, CP.slickL, sstep(0.45, 0.75, vnoise(x * 0.18 + d * 0.06 + 4.2, d * 0.05)) * 0.6);
+      mixInto(out, CP.sandM, sstep(0.5, 0.72, n) * 0.6);
+      const l = vnoise(x * 0.6 + 3.3, d * 0.6 - 1.1);
+      if (l > 0.7) mixInto(out, CP.lichen, (l - 0.7) * 1.6);
+      break;
+    }
+    case 3: {    // refinery: graded gravel with oil stains
+      cset(out, CP.gravel); mixInto(out, CP.sandM, n * 0.45);
+      const st = fbm(x * 0.35 + 9.1, d * 0.35 - 2.2);
+      if (st > 0.6) mixInto(out, CP.stain, sstep(0.6, 0.8, st) * 0.5);
+      break;
+    }
+    case 4: {    // fortress: packed sand and gravel
+      cset(out, CP.sandM); mixInto(out, CP.gravel, 0.3 + n * 0.3);
+      break;
+    }
+    default: {   // dry lakebed: cool grey clay, salt crust in drifts, damp dark hollows, sandy shore far out
+      cset(out, CP.clay);
+      const m = lakeSalt(x, d);
+      mixInto(out, CP.salt, sstep(0.44, 0.6, m) * 0.9);
+      mixInto(out, CP.crack, sstep(0.36, 0.2, m) * 0.45);
+      mixInto(out, CP.salt, sstep(0.55, 0.8, vnoise(x * 0.35 + d * 0.12, d * 0.1 - x * 0.05)) * 0.25);   // streaks
+      // old shorelines: faint pale terraces toward the edges of the pan (the arena centre stays calm)
+      const ax = Math.abs(x), sb = Math.sin((ax + 3.2 * fbm(x * 0.03 + 4.4, d * 0.03)) * 1.25) * 0.5 + 0.5;
+      mixInto(out, CP.saltL, sstep(0.72, 0.95, sb) * sstep(9.5, 14, ax) * 0.5);
+      mixInto(out, CP.lakeRim, sstep(18, 26, ax));
+    }
+  }
+}
+function lakeSalt(x, d) { return fbm(x * 0.045 + 1.9, d * 0.045 + 6.6); }        // salt-crust mask of the lakebed
+function canyonColor(x, d, h, out) {
+  cyWeights(d);
+  const n = fbm(x * 0.11 + 5.1, d * 0.11 - 2.3);
+  out[0] = 0; out[1] = 0; out[2] = 0;
+  for (let s = 0; s < 6; s++) {
+    const w = CYW[s];
+    if (w <= 0) continue;
+    cyFloor(s, x, d, h, n, TC2);
+    out[0] += TC2[0] * w; out[1] += TC2[1] * w; out[2] += TC2[2] * w;
+  }
+  // exposed rock (walls, rims, the mesa cliffs and valley, far bluffs) — not the dunes
+  const ah = h < 0 ? -h : h;
+  const rw = (1 - CYW[0]) * sstep(0.1, 0.45, ah) * (1 - CYW[5] * 0.6);
+  if (rw > 0) mixInto(out, strataCol(h, x, d, TC2), rw);
+  if (h > 3.0) mixInto(out, CP.rimTop, sstep(3.0, 3.6, h) * 0.45 * (0.6 + 0.4 * n));      // weathered rim tops
+  if (h < -0.1) {                                                                        // below the mesa rim:
+    mixInto(out, CP.valley, sstep(-2.2, -2.55, h) * 0.55);                               // dusty valley floor,
+    const k = 1 - 0.34 * sstep(-0.1, -1.4, h);                                           // deeper = darker
+    out[0] *= k; out[1] *= k; out[2] *= k;
+  }
+  const g = 0.94 + 0.12 * vnoise(x * 0.9 + 1.7, d * 0.9 + 4.1);
+  out[0] *= g; out[1] *= g; out[2] *= g;
+}
+
+// ---- desert prop library -------------------------------------------------------------
+const BX = new Float32Array(10), BD = new Float32Array(10);
+// A stepped block of layered rock: a jittered n-gon footprint (rx across, rd along, rotated) stacked
+// in the world strata bands from h0 to h1; now and then a band steps back (a ledge). A row of them
+// reads as a stepped sandstone cliff; one alone is a butte. shBase = ground height for its shadow.
+function rockBlock(x, d, rx, rd, h0, h1, rot, n = 6, shBase = 0) {
+  if (h1 - h0 < 0.08) return;
+  frame(x, d, rot);
+  const a0 = rand() * TAU;
+  for (let i = 0; i < n; i++) {
+    const a = a0 + ((i + rr(-0.2, 0.2)) / n) * TAU, q = rr(0.86, 1.06);
+    BX[i] = Math.cos(a) * rx * q; BD[i] = Math.sin(a) * rd * q;
+  }
+  const ph = strataPhase(x, d);
+  let y = h0, sc = 1;
+  while (y < h1 - 0.02) {
+    let yb = (Math.floor((y + ph) / STRATA_H + 1e-3) + 1) * STRATA_H - ph;   // next strata boundary
+    if (yb > h1 - 0.12) yb = h1;
+    for (let i = 0; i < n; i++) { PX[i] = BX[i] * sc; PD[i] = BD[i] * sc; }
+    const c = jit(strataCol((y + yb) * 0.5, x, d, TC2), 0.06, TC3);
+    prism(n, y, yb, c, yb >= h1 ? tint(c, CP.rimTop, 0.3, TC2) : c);
+    y = yb;
+    if (rand() < 0.45) sc *= rr(0.84, 0.94);                                  // a ledge: the next band steps back
+  }
+  const hh = h1 - shBase, ox = hh * SUNX * SHK, od = hh * SUND * SHK;
+  for (let i = 0; i < n; i++) {
+    const px = wx(BX[i], BD[i]), pd = wd(BX[i], BD[i]);
+    HX[i] = px; HD[i] = pd; HX[i + n] = px + ox; HD[i + n] = pd + od;
+  }
+  shadowHull(2 * n, GROUND_Y + shBase + L_SHADOW);
+  frameId();
+}
+// can a rockBlock of this footprint (rotated by ≤ rot) stand at (x, d)?
+function blockFits(x, d, rx, rd, rot) {
+  const c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot));
+  const ex = (c * rx + s * rd) * 1.08, ed = (s * rx + c * rd) * 1.08;
+  return canRect(x - ex, x + ex, d - ed, d + ed);
+}
+// horizontal pipe along local d at centre height yc (rel.), radius r; undersides are skipped
+function pipeD(x, a, b, yc, r, c, segs = 6) {
+  checkTall(x - r, a, x + r, b, yc + r);
+  if (!room(segs * 6)) return;
+  setTile(0);
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * TAU, a1 = ((i + 1) / segs) * TAU, am = (a0 + a1) * 0.5;
+    const up = Math.sin(am);
+    if (up < -0.35) continue;
+    const x0 = x + Math.cos(a0) * r, y0 = GROUND_Y + yc + Math.sin(a0) * r;
+    const x1 = x + Math.cos(a1) * r, y1 = GROUND_Y + yc + Math.sin(a1) * r;
+    const k = 0.8 + 0.2 * up - 0.06 * Math.cos(am);
+    vtx(x0, y0, a, c, k, 0, 0); vtx(x0, y0, b, c, k, 0, 0); vtx(x1, y1, b, c, k, 0, 0);
+    vtx(x0, y0, a, c, k, 0, 0); vtx(x1, y1, b, c, k, 0, 0); vtx(x1, y1, a, c, k, 0, 0);
+  }
+}
+// a thin ribbon between two points in the air (wires); both ends at rel. heights
+function wire(x0, d0, h0, x1, d1, h1, w, c) {
+  if (!room(6)) return;
+  const L = Math.hypot(x1 - x0, d1 - d0) || 1, nx = -(d1 - d0) / L * w, nd = (x1 - x0) / L * w;
+  vtx(x0 - nx, GROUND_Y + h0, d0 - nd, c, 1, 0, 0); vtx(x1 - nx, GROUND_Y + h1, d1 - nd, c, 1, 0, 0); vtx(x1 + nx, GROUND_Y + h1, d1 + nd, c, 1, 0, 0);
+  vtx(x0 - nx, GROUND_Y + h0, d0 - nd, c, 1, 0, 0); vtx(x1 + nx, GROUND_Y + h1, d1 + nd, c, 1, 0, 0); vtx(x0 + nx, GROUND_Y + h0, d0 + nd, c, 1, 0, 0);
+}
+function stratum(h, x, d) { return jit(strataCol(h, x, d, TC2), 0.1, TC3); }
+function boulder(x, d, r, base) {
+  frameId();
+  rock(x, d, r, base - r * 0.45, r * rr(0.9, 1.3), STRATA[(rand() * STRATA.length) | 0]);
+}
+function hoodoo(x, d, h, base) {
+  const r = rr(0.26, 0.38);
+  frame(x, d, rand() * TAU);
+  LR[0] = r * 1.3; LH[0] = base - 0.08; LK[0] = 0.72;
+  LR[1] = r; LH[1] = base + h * 0.3; LK[1] = 0.86;
+  LR[2] = r * 0.7; LH[2] = base + h * 0.7; LK[2] = 0.95;
+  LR[3] = r * 0.82; LH[3] = base + h * 0.86; LK[3] = 1.0;
+  lathe(0, 0, 4, 6, stratum(base + h * 0.4, x, d), 0, 1, 1, 0.2);
+  LR[0] = r * 1.3; LH[0] = base + h * 0.84; LK[0] = 0.8;
+  LR[1] = r * 1.42; LH[1] = base + h; LK[1] = 1.02;
+  LR[2] = 0; LH[2] = base + h + 0.1; LK[2] = 1.08;
+  lathe(0, 0, 3, 6, STRATA[3], 0.3, 1, 1, 0.2);
+  frameId();
+  shadowDisc(x, d, r, h, base);
+}
+function saguaro(x, d, h, base = 0) {
+  const c = jit(CP.cactus, 0.12, TC2);
+  cyl(x, d, 0.085, base, base + h, 6, c, c);
+  cone(x, d, 0.085, base + h, base + h + 0.08, 6, c);
+  const na = rand() < 0.3 ? 1 : 2, a0 = rand() * TAU;
+  for (let i = 0; i < na; i++) {
+    const a = a0 + i * Math.PI + rr(-0.4, 0.4), ay = base + h * rr(0.38, 0.55), ca = Math.cos(a), sa = Math.sin(a);
+    frame(x, d, Math.atan2(sa, ca) - Math.PI / 2);
+    box(-0.05, 0.05, 0.05, 0.3, ay - 0.05, ay + 0.05, c, c);                  // elbow out…
+    frameId();
+    const ex = x + ca * 0.3, ed = d + sa * 0.3, top = ay + h * rr(0.25, 0.4);
+    cyl(ex, ed, 0.06, ay - 0.05, top, 5, c, c);                                // …and up
+    cone(ex, ed, 0.06, top, top + 0.06, 5, c);
+  }
+  shadowDisc(x, d, 0.12, h, base);
+}
+function barrelCactus(x, d, base = 0) {
+  frame(x, d, 0);
+  LR[0] = 0.12; LH[0] = base; LK[0] = 0.8; LR[1] = 0.14; LH[1] = base + 0.12; LK[1] = 0.95; LR[2] = 0; LH[2] = base + 0.22; LK[2] = 1.1;
+  lathe(0, 0, 3, 6, jit(CP.cactus, 0.15, TC2), 0);
+  frameId();
+}
+function deadTree(x, d, h, base = 0) {
+  const c = CP.deadwood;
+  box(x - 0.05, d - 0.05, x + 0.05, d + 0.05, base, base + h, c, c);
+  for (let i = 0; i < 3; i++) {
+    const a = rand() * TAU, y = base + h * rr(0.45, 0.9), L = rr(0.25, 0.45);
+    frame(x, d, a);
+    box(-0.025, 0, 0.025, L, y - 0.025, y + 0.025, c, c);
+    frameId();
+  }
+  shadowBox(x - 0.05, d - 0.05, x + 0.05, d + 0.05, h, base);
+}
+// flat-roofed mud-brick house with a parapet lip and a dark doorway on the −d side
+function adobe(x, d, w, l, h, rot, c, base = 0) {
+  frame(x, d, rot);
+  plain();
+  box(-w / 2, -l / 2, w / 2, l / 2, base, base + h, c, tint(c, CP.adobeL, 0.45, TC3));
+  const p = 0.07, t = base + h + 0.08;
+  box(-w / 2, -l / 2, w / 2, -l / 2 + p, base + h, t, c, c); box(-w / 2, l / 2 - p, w / 2, l / 2, base + h, t, c, c);
+  box(-w / 2, -l / 2 + p, -w / 2 + p, l / 2 - p, base + h, t, c, c); box(w / 2 - p, -l / 2 + p, w / 2, l / 2 - p, base + h, t, c, c);
+  box(-0.1, -l / 2 - 0.02, 0.1, -l / 2 + 0.02, base, base + Math.min(0.3, h * 0.7), CP.dark, CP.dark);
+  shadowBox(-w / 2, -l / 2, w / 2, l / 2, h + 0.08, base);
+  frameId();
+}
+function tent(x, d, rot, w, l) {
+  frame(x, d, rot);
+  plain();
+  box(-w / 2, -l / 2, w / 2, l / 2, 0, 0.16, CP.tent, CP.tent, false);
+  gable(-w / 2 - 0.04, -l / 2, w / 2 + 0.04, l / 2, 0.16, w * 0.4, jit(CP.tent, 0.08, TC3), true);
+  shadowBox(-w / 2, -l / 2, w / 2, l / 2, 0.16 + w * 0.3);
+  frameId();
+}
+// a line of sandbags (0.22 tall: never counts as tall) in the local frame, along local x
+function sandbags(x, d, rot, len) {
+  frame(x, d, rot);
+  for (let s = -len / 2; s < len / 2 - 0.05; s += 0.34) box(s, -0.14, Math.min(s + 0.32, len / 2), 0.14, 0, rr(0.18, 0.22), CP.sandbag, jit(CP.sandbag, 0.08, TC3));
+  frameId();
+}
+function crates(x, d, rot, n) {
+  frame(x, d, rot);
+  for (let i = 0; i < n; i++) {
+    const cx = (i % 3) * 0.34 - 0.34, cd = ((i / 3) | 0) * 0.34, lv = i >= 6 ? 1 : 0;
+    box(cx - 0.15, cd - 0.15, cx + 0.15, cd + 0.15, lv * 0.26, lv * 0.26 + 0.26, CP.camoD, jit(CP.camo, 0.1, TC3));
+  }
+  frameId();
+  shadowBox(x - 0.5, d - 0.2, x + 0.5, d + 0.5, n > 6 ? 0.52 : 0.26);
+}
+function drums(x, d, n, c = CP.rust) {
+  for (let i = 0; i < n; i++) {
+    const a = i * 2.4, q = i ? 0.2 + i * 0.03 : 0;
+    cyl(x + Math.cos(a) * q, d + Math.sin(a) * q, 0.075, 0, 0.22, 6, jit(c, 0.15, TC2), P.metalD);
+  }
+}
+// burnt-out vehicle hulks
+function wreckTruck(x, d, rot) {
+  frame(x, d, rot);
+  flat(-0.5, -0.9, 0.5, 0.9, L_BASE + 0.004, CP.burnt, 0.75);
+  box(-0.21, 0.28, 0.21, 0.6, 0, 0.24, CP.burnt, CP.rust);
+  box(-0.23, -0.6, 0.23, 0.2, 0.04, 0.16, CP.rust, CP.burnt);
+  shadowBox(-0.22, -0.6, 0.22, 0.6, 0.24);
+  frameId();
+}
+function wreckTank(x, d, rot) {
+  frame(x, d, rot);
+  flat(-0.8, -1.0, 0.8, 1.0, L_BASE + 0.004, CP.burnt, 0.7);
+  box(-0.42, -0.62, 0.42, 0.62, 0, 0.22, CP.burnt, CP.camoD);
+  frame(x, d, rot + 0.7);
+  box(-0.25, -0.28, 0.25, 0.22, 0.22, 0.38, CP.rust, CP.burnt);
+  box(-0.04, 0.22, 0.04, 0.95, 0.28, 0.34, CP.burnt, CP.burnt);
+  frameId();
+  shadowDisc(x, d, 0.55, 0.38);
+}
+function wreckJet(x, d, rot, s = 1) {
+  frame(x, d, rot);
+  disc(0, 0, 1.3 * s, 1.7 * s, L_BASE + 0.004, CP.burnt, 10, 0.8);
+  box(-0.16 * s, -0.95 * s, 0.16 * s, 0.35 * s, 0, 0.26 * s, P.metalD, P.metal);                   // fuselage
+  frame(x + 0.25 * s, d + 0.9 * s, rot + 0.5);
+  box(-0.13 * s, -0.4 * s, 0.13 * s, 0.25 * s, 0, 0.2 * s, CP.burnt, P.metalD);                     // broken nose
+  frame(x, d, rot);
+  flat4(-1.0 * s, -0.25 * s, -0.12 * s, -0.4 * s, -0.12 * s, 0.1 * s, -0.8 * s, 0.05 * s, 0.1, P.metal, 0.9);   // wing
+  box(-0.03, -1.05 * s, 0.03, -0.7 * s, 0.2 * s, 0.62 * s, P.metalD, P.metalD);                    // fin
+  shadowBox(-0.16 * s, -0.95 * s, 0.16 * s, 0.35 * s, 0.3 * s);
+  frameId();
+}
+// the crude oil line from the desert wells to the refinery, on stanchions along the left flank; it
+// dives under every flat cross road with a concrete collar on each side
+const PIPE_X = -7.35, PIPE_Y = 0.52, PIPE_R = 0.19;
+function pipeSegment(a, b) {
+  if (b - a < 0.6) return;
+  frameId();
+  pipeD(PIPE_X, a, b, PIPE_Y, PIPE_R, CP.pipeG, LOWQ ? 5 : 7);
+  for (let d = Math.ceil(a / 2.6) * 2.6 + 0.8; d < b - 0.4; d += 2.6) {
+    const g = canyonH(PIPE_X, d);
+    if (g < PIPE_Y - PIPE_R - 0.04) box(PIPE_X - 0.05, d - 0.05, PIPE_X + 0.05, d + 0.05, g - 0.06, PIPE_Y - PIPE_R + 0.02, CP.steelD, CP.steelD);
+    if (!LOWQ && ((d / 2.6) | 0) % 6 === 0) box(PIPE_X - 0.25, d - 0.06, PIPE_X + 0.25, d + 0.06, PIPE_Y - 0.25, PIPE_Y + 0.25, CP.pipeY, CP.pipeY);  // flange
+  }
+  shadowBox(PIPE_X - PIPE_R, a, PIPE_X + PIPE_R, b, PIPE_Y + PIPE_R * 0.5);
+}
+function pipeCollar(d) {
+  frameId();
+  box(PIPE_X - 0.32, d - 0.28, PIPE_X + 0.32, d + 0.28, 0, PIPE_Y + 0.12, CP.padD, CP.pad);
+  shadowBox(PIPE_X - 0.32, d - 0.28, PIPE_X + 0.32, d + 0.28, PIPE_Y + 0.12);
+}
+function cyPipeline(d0, d1) {
+  const a = Math.max(d0, -80), b = Math.min(d1, CY_REF + 12);
+  if (b <= a) return;
+  const c = Math.floor(d0 / CHUNK) * CHUNK + 20;
+  if (c >= CY_ROADS) {
+    pipeSegment(a, Math.min(b, c - 2.1)); if (c - 2.1 > a && c - 2.1 < b) pipeCollar(c - 2.1);
+    pipeSegment(Math.max(a, c + 2.1), b); if (c + 2.1 > a && c + 2.1 < b) pipeCollar(c + 2.1);
+  } else pipeSegment(a, b);
+  if (b === CY_REF + 12) pipeCollar(b);                                          // into the refinery tank farm
+}
+
+// plain() leaves SIDE_V / TOP_V as the last sideStyle/topStyle set them, so an untextured box
+// top would take its v scale from the previous chunk: a chunk's bytes would then depend on build
+// order. The canyon and sky generators start from a fully reset style (coastal keeps its bytes).
+function styleReset() { plain(); SIDE_V = 0; TOP_V = 0; }
+
+// ---- canyon chunks ---------------------------------------------------------------------
+function genCanyon(w, ch, k, d0) {
+  const d1 = d0 + CHUNK;
+  styleReset();
+  cyRoads(d0, d1);
+  if (d0 < 262) cyDunes(ch, k, d0, Math.min(d1, 262));
+  if (d1 > 238 && d0 < 586) cyCanyon(ch, k, Math.max(d0, 238), Math.min(d1, 586));
+  if (d1 > 560 && d0 < CY_REF + 2) cyMesa(ch, k, Math.max(d0, 560), Math.min(d1, CY_REF + 2));
+  if (d1 > CY_REF && d0 < CY_FORT) cyRefinery(ch, k, d0, d1);
+  if (d1 > CY_FORT && d0 < CY_LAKE) cyFortress(ch, k, d0, d1);
+  if (d1 > CY_LAKE) cyLake(ch, k, Math.max(d0, CY_LAKE), d1);
+  if (d0 < CY_REF + 12) cyPipeline(d0, d1);
+}
+
+// lanes: sand tracks up to the refinery gate, asphalt through the refinery, taxiways and the
+// airstrip in the fortress; cross roads (from 260) in the same styles
+function sandTrack(lx, a, b) {
+  if (b <= a) return;
+  flat(lx - 1.12, a, lx + 1.12, b, L_BASE + 0.003, CP.trackL, 0.98);
+  flat(lx - 0.96, a, lx + 0.96, b, L_ROAD, CP.track);
+  flat(lx - 0.58, a, lx - 0.4, b, L_WALK, CP.rut);
+  flat(lx + 0.4, a, lx + 0.58, b, L_WALK, CP.rut);
+}
+function sandCross(c) {
+  flat(-40, c - 1.38, 40, c + 1.38, L_ROAD - 0.004, CP.track);
+  flat(-40, c - 0.58, 40, c - 0.4, L_WALK - 0.004, CP.rut);
+  flat(-40, c + 0.4, 40, c + 0.58, L_WALK - 0.004, CP.rut);
+}
+// refinery roads: warm, sand-dusted asphalt (the cross road sits a hair under the lanes)
+function dustRoad(lx, a, b) {
+  if (b <= a) return;
+  flat(lx - 1.14, a, lx + 1.14, b, L_ROAD - 0.003, CP.asphaltL);
+  flat(lx - 0.98, a, lx + 0.98, b, L_ROAD, CP.asphalt);
+  for (let d = Math.ceil(a / 2.5) * 2.5; d < b - 1.3; d += 2.5) {
+    if (crossDist(d + 0.6) < 2.4) continue;
+    flat(lx - 0.06, d, lx + 0.06, d + 1.2, L_MARK, P.paint, 0.78);
+  }
+}
+function dustCross(c) {
+  flat(-40, c - 1.62, 40, c + 1.62, L_ROAD - 0.006, CP.asphaltL);
+  flat(-40, c - 1.46, 40, c + 1.46, L_ROAD - 0.004, CP.asphalt);
+  for (let x = -40; x < 38.8; x += 2.5) {
+    let skip = false;
+    for (let i = 0; i < 3; i++) if (Math.abs(x + 0.6 - LANES_X[i]) < 2.2) skip = true;
+    if (!skip) flat(x, c - 0.05, x + 1.2, c + 0.05, L_MARK - 0.004, P.paint, 0.78);
+  }
+}
+function fortCross(c) {
+  // concrete taxi connector with a yellow line; split around the airstrip
+  const onStrip = c > CY_STRIP_A && c < CY_STRIP_B;
+  for (const [a, b] of onStrip ? [[-26, -3.1], [3.1, 26]] : [[-26, 26]]) {
+    flat(a, c - 1.45, b, c + 1.45, L_ROAD - 0.004, P.concreteD);
+    flat(a, c - 0.05, b, c + 0.05, L_MARK - 0.004, P.yellow, 0.9);
+  }
+}
+// lane 0 in the fortress: a concrete road outside the airstrip, the strip itself inside
+function fortCentre(a, b) {
+  const A = CY_STRIP_A, B = CY_STRIP_B;
+  if (a < A) { flat(-1.1, a, 1.1, Math.min(b, A), L_ROAD, P.concrete); flat(-0.05, a, 0.05, Math.min(b, A), L_MARK, P.yellow, 0.9); }
+  if (b > B) { flat(-1.1, Math.max(a, B), 1.1, b, L_ROAD, P.concrete); flat(-0.05, Math.max(a, B), 0.05, b, L_MARK, P.yellow, 0.9); }
+  const s = Math.max(a, A), e = Math.min(b, B);
+  if (e <= s) return;
+  const W = 2.75;
+  flat(-W - 0.32, s, W + 0.32, e, L_ROAD - 0.002, P.asphaltD);
+  flat(-W, s, W, e, L_ROAD, P.runway);
+  flat(-W + 0.12, s, -W + 0.22, e, L_MARK, P.paint, 0.9); flat(W - 0.22, s, W - 0.12, e, L_MARK, P.paint, 0.9);
+  for (let d = Math.ceil(s / 3.5) * 3.5; d < e - 1.8; d += 3.5) {
+    if (d < A + 14 || d > B - 14 || crossDist(d + 0.9) < 2.2) continue;
+    flat(-0.07, d, 0.07, d + 1.8, L_MARK, P.paint, 0.9);
+  }
+  // threshold piano keys + runway numbers at both ends, sand drifting over the tarmac edges
+  for (const [t, dir, tile] of [[A + 1.2, 1, T_R36], [B - 1.2, -1, T_R18]]) {
+    const kd = dir > 0 ? t : t - 2.6;
+    if (kd >= s && kd + 2.6 <= e) for (let i = 0; i < 8; i++) {
+      if (i === 4) continue;
+      const x = -2.4 + i * 0.62 + (i >= 4 ? 0.3 : 0);
+      flat(x - 0.2, kd, x + 0.2, kd + 2.6, L_MARK, P.paint, 0.95);
+    }
+    const nd = dir > 0 ? t + 3.4 : t - 3.4 - 2.2;
+    if (nd >= s && nd + 2.2 <= e) {
+      setTile(tile);
+      if (dir > 0) { uvMode(1.8, 2.2, false, -0.9, nd); flat(-0.9, nd, 0.9, nd + 2.2, L_MARK, P.white); }
+      else { frame(0, nd + 1.1, Math.PI); uvMode(1.8, 2.2, false, -0.9, -1.1); flat(-0.9, -1.1, 0.9, 1.1, L_MARK, P.white); frameId(); }
+      setTile(0); uvMode(0, 0);
+    }
+  }
+  for (let d = Math.ceil(s / 3) * 3 + 1; d < e; d += 3) {
+    if (crossDist(d) < 1.9) continue;
+    for (const sx of [-1, 1]) box(sx * 3.2 - 0.05, d - 0.05, sx * 3.2 + 0.05, d + 0.05, 0, 0.1, P.paint, P.glassL);   // edge lights
+  }
+}
+function cyRoads(d0, d1) {
+  frameId(); setTile(0); uvMode(0, 0);
+  for (let i = 0; i < 3; i++) {
+    const lx = LANES_X[i];
+    if (d0 < CY_REF) sandTrack(lx, d0, Math.min(d1, CY_REF));
+    if (d1 > CY_REF && d0 < CY_FORT) dustRoad(lx, Math.max(d0, CY_REF), Math.min(d1, CY_FORT));
+    if (d1 > CY_FORT && d0 < FORT_REAR + 0.8) {                                // the roads end at the rear gates
+      const a = Math.max(d0, CY_FORT), b = Math.min(d1, FORT_REAR + 0.8);
+      if (i === 1) fortCentre(a, b); else laneRoad(lx, a, b, 'taxi');
+    }
+    frameId(); setTile(0); uvMode(0, 0);
+  }
+  const c = d0 + 20;
+  if (c >= 260 && c < CY_LAKE) {
+    if (c < CY_REF) sandCross(c);
+    else if (c < CY_FORT) dustCross(c);
+    else fortCross(c);
+  }
+}
+
+// dunes 0–260: wind-sculpted sand, scrub, an oasis compound now and then, wrecks, a telegraph line
+function cyDunes(ch, k, a, b) {
+  if (b <= a) return;
+  const nb = LOWQ ? 12 : 26;
+  for (let i = 0; i < nb; i++) {
+    const x = i < nb / 2 ? rr(-9, 9) : rr(-17, 17), d = rr(a, b);                // half of them on screen
+    if (!laneFree(x, 0.3)) continue;
+    bush(x, d, rr(0.12, 0.26), jit(rand() < 0.6 ? CP.scrub : CP.sage, 0.15, TC2), canyonH(x, d) - 0.03);
+  }
+  if (!LOWQ) for (let i = 0; i < 10; i++) {                                     // pebbles and stones
+    const x = rr(-9, 9), d = rr(a, b);
+    if (laneFree(x, 0.2)) rock(x, d, rr(0.08, 0.16), canyonH(x, d) - 0.06, rr(0.1, 0.18), STRATA[(rand() * STRATA.length) | 0]);
+  }
+  for (let i = 0; i < 4; i++) {
+    const x = (rand() < 0.5 ? -1 : 1) * rr(7.6, 17), d = rr(a, b);
+    if (laneFree(x, 0.7)) boulder(x, d, rr(0.25, 0.55), canyonH(x, d));
+  }
+  // an oasis every other chunk: palms round a dry spring, a ruined mud-brick compound
+  if ((k & 1) === 0 && b - a > 30) {
+    const side = ((k >> 1) & 1) ? 1 : -1, cx = side * rr(9.6, 11.5), cd = rr(a + 10, b - 10);
+    frameId();
+    disc(cx, cd, 1.7, 1.25, L_BASE + 0.004, CP.wash, 12, 0.95);
+    disc(cx, cd, 1.0, 0.7, L_ROAD, CP.valley, 10, 0.8);
+    for (let i = 0; i < 7; i++) {
+      const an = rand() * TAU, q = rr(1.5, 3.2), x = cx + Math.cos(an) * q, d = cd + Math.sin(an) * q * 0.8;
+      if (laneFree(x, 1.3)) palm(x, d, rr(1.0, 1.4), canyonH(x, d) - 0.03);
+    }
+    for (let i = 0; i < 5; i++) {
+      const x = cx + rr(-2.5, 2.5), d = cd + rr(-2.5, 2.5);
+      if (laneFree(x, 0.3)) bush(x, d, rr(0.18, 0.3), jit(CP.palm, 0.15, TC2), canyonH(x, d) - 0.03);
+    }
+    const hx = cx + side * 3.2, hd = cd + rr(-3, 3);
+    if (laneFree(hx, 1.2)) {
+      adobe(hx, hd, 1.1, 0.9, 0.42, rr(-0.2, 0.2), jit(CP.adobe, 0.06, TC2), canyonH(hx, hd) - 0.05);
+      const rx = hx + side * 1.6, rd = hd + 1.4;
+      frame(rx, rd, rr(-0.3, 0.3));                                             // roofless ruin
+      const g = canyonH(rx, rd) - 0.05;
+      box(-0.8, -0.7, 0.8, -0.58, g, g + 0.36, CP.adobeD, CP.adobe); box(-0.8, -0.58, -0.68, 0.7, g, g + 0.5, CP.adobeD, CP.adobe);
+      box(0.2, 0.58, 0.8, 0.7, g, g + 0.22, CP.adobeD, CP.adobe);
+      frameId();
+    }
+  }
+  // landmarks: a burnt convoy on the right track shoulder, a crashed fighter out on the dunes
+  if (k === 1 || k === 4) { wreckTruck(7.4, a + 12, 0.25); wreckTruck(7.2, a + 16.5, -0.4); wreckTank(8.6, a + 24, 1.2); }
+  if (k === 3) wreckJet(-11.5, a + 21, 0.7, 1.15);
+  if (k === 5) { crates(-8.2, a + 8, 0.2, 7); drums(-8.4, a + 11, 5); tent(-10.5, a + 9, 0.3, 1.1, 1.6); }
+  // telegraph line along the right flank (poles at d ≡ 1 mod 6; each chunk strings the wires from
+  // the last pole before it, so the line runs on across the chunk seams)
+  const tx = 8.7;
+  let pd = NaN, ph = 0;
+  for (let d = Math.floor((a - 1) / 6) * 6 + 1; d < b; d += 6) {
+    const g = canyonH(tx, d);
+    if (d >= a) {
+      box(tx - 0.04, d - 0.04, tx + 0.04, d + 0.04, g - 0.05, g + 1.45, CP.deadwood, CP.deadwood);
+      box(tx - 0.3, d - 0.03, tx + 0.3, d + 0.03, g + 1.3, g + 1.36, CP.deadwood, CP.deadwood);
+      shadowBox(tx - 0.04, d - 0.04, tx + 0.04, d + 0.04, 1.45, g);
+      if (pd === pd && !LOWQ) for (const o of [-0.26, 0.26]) wire(tx + o, pd, ph, tx + o, d, g + 1.37, 0.012, P.hullDark);
+    }
+    pd = d; ph = g + 1.37;
+  }
+}
+
+// canyon 260–560: stepped strata cliffs on both sides (tapering into every side slot), talus,
+// hoodoos on the rims, desert plants and an outpost or two on the floor
+function cyCanyon(ch, k, a, b) {
+  for (let s = 0; s < 2; s++) {
+    const side = s ? 1 : -1;
+    let d = a + rr(0, 1.2);
+    while (d < b) {
+      const len = rr(1.7, 2.7), dc = d + len * 0.5;
+      cyWeights(dc);
+      const wC = CYW[1];
+      const slot = dc >= CY_ROADS ? sstep(2.3, 6.5, crossDist(dc)) : 1;
+      const top = (cyRim(dc, s) + rr(-0.45, 0.1)) * wC * (0.22 + 0.78 * slot);
+      const rx = rr(0.95, 1.45), rd = len * rr(0.6, 0.72), rot = rr(-0.2, 0.2);
+      const cx = side * (cyEdge(dc, s) + rx * 0.78 + rr(0, 0.35));
+      if (top > 0.3 && blockFits(cx, dc, rx, rd, rot)) rockBlock(cx, dc, rx, rd, -0.15, top, rot, LOWQ ? 5 : 6);
+      // a second block behind it fills the rim (mostly at the screen edge)
+      if (!LOWQ && top > 1.5) {
+        const bx = cx + side * rr(1.4, 2.0);
+        if (blockFits(bx, dc, rx, rd, rot)) rockBlock(bx, dc + rr(-0.5, 0.5), rx * rr(0.9, 1.2), rd, top * 0.6, Math.min(3.85, top + rr(-0.1, 0.25)), rot, 5);
+      }
+      d += len * rr(0.7, 0.92);
+    }
+    // talus boulders at the wall foot, scrub, hoodoos up on the rim
+    const nr = LOWQ ? 4 : 8;
+    for (let i = 0; i < nr; i++) {
+      const dd = rr(a, b), x = side * (cyEdge(dd, s) - rr(-0.2, 1.0)), r = rr(0.16, 0.48);
+      cyWeights(dd);
+      if (CYW[1] > 0.4 && cyFree(x, dd, r * 1.2)) boulder(x, dd, r, canyonH(x, dd));
+    }
+    for (let i = 0; i < (LOWQ ? 2 : 4); i++) {
+      const dd = rr(a, b), x = side * (cyEdge(dd, s) + rr(2.9, 5.5));
+      cyWeights(dd);
+      if (CYW[1] > 0.8 && cyFree(x, dd, 0.5)) {
+        const g = canyonH(x, dd);
+        if (g > 2.8 && g + 0.9 < MAX_H) hoodoo(x, dd, Math.min(MAX_H - g - 0.12, rr(0.5, 0.85)), g);
+      }
+    }
+  }
+  // floor texture: loose patches of desert-pavement gravel (atlas grain), close to the floor tone
+  frameId();
+  for (let i = 0; i < (LOWQ ? 2 : 6); i++) {
+    const x = rr(-7.2, 7.2), d = rr(Math.max(a, 262) + 1.5, b - 1.5);
+    if (d >= b - 1.5) continue;
+    setTile(T_GRAVEL); uvMode(1.1, 1.1);
+    for (let j = 0; j < 3; j++) {
+      const px = x + rr(-0.9, 0.9), pd = d + rr(-0.9, 0.9), rx = rr(0.5, 1.2), rd = rr(0.4, 1.0);
+      if (Math.abs(px) + rx > cyEdge(pd, px < 0 ? 0 : 1) - 0.45) continue;
+      disc(px, pd, rx, rd, L_BASE + 0.001 + j * 0.0008, jit(CP.sandR, 0.05, TC3), 10, 0.9);
+    }
+  }
+  setTile(0); uvMode(0, 0);
+  // floor: scrub, saguaros, barrel cacti and pebbles off the lanes
+  const nf = LOWQ ? 8 : 16;
+  for (let i = 0; i < nf; i++) {
+    const x = rr(-8.2, 8.2), d = rr(a, b);
+    const r = rand();
+    if (Math.abs(x) > cyEdge(d, x < 0 ? 0 : 1) - 0.35) continue;                // not inside the cliff
+    if (r < 0.5) { if (cyFree(x, d, 0.3)) bush(x, d, rr(0.14, 0.26), jit(rand() < 0.5 ? CP.scrub : CP.sage, 0.15, TC2), -0.03); }
+    else if (r < 0.66) { if (cyFree(x, d, 0.45) && Math.abs(x) > 6.7) saguaro(x, d, rr(0.7, 1.05)); }
+    else if (r < 0.82) { if (cyFree(x, d, 0.16)) barrelCactus(x, d); }
+    else if (cyFree(x, d, 0.2)) rock(x, d, rr(0.1, 0.18), -0.06, rr(0.12, 0.2), STRATA[(rand() * STRATA.length) | 0]);
+  }
+  if (!LOWQ && rand() < 0.6) { const x = (rand() < 0.5 ? -1 : 1) * rr(6.8, 7.4), d = rr(a + 2, b - 2); if (cyFree(x, d, 0.45)) deadTree(x, d, rr(0.5, 0.8)); }
+  // outposts by the side slots: sandbag nests, crates, a burnt-out tank
+  const c = Math.floor(a / CHUNK) * CHUNK + 20;
+  if (c > a && c < b && c >= 300 && c < 540) {
+    const side = (k & 1) ? 1 : -1, nx = side * 7.3, nd = c + 3.4 * ((k >> 1) & 1 ? 1 : -1);
+    if (cyFree(nx, nd, 0.5)) { sandbags(nx, nd, Math.PI / 2, 1.2); crates(nx + side * 0.2, nd + (nd > c ? 1.0 : -1.3), 0.1, 4); }
+  }
+  if (k === 9) wreckTank(-7.3, 377, 2.2);
+  if (k === 12) { drums(7.1, 498, 6); tent(7.9, 503, 0.2, 1.0, 1.4); }
+}
+
+// mesa plateau 560–780: slickrock, rim rocks along the drop, buttes rising from the valley, a
+// relay station on the rim; the mid-boss corridor (|x| < 5.5) only gets flat detail
+function cyMesa(ch, k, a, b) {
+  frameId();
+  // slickrock: two sets of long straight joints and weathering pits on the plateau (flat)
+  const onTop = (x, d) => Math.abs(x) < cyMesaEdge(d, x < 0 ? 0 : 1) - 0.3;
+  for (let i = 0; i < (LOWQ ? 7 : 14); i++) {
+    const th = (rand() < 0.6 ? 0.38 : 0.38 + Math.PI / 2) + rr(-0.05, 0.05), L = rr(3, 10);
+    const cx = rr(-9.5, 9.5), cd = rr(a + 2, b - 2), ux = Math.cos(th) * L / 2, ud = Math.sin(th) * L / 2;
+    if (onTop(cx - ux, cd - ud) && onTop(cx + ux, cd + ud)) crackEdge(cx - ux, cd - ud, cx + ux, cd + ud, 0.045, CP.joint, L_BASE + 0.004);
+  }
+  for (let i = 0; i < (LOWQ ? 3 : 7); i++) {
+    const x = rr(-8.5, 8.5), d = rr(a + 1, b - 1), r = rr(0.16, 0.42);
+    if (!onTop(x, d)) continue;
+    disc(x, d, r, r * rr(0.7, 1), L_BASE + 0.004, CP.joint, 8, 0.95);
+    disc(x, d, r * 0.55, r * 0.45, L_BASE + 0.006, CP.lichen, 6, 0.8);
+  }
+  for (let i = 0; i < (LOWQ ? 6 : 12); i++) {
+    const x = rr(-9, 9), d = rr(a, b);
+    if (cyFree(x, d, 0.32) && canyonH(x, d) > -0.05) bush(x, d, rr(0.13, 0.26), jit(CP.sage, 0.15, TC2), -0.03);
+  }
+  for (let s = 0; s < 2; s++) {
+    const side = s ? 1 : -1;
+    // rocks along the plateau edge: now a lone boulder, now a cluster
+    for (let d = a + rr(0, 3); d < b; d += rr(2.4, 5.5)) {
+      cyWeights(d);
+      if (CYW[2] < 0.5) continue;
+      const x = side * (cyMesaEdge(d, s) - rr(0.2, 0.8)), r = rr(0.25, 0.65);
+      if (!cyFree(x, d, r * 1.2)) continue;
+      boulder(x, d, r, 0);
+      if (rand() < 0.5) { const x2 = x + side * rr(0.2, 0.6), d2 = d + rr(-0.9, 0.9); if (cyFree(x2, d2, 0.35)) boulder(x2, d2, rr(0.14, 0.3), 0); }
+    }
+    // buttes out in the valley (stacked strata rising from the valley floor)
+    for (let d = a + rr(3, 12); d < b - 2; d += rr(11, 20)) {
+      cyWeights(d);
+      if (CYW[2] < 0.7) continue;
+      const r = rr(1.5, 2.8), rx = r * rr(0.8, 1.05), rd = r * rr(0.95, 1.4), rot = rr(-0.5, 0.5);
+      const x = side * (cyMesaEdge(d, s) + 3.1 + r * 1.2 + rr(0, 4));
+      if (blockFits(x, d, rx, rd, rot)) rockBlock(x, d, rx, rd, CY_VALLEY - 0.1, rr(0.8, 3.7), rot, 7, CY_VALLEY);
+    }
+    for (let i = 0; i < (LOWQ ? 3 : 6); i++) {                                   // valley scrub
+      const d = rr(a, b), x = side * (cyMesaEdge(d, s) + rr(3, 9)), g = canyonH(x, d);
+      if (g < -2.2 && cyFree(x, d, 0.3)) bush(x, d, rr(0.18, 0.3), jit(CP.scrub, 0.15, TC2), g - 0.03);
+    }
+  }
+  // cairns (low) beside the corridor
+  if (!LOWQ) for (let i = 0; i < 2; i++) {
+    const x = (rand() < 0.5 ? -1 : 1) * rr(6.8, 7.6), d = rr(a + 2, b - 2);
+    if (cyFree(x, d, 0.25)) { rock(x, d, 0.2, -0.05, 0.16, P.rock); rock(x + 0.03, d, 0.13, 0.1, 0.12, P.rockD); }
+  }
+  // relay station on the right rim (where the plateau is widest), a stone watchtower ruin on the
+  // left, a downed helicopter
+  if (k === 15) {
+    let bd = 606, be = 0;
+    for (let d = 606; d < 634; d += 2) { const e = cyMesaEdge(d, 1); if (e > be) { be = e; bd = d; } }
+    relayStation(ch, be - 1.05, bd);
+  }
+  if (k === 17) watchRuin(-7.6, 706);
+  if (k === 18 && cyFree(-7.9, 752, 1.15)) { frame(-7.9, 752, 2.3); flat(-0.8, -1.0, 0.8, 1.0, L_BASE + 0.004, CP.burnt, 0.7); frameId(); heli(-7.9, 752, 2.3, CP.camoD); }
+}
+function relayStation(ch, x, d) {
+  if (!cyFree(x, d, 0.9)) return;
+  adobe(x + 0.3, d, 0.9, 1.1, 0.5, 0, jit(CP.adobeL, 0.05, TC2));
+  const mx = x - 0.45, md = d + 1.2;
+  box(mx - 0.04, md - 0.04, mx + 0.04, md + 0.04, 0, 3.3, P.metal, P.metal);
+  for (let y = 0.8; y < 3.2; y += 0.8) box(mx - 0.18, md - 0.02, mx + 0.18, md + 0.02, y, y + 0.05, P.metal, P.metal);
+  shadowBox(mx - 0.04, md - 0.04, mx + 0.04, md + 0.04, 3.3);
+  addSpinner(ch, 0, x + 0.3, GROUND_Y + 0.58, d, 1.1);
+  sandbags(x + 0.3, d - 1.0, 0, 1.3);
+}
+function watchRuin(x, d) {
+  if (!cyFree(x, d, 0.8)) return;
+  frameId();
+  box(x - 0.55, d - 0.55, x + 0.55, d + 0.55, 0, 1.2, CP.adobeD, CP.adobe);
+  box(x - 0.55, d - 0.55, x + 0.1, d + 0.55, 1.2, 1.55, CP.adobeD, CP.adobe);           // broken top
+  box(x - 0.1, d - 0.57, x + 0.1, d - 0.53, 0.5, 0.8, CP.dark, CP.dark);
+  shadowBox(x - 0.55, d - 0.55, x + 0.55, d + 0.55, 1.3);
+  for (let i = 0; i < 4; i++) boulder(x + rr(-1, 1), d + rr(-1.2, 1.2), rr(0.12, 0.22), 0);
+}
+
+// refinery 780–1000: pipe corridors in both lane gaps, process lots on the flanks (per chunk:
+// [left-lower, left-upper, right-lower, right-upper] like the airbase plan)
+const REF_PLAN = {
+  19: [null, 'terminal', null, 'gate'],
+  20: ['tanks', 'columns', 'spheres', 'tanks'],
+  21: ['cooling', 'unit', 'tanks', 'flare'],
+  22: ['unit', 'tanks', 'columns', 'spheres'],
+  23: ['tanks', 'flare', 'unit', 'cooling'],
+  24: ['spheres', 'loading', 'tanks', 'unit'],
+};
+function cyRefinery(ch, k, d0, d1) {
+  const cr = d0 + 20;
+  const a = Math.max(d0, CY_REF), b = Math.min(d1, CY_FORT);
+  // pipes on sleepers in the lane gaps, diving under the cross road (valves at the road ends and
+  // where the pipes stop before the fortress)
+  if (cr > a) refPipes(a, cr - 2.0, false, true);
+  if (cr + 2.0 < b) refPipes(cr + 2.0, b, true, b >= CY_FORT);
+  const plan = REF_PLAN[k] || [];
+  for (let hi = 0; hi < 2; hi++) {
+    const la = hi ? cr + 2.0 : d0 + 1.2, lb = hi ? d1 - 1.2 : cr - 2.0;
+    if (la < CY_REF || lb > CY_FORT) continue;
+    for (const side of [-1, 1]) { const kind = plan[(side < 0 ? 0 : 2) + hi]; if (kind) refLot(ch, kind, side, la, lb); }
+  }
+}
+const REF_PIPES = [[1.72, 0.12, 0.27], [2.3, 0.09, 0.22], [3.02, 0.15, 0.3], [3.72, 0.08, 0.2]];   // x, r, centre height
+function refPipes(a, b, valveA, valveB) {
+  if (b - a < 1) return;
+  frameId();
+  const cols = [CP.pipeG, CP.pipeY, CP.steel, CP.pipeR];
+  for (const side of [-1, 1]) {
+    for (let d = Math.ceil(a / 2.2) * 2.2 + 0.4; d < b - 0.3; d += 2.2) box(side < 0 ? -4.0 : 1.45, d - 0.12, side < 0 ? -1.45 : 4.0, d + 0.12, 0, 0.1, P.concreteD, P.concrete);
+    for (let i = 0; i < REF_PIPES.length; i++) {
+      const [px, r, y] = REF_PIPES[i];
+      if (LOWQ && i === 3) continue;
+      pipeD(side * px, a, b, y, r, cols[i], LOWQ ? 5 : 6);
+    }
+    shadowBox(side < 0 ? -3.87 : 1.6, a, side < 0 ? -1.6 : 3.87, b, 0.34);
+    // valve stations where the pipes dive under the road
+    for (const e of [valveA ? a + 0.35 : NaN, valveB ? b - 0.35 : NaN]) {
+      if (e !== e) continue;
+      box(side * 2.1 - 0.34, e - 0.22, side * 2.1 + 0.34, e + 0.22, 0, 0.42, CP.pipeY, P.metalD);
+      if (!LOWQ) disc(side * 2.1, e, 0.14, 0.14, 0.44, CP.pipeR, 8);
+    }
+  }
+}
+function storageTank(x, d, r, h, c, floating) {
+  const segs = LOWQ ? 10 : 14;
+  if (floating) {
+    cyl(x, d, r, 0, h, segs, c, c, false);
+    disc(x, d, r * 0.97, r * 0.97, h - 0.22, CP.steel, segs, 0.92);           // floating roof inside the shell
+    disc(x, d, r * 0.18, r * 0.18, h - 0.215, CP.steelD, 8);
+    ring(x, d, r * 0.97, r * 0.97, 0.05, h + 0.003, tint(c, P.white, 0.3, TC3), segs);
+  } else {
+    cyl(x, d, r, 0, h, segs, c, tint(c, P.white, 0.2, TC3));
+    if (!LOWQ) ring(x, d, r * 0.62, r * 0.62, 0.04, h + 0.008, CP.steel, 12);
+    disc(x, d, r * 0.2, r * 0.2, h + 0.01, CP.steelD, 8);
+  }
+  frameId();
+  box(x + r * 0.62, d - r * 0.7 - 0.12, x + r * 0.62 + 0.14, d - r * 0.7 + 0.12, 0, h, CP.steelD, CP.steel);   // stair tower
+  shadowDisc(x, d, r * 0.96, h);
+}
+function sphereTank(x, d, r, c) {
+  const yc = r + 0.32;
+  frame(x, d, 0);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * TAU + 0.3, lx = Math.cos(a) * r * 0.8, ld = Math.sin(a) * r * 0.8;
+    box(lx - 0.05, ld - 0.05, lx + 0.05, ld + 0.05, 0, yc, CP.steelD, CP.steelD);
+  }
+  LR[0] = 0; LH[0] = yc - r; LK[0] = 0.6;
+  LR[1] = r * 0.71; LH[1] = yc - r * 0.71; LK[1] = 0.74;
+  LR[2] = r; LH[2] = yc; LK[2] = 0.9;
+  LR[3] = r * 0.71; LH[3] = yc + r * 0.71; LK[3] = 1.02;
+  LR[4] = 0; LH[4] = yc + r; LK[4] = 1.1;
+  lathe(0, 0, 5, LOWQ ? 8 : 12, c, 0);
+  frameId();
+  shadowDisc(x, d, r * 0.9, yc + r * 0.4);
+}
+function column(x, d, r, h, c) {
+  cyl(x, d, r, 0, h, 8, c, CP.steel);
+  for (let y = 0.75; y < h - 0.35; y += 0.85) ring(x, d, r, r, 0.14, y, CP.steelD, 10);
+  cone(x, d, r * 1.02, h, h + r * 0.55, 8, CP.steel);
+  shadowDisc(x, d, r, h);
+}
+function coolingTower(x, d, r, h) {
+  frame(x, d, 0);
+  LR[0] = r; LH[0] = 0; LK[0] = 0.8; LR[1] = r * 0.8; LH[1] = h * 0.45; LK[1] = 0.92;
+  LR[2] = r * 0.66; LH[2] = h * 0.82; LK[2] = 1.0; LR[3] = r * 0.7; LH[3] = h; LK[3] = 1.04;
+  lathe(0, 0, 4, LOWQ ? 12 : 16, jit(CP.pad, 0.04, TC3), 0);
+  disc(0, 0, r * 0.69, r * 0.69, h - 0.04, CP.dark, LOWQ ? 12 : 16);        // the dark throat seen from above
+  frameId();
+  shadowDisc(x, d, r * 0.85, h);
+}
+function flareStack(x, d, h) {
+  cyl(x, d, 0.1, 0, h, 6, CP.steel, CP.burnt);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * TAU + 0.4, lx = x + Math.cos(a) * 0.3, ld = d + Math.sin(a) * 0.3;
+    box(lx - 0.035, ld - 0.035, lx + 0.035, ld + 0.035, 0, h * 0.82, CP.pipeR, CP.pipeR);
+  }
+  ring(x, d, 0.14, 0.14, 0.24, h * 0.42, CP.steelD, 8); ring(x, d, 0.14, 0.14, 0.24, h * 0.82, CP.steelD, 8);
+  // the flame: a tongue of the brightest vertex colour (it catches the bloom on HIGH)
+  frame(x, d, 0);
+  LR[0] = 0.1; LH[0] = h; LK[0] = 1.0; LR[1] = 0.19; LH[1] = h + 0.1; LK[1] = 1.2; LR[2] = 0; LH[2] = h + 0.34; LK[2] = 1.25;
+  lathe(0, 0, 3, 6, CP.flame, 0, 1.3, 1, 0.3);
+  frameId();
+  shadowDisc(x, d, 0.3, h * 0.85);
+}
+function tankerTruck(x, d, rot) {
+  frame(x, d, rot);
+  plain();
+  box(-0.2, 0.52, 0.2, 0.86, 0, 0.3, CP.tankW, P.glass);
+  box(-0.18, -0.9, 0.18, 0.5, 0.04, 0.12, P.hullDark, P.hullDark);
+  pipeD(0, -0.9, 0.46, 0.3, 0.19, CP.tankS, 6);
+  shadowBox(-0.2, -0.9, 0.2, 0.86, 0.45);
+  frameId();
+}
+// one refinery lot: side ±1, stage range [a, b]; content packed into |x| ∈ [7.2, 17] (on screen first)
+function refLot(ch, kind, side, a, b) {
+  const x0 = side < 0 ? -20 : 7.2, x1 = side < 0 ? -7.2 : 20, inner = side < 0 ? x1 : x0;
+  const X = (o) => inner + side * o, cd = (a + b) / 2;
+  const lo = (p, q) => Math.min(X(p), X(q)), hi = (p, q) => Math.max(X(p), X(q));
+  frameId();
+  setTile(T_SLAB); uvMode(2.5, 2.5);
+  flat(x0, a, x1, b, L_BASE + 0.002, CP.pad);
+  setTile(0); uvMode(0, 0);
+  flat(lo(0, 0.15), a, hi(0, 0.15), b, L_WALK, P.yellow, 0.8);                // kerb line along the lane
+  switch (kind) {
+    case 'tanks': {
+      for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+        const r = rr(1.35, 1.55), x = X(1.95 + j * 3.55), d = cd + (i ? 3.9 : -3.9);
+        const c = pick([CP.tankW, CP.tankW, CP.tankS, CP.tankR]);
+        storageTank(x, d, r, rr(0.85, 1.25), jit(c, 0.04, TC2), rand() < 0.4);
+      }
+      // bund wall round the farm
+      const bx0 = lo(0.2, 7.3), bx1 = hi(0.2, 7.3);
+      box(bx0, a + 0.2, bx1, a + 0.32, 0, 0.14, CP.padD, CP.pad); box(bx0, b - 0.32, bx1, b - 0.2, 0, 0.14, CP.padD, CP.pad);
+      box(bx0, a + 0.32, bx0 + 0.12, b - 0.32, 0, 0.14, CP.padD, CP.pad); box(bx1 - 0.12, a + 0.32, bx1, b - 0.32, 0, 0.14, CP.padD, CP.pad);
+      break;
+    }
+    case 'spheres': {
+      for (let i = 0; i < 3; i++) sphereTank(X(i === 1 ? 4.4 : 1.75), cd + (i - 1) * 4.6, rr(0.95, 1.05), jit(CP.tankW, 0.03, TC2));
+      frameId();
+      pipeD(X(3.1), cd - 6, cd + 6, 0.25, 0.1, CP.pipeY, 6);
+      break;
+    }
+    case 'columns': {
+      for (let i = 0; i < 3; i++) column(X(1.3 + i * 1.3), cd - 4.2 + (i % 2) * 0.9, rr(0.3, 0.44), rr(2.6, 3.5), jit(CP.tankS, 0.05, TC2));
+      processUnit(lo(0.6, 5.8), hi(0.6, 5.8), cd + 0.4, cd + 6.6);
+      frameId();
+      box(lo(6.3, 7.8), cd - 6, hi(6.3, 7.8), cd - 3.6, 0, 0.9, CP.rust, CP.steelD);                // fired heater
+      cyl(X(7.05), cd - 4.8, 0.2, 0.9, 3.6, 8, CP.steelD, CP.burnt);
+      shadowBox(lo(6.3, 7.8), cd - 6, hi(6.3, 7.8), cd - 3.6, 0.9); shadowDisc(X(7.05), cd - 4.8, 0.2, 3.6);
+      break;
+    }
+    case 'unit': {
+      processUnit(lo(0.6, 6.4), hi(0.6, 6.4), cd - 6.4, cd + 1.6);
+      for (let i = 0; i < 2; i++) column(X(1.6 + i * 3.2), cd + 4.8, rr(0.34, 0.42), rr(2.2, 3.0), jit(CP.tankW, 0.04, TC2));
+      break;
+    }
+    case 'flare': {
+      flareStack(X(3.6), cd + 1.5, 3.72);
+      frameId();
+      disc(X(3.6), cd + 1.5, 1.5, 1.5, L_BASE + 0.005, CP.burnt, 12, 0.8);      // scorched pad
+      frame(X(2.0), cd - 4.2, Math.PI / 2); pipeD(0, -1.2, 1.2, 0.42, 0.34, CP.tankS, 8); frameId();   // knockout drum
+      box(lo(1.2, 2.8), cd - 4.5, hi(1.2, 2.8), cd - 3.9, 0, 0.1, CP.padD, CP.padD);
+      shadowBox(lo(0.8, 3.2), cd - 4.55, hi(0.8, 3.2), cd - 3.85, 0.76);
+      break;
+    }
+    case 'cooling': {
+      coolingTower(X(2.9), cd - 1.5, 1.85, 2.5);
+      frameId();
+      box(lo(0.5, 2.2), cd + 4.2, hi(0.5, 2.2), cd + 6.4, 0, 0.55, P.wallB, P.roofTar);                // pump house
+      shadowBox(lo(0.5, 2.2), cd + 4.2, hi(0.5, 2.2), cd + 6.4, 0.55);
+      pipeD(X(3.4), cd + 1.0, cd + 5.8, 0.22, 0.13, CP.pipeG, 6);
+      break;
+    }
+    case 'loading': {
+      const cx0 = lo(0.8, 6.2), cx1 = hi(0.8, 6.2);
+      for (const x of [cx0 + 0.1, cx1 - 0.1]) for (const d of [cd - 4, cd, cd + 4]) box(x - 0.06, d - 0.06, x + 0.06, d + 0.06, 0, 1.05, CP.steel, CP.steel);
+      box(cx0, cd - 4.6, cx1, cd + 4.6, 1.05, 1.14, CP.steelD, jit(CP.tankW, 0.04, TC2));             // canopy
+      shadowBox(cx0, cd - 4.6, cx1, cd + 4.6, 1.14);
+      for (let i = 0; i < 3; i++) tankerTruck(X(1.9 + (i % 2) * 2.4), cd - 3 + i * 3, side < 0 ? 0 : Math.PI);
+      break;
+    }
+    case 'terminal': {
+      // where the crude line from the desert ends: pig launcher, manifold, valves
+      frameId();
+      box(lo(0.3, 3.4), a + 2.2, hi(0.3, 3.4), a + 5.4, 0, 0.12, CP.padD, CP.pad);
+      frame(X(1.8), a + 3.8, Math.PI / 2); pipeD(0, -1.3, 1.3, 0.5, 0.26, CP.pipeG, 7); frameId();
+      for (let i = 0; i < 4; i++) box(X(0.9 + i * 0.6) - 0.12, a + 6.2, X(0.9 + i * 0.6) + 0.12, a + 6.5, 0, 0.55, CP.pipeY, CP.pipeR);
+      storageTank(X(5.0), cd + 1.5, 1.5, 1.1, jit(CP.tankR, 0.04, TC2), false);
+      break;
+    }
+    case 'gate': {
+      // perimeter fence, a gatehouse and the refinery sign facing the road
+      frameId();
+      for (let d = a + 0.3; d < b - 0.2; d += 1.2) box(X(0.35) - 0.03, d - 0.03, X(0.35) + 0.03, d + 0.03, 0, 0.5, P.metalD, P.metalD);
+      wire(X(0.35), a + 0.3, 0.46, X(0.35), b - 0.2, 0.46, 0.015, P.metalD);
+      adobe(X(1.4), a + 3.2, 1.1, 1.3, 0.48, 0, jit(P.wallB, 0.05, TC2));
+      for (const d of [cd + 1.2, cd + 3.8]) box(X(3.2) - 0.05, d - 0.05, X(3.2) + 0.05, d + 0.05, 0, 1.3, P.metalD, P.metalD);
+      box(X(3.2) - 0.06, cd + 1.0, X(3.2) + 0.06, cd + 4.0, 1.3, 2.1, CP.pipeR, CP.tankW);               // sign board
+      shadowBox(X(3.2) - 0.06, cd + 1.0, X(3.2) + 0.06, cd + 4.0, 2.1);
+      for (let i = 0; i < 3; i++) tankerTruck(X(5.2), cd - 5 + i * 1.6, Math.PI / 2 * side);
+      break;
+    }
+  }
+  frameId();
+}
+// open steel structure: a grid of posts, a grating deck and a partial upper deck, drums on top
+function processUnit(x0, x1, a, b) {
+  frameId();
+  const w = x1 - x0, l = b - a;
+  for (let i = 0; i <= 3; i++) for (let j = 0; j <= 4; j++) {
+    const x = x0 + (w * i) / 3, d = a + (l * j) / 4;
+    box(x - 0.05, d - 0.05, x + 0.05, d + 0.05, 0, 1.9, CP.steelD, CP.steelD);
+  }
+  topStyle(T_GRAVEL, 0.5, 0.5);
+  box(x0, a, x1, b, 1.0, 1.06, CP.steelD, CP.steel);
+  box(x0 + w * 0.34, a, x1, a + l * 0.62, 1.86, 1.92, CP.steelD, CP.steel);
+  plain();
+  for (let i = 0; i < 3; i++) cyl(x0 + w * (0.18 + i * 0.3), a + l * 0.82, 0.24, 1.06, 1.06 + rr(0.9, 1.6), 8, jit(CP.tankS, 0.05, TC2), CP.steel);
+  frame(x0 + w * 0.62, a + l * 0.3, Math.PI / 2); pipeD(0, -w * 0.28, w * 0.28, 2.1, 0.18, CP.tankW, 7); frameId();
+  cyl(x0 + w * 0.12, a + l * 0.2, 0.14, 1.92, 3.4, 6, CP.steelD, CP.burnt);                             // vent stack
+  shadowBox(x0, a, x1, b, 1.4);
+  shadowDisc(x0 + w * 0.12, a + l * 0.2, 0.14, 3.4);
+}
+
+// desert fortress 1000–1240: crenellated mud-brick walls (gates at the lanes, gaps at the cross
+// roads), the airstrip down lane 0, revetments, hangars, flak and missile sites on the flanks
+const FORT_FRONT = 1007, FORT_REAR = 1233, FORT_SIDE = 14;
+const FORT_PLAN = {
+  25: [null, 'barracks', null, 'motorpool'],
+  26: ['tower', 'revet', 'hangar', 'aa'],
+  27: ['radar', 'revet', 'revet', 'sam'],
+  28: ['fuel', 'hangar', 'aa', 'revet'],
+  29: ['revet', 'tents', 'hangar', 'radar'],
+  30: ['aa', null, 'fuel', null],
+};
+function cyFortress(ch, k, d0, d1) {
+  const cr = d0 + 20;
+  if (d0 <= FORT_FRONT && d1 > FORT_FRONT) { fortGateWall(FORT_FRONT, -1); fortOuter(Math.max(d0, CY_FORT) + 0.6, FORT_FRONT - 1.2); }
+  if (d0 <= FORT_REAR && d1 > FORT_REAR) fortGateWall(FORT_REAR, 1);
+  for (const side of [-1, 1]) {
+    const a = Math.max(d0, FORT_FRONT), b = Math.min(d1, FORT_REAR);
+    if (b <= a) continue;
+    if (cr > a && cr < b) {
+      fortWallD(side, a, cr - 1.75); fortWallD(side, cr + 1.75, b);
+      fortTower(side * FORT_SIDE, cr - 2.35, 0.5, 1.15); fortTower(side * FORT_SIDE, cr + 2.35, 0.5, 1.15);
+    } else fortWallD(side, a, b);
+  }
+  const plan = FORT_PLAN[k] || [];
+  for (let hi = 0; hi < 2; hi++) {
+    const la = hi ? cr + 2.0 : d0 + 1.2, lb = hi ? d1 - 1.2 : cr - 2.0;
+    if (la < FORT_FRONT + 1 || lb > FORT_REAR - 1) continue;
+    for (const side of [-1, 1]) { const kind = plan[(side < 0 ? 0 : 2) + hi]; if (kind) fortLot(ch, kind, side, la, lb); }
+  }
+}
+const FORT_H = 0.78;
+// wall along x at d; merlons on the outer face (out = −1: toward −d, +1: toward +d)
+function fortWallX(x0, x1, d, out) {
+  if (x1 - x0 < 0.2) return;
+  frameId(); plain();
+  box(x0, d - 0.3, x1, d + 0.3, 0, FORT_H, CP.adobeD, CP.adobe);
+  const m0 = out < 0 ? d - 0.3 : d + 0.1, m1 = m0 + 0.2, step = LOWQ ? 1.1 : 0.55;
+  for (let x = x0 + 0.1; x < x1 - 0.2; x += step) box(x, m0, x + 0.27, m1, FORT_H, FORT_H + 0.17, CP.adobeD, CP.adobeL);
+  shadowBox(x0, d - 0.3, x1, d + 0.3, FORT_H + 0.08);
+}
+// wall along d at x = side·14, merlons outside
+function fortWallD(side, a, b) {
+  if (b - a < 0.2) return;
+  frameId(); plain();
+  const x = side * FORT_SIDE;
+  box(x - 0.3, a, x + 0.3, b, 0, FORT_H, CP.adobeD, CP.adobe);
+  const m0 = side < 0 ? x - 0.3 : x + 0.1, step = LOWQ ? 1.1 : 0.55;
+  for (let d = a + 0.1; d < b - 0.2; d += step) box(m0, d, m0 + 0.2, d + 0.27, FORT_H, FORT_H + 0.17, CP.adobeD, CP.adobeL);
+  shadowBox(x - 0.3, a, x + 0.3, b, FORT_H + 0.08);
+}
+function fortTower(x, d, s, h) {
+  frameId(); plain();
+  box(x - s, d - s, x + s, d + s, 0, h, CP.adobeD, CP.adobe);
+  for (const [cx, cz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(x + cx * s - (cx > 0 ? 0.22 : 0), d + cz * s - (cz > 0 ? 0.22 : 0), x + cx * s + (cx < 0 ? 0.22 : 0), d + cz * s + (cz < 0 ? 0.22 : 0), h, h + 0.2, CP.adobeD, CP.adobeL);
+  box(x - 0.07, d - s - 0.02, x + 0.07, d - s + 0.02, h * 0.45, h * 0.75, CP.dark, CP.dark);    // arrow slit
+  shadowBox(x - s, d - s, x + s, d + s, h + 0.1);
+}
+// a wall across the stage with gates at the three lanes (towers either side) and corner towers
+function fortGateWall(d, out) {
+  const segs = [[-FORT_SIDE, -6.8], [-4.2, -1.3], [1.3, 4.2], [6.8, FORT_SIDE]];
+  for (const [x0, x1] of segs) fortWallX(x0, x1, d, out);
+  for (let i = 0; i < 3; i++) {
+    const lx = LANES_X[i];
+    fortTower(lx - 1.75, d, 0.45, 1.3); fortTower(lx + 1.75, d, 0.45, 1.3);
+    frameId(); flat(lx - 1.1, d - 0.6, lx + 1.1, d + 0.6, L_ROAD + 0.002, P.concreteD);          // gate sill
+  }
+  fortTower(-FORT_SIDE, d, 0.7, 1.5); fortTower(FORT_SIDE, d, 0.7, 1.5);
+}
+// the approach: anti-tank ditch (flat) and steel hedgehogs in the lane gaps and on the flanks
+function fortOuter(a, b) {
+  if (b <= a) return;
+  frameId();
+  const dd = (a + b) / 2;
+  for (const [x0, x1] of [[-16, -6.6], [-4.4, -1.1], [1.1, 4.4], [6.6, 16]]) flat(x0, dd - 0.35, x1, dd + 0.35, L_ROAD, CP.dark, 0.9);
+  for (const d of [a + 0.2, b - 0.2]) for (const x of [-12.4, -11, -9.6, -8.2, -3.4, -2.1, 2.1, 3.4, 8.2, 9.6, 11, 12.4]) {
+    const hx = x + rr(-0.2, 0.2);
+    if (!canPlace(hx, d, 0.35)) continue;
+    frame(hx, d, rand() * TAU);
+    box(-0.3, -0.035, 0.3, 0.035, 0, 0.3, P.hullDark, P.metalD); box(-0.035, -0.3, 0.035, 0.3, 0, 0.3, P.hullDark, P.metalD);
+    frameId();
+  }
+}
+function armyTruck(x, d, rot) {
+  frame(x, d, rot);
+  plain();
+  box(-0.2, 0.34, 0.2, 0.62, 0, 0.28, CP.camoD, CP.camo);
+  box(-0.22, -0.6, 0.22, 0.3, 0.04, 0.16, CP.camoD, CP.camoD);
+  gable(-0.23, -0.6, 0.23, 0.26, 0.16, 0.16, jit(CP.tent, 0.08, TC3), true);
+  shadowBox(-0.22, -0.6, 0.22, 0.62, 0.32);
+  frameId();
+}
+function revetment(x, d, side) {
+  // sandbagged earth walls on three sides, open toward the taxiway, a desert-camo jet inside
+  frameId();
+  const w = 2.2, l = 2.5, far = x + side * w / 2;
+  box(Math.min(far, far + side * 0.32), d - l / 2 - 0.3, Math.max(far, far + side * 0.32), d + l / 2 + 0.3, 0, 0.42, CP.sandbag, CP.camo);
+  box(x - w / 2, d - l / 2 - 0.3, x + w / 2, d - l / 2, 0, 0.36, CP.sandbag, CP.camo);
+  box(x - w / 2, d + l / 2, x + w / 2, d + l / 2 + 0.3, 0, 0.36, CP.sandbag, CP.camo);
+  shadowBox(x - w / 2, d - l / 2 - 0.3, x + w / 2, d + l / 2 + 0.3, 0.3);
+  jet(x - side * 0.05, d, side > 0 ? Math.PI / 2 : -Math.PI / 2, jit(CP.camo, 0.06, TC2), 0.95);
+}
+function aaPit(x, d, rot) {
+  for (let i = 0; i < 9; i++) {
+    if (i === 6) continue;                                                        // the entrance
+    const a = (i / 9) * TAU;
+    frame(x + Math.cos(a) * 0.85, d + Math.sin(a) * 0.85, a + Math.PI / 2);
+    box(-0.27, -0.12, 0.27, 0.12, 0, 0.22, CP.sandbag, jit(CP.sandbag, 0.06, TC3));
+  }
+  frame(x, d, rot);
+  box(-0.22, -0.22, 0.22, 0.22, 0, 0.26, CP.camoD, CP.camo);
+  box(-0.1, 0.1, -0.05, 0.86, 0.26, 0.32, P.hullDark, P.hullDark);
+  box(0.05, 0.1, 0.1, 0.86, 0.26, 0.32, P.hullDark, P.hullDark);
+  frameId();
+  shadowDisc(x, d, 0.3, 0.32);
+}
+function samLauncher(x, d, rot) {
+  frame(x, d, rot);
+  plain();
+  box(-0.22, -0.7, 0.22, 0.5, 0, 0.2, CP.camoD, CP.camo);
+  box(-0.2, 0.5, 0.2, 0.8, 0, 0.3, CP.camoD, P.glass);
+  for (const s of [-0.1, 0.1]) box(s - 0.07, -0.78, s + 0.07, 0.36, 0.22, 0.37, P.metal, CP.tankW);
+  shadowBox(-0.22, -0.78, 0.22, 0.8, 0.37);
+  frameId();
+}
+function bladder(x, d, sx, sd) {
+  frame(x, d, 0);
+  LR[0] = 1; LH[0] = 0; LK[0] = 0.72; LR[1] = 0.92; LH[1] = 0.14; LK[1] = 0.95; LR[2] = 0.5; LH[2] = 0.22; LK[2] = 1.05; LR[3] = 0; LH[3] = 0.24; LK[3] = 1.1;
+  lathe(0, 0, 4, 10, P.hullDark, 0, sx, sd);
+  frameId();
+}
+// one fortress lot: side ±1, stage range [a, b]; |x| ∈ [7.2, 13.4] (inside the side wall)
+function fortLot(ch, kind, side, a, b) {
+  const inner = side < 0 ? -7.2 : 7.2;
+  const X = (o) => inner + side * o, cd = (a + b) / 2;
+  const lo = (p, q) => Math.min(X(p), X(q)), hi = (p, q) => Math.max(X(p), X(q));
+  frameId();
+  switch (kind) {
+    case 'revet': {
+      setTile(T_SLAB); uvMode(2.5, 2.5); flat(lo(0, 3.6), a + 0.4, hi(0, 3.6), b - 0.4, L_BASE + 0.002, P.concrete); setTile(0); uvMode(0, 0);
+      revetment(X(1.75), cd - 4.0, side); revetment(X(1.75), cd + 4.0, side);
+      armyTruck(X(4.8), cd, 0.2);
+      break;
+    }
+    case 'hangar': {
+      setTile(T_SLAB); uvMode(2.5, 2.5); flat(lo(0, 5.8), a + 0.4, hi(0, 5.8), b - 0.4, L_BASE + 0.002, P.concrete); setTile(0); uvMode(0, 0);
+      hangar(X(3.0), cd + 1.8, side);
+      jet(X(2.4), cd - 4.6, side > 0 ? Math.PI / 2 + 0.4 : -Math.PI / 2 - 0.4, jit(CP.camo, 0.05, TC2), 1.0);
+      break;
+    }
+    case 'aa': {
+      aaPit(X(1.6), cd - 3.6, rr(0, TAU)); aaPit(X(4.3), cd + 2.9, rr(0, TAU));
+      crates(X(4.4), cd - 4.6, 0.3, 6); sandbags(X(2.8), cd + 6.4, 0, 2.2);
+      break;
+    }
+    case 'sam': {
+      for (let i = 0; i < 3; i++) samLauncher(X(1.7 + (i % 2) * 2.2), cd - 4.8 + i * 3.6, side > 0 ? 0.35 : -0.35);
+      box(lo(4.6, 5.8), cd + 3.4, hi(4.6, 5.8), cd + 5.4, 0, 0.42, CP.camoD, CP.camo);
+      shadowBox(lo(4.6, 5.8), cd + 3.4, hi(4.6, 5.8), cd + 5.4, 0.42);
+      addSpinner(ch, 0, X(5.2), GROUND_Y + 0.42, cd + 4.4, 1.9);
+      break;
+    }
+    case 'radar': {
+      const rx = X(2.2), rd = cd - 3.2;
+      box(rx - 0.8, rd - 0.7, rx + 0.8, rd + 0.7, 0, 0.55, CP.adobeD, CP.adobe);
+      shadowBox(rx - 0.8, rd - 0.7, rx + 0.8, rd + 0.7, 0.55);
+      addSpinner(ch, 0, rx, GROUND_Y + 0.55, rd, 1.4);
+      const gx = X(3.4), gd = cd + 3.2;
+      box(gx - 0.7, gd - 0.7, gx + 0.7, gd + 0.7, 0, 1.1, CP.adobeD, CP.adobe);
+      LR[0] = 0.84; LH[0] = 1.1; LK[0] = 0.8; LR[1] = 0.8; LH[1] = 1.6; LK[1] = 0.95; LR[2] = 0.5; LH[2] = 2.0; LK[2] = 1.05; LR[3] = 0; LH[3] = 2.16; LK[3] = 1.12;
+      frame(gx, gd, 0); lathe(0, 0, 4, 10, P.shipWhite, 0); frameId();
+      shadowDisc(gx, gd, 0.8, 2.0);
+      break;
+    }
+    case 'tower': {
+      controlTower(ch, X(2.8), cd + 2.4);
+      for (let i = 0; i < 6; i++) if (rand() < 0.75) armyTruck(X(1.0 + (i % 3) * 0.9), cd - 5.2 + ((i / 3) | 0) * 1.7, 0);
+      frameId();
+      box(X(5.0) - 0.03, cd - 4.0 - 0.03, X(5.0) + 0.03, cd - 4.0 + 0.03, 0, 1.2, P.metal, P.metal);       // windsock
+      frame(X(5.0), cd - 3.97, 0.6); box(-0.06, 0, 0.06, 0.5, 1.02, 1.14, CP.pipeR, CP.tankW); frameId();
+      break;
+    }
+    case 'barracks': {
+      for (let i = 0; i < 3; i++) adobe(X(1.2 + i * 1.9), cd + rr(-0.4, 0.4), 1.3, 3.8, 0.55, 0, jit(CP.adobe, 0.05, TC2));
+      frameId();
+      box(X(0.6) - 0.03, cd + 6 - 0.03, X(0.6) + 0.03, cd + 6 + 0.03, 0, 1.8, P.metal, P.metal);         // flagpole
+      box(X(0.6), cd + 5.97, X(0.6) + side * 0.5, cd + 6.03, 1.45, 1.78, CP.pipeR, CP.pipeR);
+      break;
+    }
+    case 'motorpool': {
+      frameId(); flat(lo(0.3, 5.9), a + 0.5, hi(0.3, 5.9), b - 0.5, L_ROAD, P.asphaltD);
+      for (let i = 0; i < 10; i++) armyTruck(X(0.9 + (i % 5) * 1.0), cd + (i < 5 ? -3.2 : 0.4), 0);
+      warehouse(lo(0.6, 5.6), cd + 3.6, hi(0.6, 5.6), cd + 7.6, 0.95);
+      break;
+    }
+    case 'fuel': {
+      box(lo(0.4, 5.6), a + 0.6, hi(0.4, 5.6), a + 0.9, 0, 0.3, CP.sandbag, CP.camo);                   // berm
+      box(lo(0.4, 5.6), b - 0.9, hi(0.4, 5.6), b - 0.6, 0, 0.3, CP.sandbag, CP.camo);
+      for (let i = 0; i < 4; i++) bladder(X(1.6 + (i % 2) * 2.6), cd + (i < 2 ? -3.4 : 2.6), 1.1, 2.0);
+      tankerTruck(X(4.8), cd + 6.6, Math.PI / 2 * side);
+      break;
+    }
+    case 'tents': {
+      for (let i = 0; i < 6; i++) tent(X(1.1 + (i % 2) * 2.0), cd - 5 + ((i / 2) | 0) * 3.4, 0, 1.2, 1.9);
+      drums(X(5.2), cd + 4, 6, CP.camoD);
+      break;
+    }
+  }
+  frameId();
+}
+
+// endless dry lakebed 1240+: the boss arena — flat mud-cracked clay and salt, the treads of
+// something enormous, and very sparse props out beyond |x| 9.6
+const crackX = (i, j, cs) => (i + (hash2(i, j + 7777) - 0.5) * 0.7) * cs;
+const crackD = (i, j, cs) => (j + (hash2(i + 913, j) - 0.5) * 0.7) * cs;
+function crackEdge(ax, ad, bx, bd, w, c, lay) {
+  const L = Math.hypot(bx - ax, bd - ad) || 1, nx = -(bd - ad) / L * w, nd = (bx - ax) / L * w;
+  flat4(ax - nx, ad - nd, bx - nx, bd - nd, bx + nx, bd + nd, ax + nx, ad + nd, lay, c, 0.92);
+}
+function cyLake(ch, k, a, b) {
+  frameId();
+  // the treads of something enormous running on up the pan: two wide compacted bands with cleat
+  // marks (stateless in d, so they run on across chunks)
+  const tread = (d) => 3.2 * Math.sin(d * 0.021 + 0.8) + 1.3 * Math.sin(d * 0.057 + 2.0);
+  const step = LOWQ ? 2 : 1;
+  for (let d = a; d < b - 0.01; d += step) {
+    const e = Math.min(b, d + step), xa = tread(d), xb = tread(e);
+    for (const o of [-1.8, 1.8]) crackEdge(xa + o, d, xb + o, e, 0.42, CP.tread, L_ROAD);
+  }
+  if (!LOWQ) for (let d = Math.ceil(a / 0.75) * 0.75; d < b - 0.2; d += 0.75) {
+    const xc = tread(d + 0.08);
+    for (const o of [-1.8, 1.8]) flat(xc + o - 0.4, d, xc + o + 0.4, d + 0.18, L_WALK, CP.crack, 0.95);
+  }
+  // hollows of polygonal mud cracks (a jittered lattice clipped to a disc), low contrast
+  for (let p = 0, np = LOWQ ? 1 : 2 + ((rand() * 2) | 0); p < np; p++) {
+    const cx = rr(-14, 14), cd = rr(a + 4, b - 4), R = rr(2.4, 4.4), cs = 1.25, sj = k * 17 + p * 31;
+    for (let j = -4; j <= 4; j++) for (let i = -4; i <= 4; i++) {
+      const px = cx + crackX(i, j + sj, cs), pd = cd + crackD(i, j + sj, cs);
+      if (Math.hypot(px - cx, (pd - cd) / 0.9) > R) continue;
+      for (let e = 0; e < 2; e++) {
+        const qx = cx + crackX(i + 1 - e, j + e + sj, cs), qd = cd + crackD(i + 1 - e, j + e + sj, cs);
+        if (Math.hypot(qx - cx, (qd - cd) / 0.9) <= R) crackEdge(px, pd, qx, qd, 0.028, CP.crack, L_BASE + 0.005);
+      }
+    }
+  }
+  // very sparse props, never inside the arena
+  for (const side of [-1, 1]) {
+    if (rand() < 0.45) {
+      const x = side * rr(9.9, 15), d = rr(a + 2, b - 2);
+      if (canPlace(x, d, 0.8)) { boulder(x, d, rr(0.3, 0.65), 0); if (rand() < 0.6) boulder(x + rr(-0.8, 0.8), d + rr(-0.8, 0.8), rr(0.14, 0.28), 0); }
+    }
+  }
+  const r = rand(), side = rand() < 0.5 ? -1 : 1;
+  const x = side * rr(10.6, 13), d = rr(a + 5, b - 5);
+  if (r < 0.14) { if (canPlace(x, d, 1.8)) wreckJet(x, d, rr(0, TAU), 1.2); }
+  else if (r < 0.3) { if (canPlace(x, d, 1.0)) wreckTruck(x, d, rr(0, TAU)); }
+  else if (r < 0.42) { if (canPlace(x, d, 0.5)) deadTree(x, d, rr(0.6, 0.9)); }
+  else if (r < 0.5) { if (canPlace(x, d, 0.6)) drums(x, d, 4); }
+}
+
+// dusty desert light: a warm morning, a bleached noon over the canyon, refinery haze, a copper
+// afternoon at the fortress, and a violet dusk over the lakebed (cool fill keeps the pale clay from
+// turning the same orange as the enemy bullets)
+const CANYON_TOD_SRC = [
+  { d: -60, sun: 0xffd6a6, sunI: 2.2, sky: 0xbccce2, gnd: 0x6a4c34, hemiI: 1.0, fog: 0xcfb592, near: 48, far: 152,
+    cLit: 0xfff1e0, cShade: 0xb6a293, shadow: 0x3b2618, shA: 0.38, shK: 1.35, cloud: 0.8 },
+  { d: 240, sun: 0xffe4c0, sunI: 2.3, sky: 0xbacce6, gnd: 0x684a32, hemiI: 1.0, fog: 0xd1b999, near: 52, far: 160,
+    cLit: 0xfff6ea, cShade: 0xb2a39a, shadow: 0x3a2418, shA: 0.4, shK: 1.15, cloud: 0.7 },
+  { d: 520, sun: 0xffefd8, sunI: 2.4, sky: 0xb6cbe6, gnd: 0x6c4e36, hemiI: 0.98, fog: 0xd0bea2, near: 56, far: 168,
+    cLit: 0xfffaf2, cShade: 0xb4aaa4, shadow: 0x38221a, shA: 0.42, shK: 0.92, cloud: 0.6 },
+  { d: 800, sun: 0xffe2c0, sunI: 2.25, sky: 0xc0c6d0, gnd: 0x664a3a, hemiI: 1.02, fog: 0xc2ab8f, near: 46, far: 150,
+    cLit: 0xf5ece0, cShade: 0xa89c94, shadow: 0x34221c, shA: 0.38, shK: 1.0, cloud: 0.7 },
+  { d: 1060, sun: 0xffc690, sunI: 2.2, sky: 0xb2b0c8, gnd: 0x644330, hemiI: 0.98, fog: 0xc79e80, near: 50, far: 158,
+    cLit: 0xffe6cc, cShade: 0xa48e96, shadow: 0x391d1c, shA: 0.42, shK: 1.35, cloud: 0.65 },
+  { d: 1275, sun: 0xffd2b8, sunI: 1.35, sky: 0x7088cc, gnd: 0x383a4c, hemiI: 1.36, fog: 0x5a6892, near: 52, far: 162,
+    cLit: 0xffd6c2, cShade: 0x646c9a, shadow: 0x121630, shA: 0.46, shK: 1.6, cloud: 0.8 },
+];
+const CANYON_CLOUD = { dunes: 0.4, canyon: 0.3, mesa: 0.45, refinery: 0.5, fortress: 0.35, lakebed: 0.55 };
+
+// =============================================================================
+// SKY CITADEL (stage 3): no ground at all — a sunlit cloud sea (the deck shader at GROUND_Y) with
+// gaps down to a lower layer, low clouds drifting above it, and towering cumulus framing the play
+// area. Four lighting bands: bright stratosphere 0–420 · storm band 420–800 (lightning under the
+// deck) · golden high altitude 800–1240 · near-space dusk 1240+ (boss arena).
+// =============================================================================
+const SKIES_LAYOUT = [
+  { biome: 'stratosphere', from: 0,    to: 420 },
+  { biome: 'storm',        from: 420,  to: 800 },
+  { biome: 'golden',       from: 800,  to: 1240 },
+  { biome: 'nearspace',    from: 1240, to: Infinity },
+];
+const SKY_LANE = { d0: -Infinity, d1: Infinity, x: 5 };   // no solid props here (the sky has none at all)
+const SKY_GND = C(0xd8dde6);
+// one soft cloud sprite (see World._placePuffs); y = height above the deck, sh > 0 = casts the
+// tower's shadow from that height
+function addPuff(ch, x, y, d, s, sq, a, v, yaw, sh) {
+  if (ch.npuff >= PUFF_PER) return;
+  const o = ch.npuff++ * 9, P = ch.puff;
+  P[o] = x; P[o + 1] = y; P[o + 2] = d; P[o + 3] = s; P[o + 4] = sq; P[o + 5] = a; P[o + 6] = v; P[o + 7] = yaw; P[o + 8] = sh;
+}
+// a cumulus tower: a broad base sprite, then smaller billows stacked higher (perspective does
+// the rest); the texture's baked light assumes the sun at screen lower-left, so yaw stays small
+function puffTower(ch, x, d, s, h, a, layers) {
+  const v0 = (rand() * 4) | 0;
+  for (let i = 0; i < layers; i++) {
+    const t = layers > 1 ? i / (layers - 1) : 0;
+    addPuff(ch, x + rr(-0.12, 0.12) * s * t, 0.3 + t * h, d + rr(-0.12, 0.12) * s * t, s * (1 - 0.46 * t), rr(0.78, 1.0),
+      a * (1 - 0.12 * t), (v0 + i) & 3, rr(-0.3, 0.3), i === 0 ? 0.3 + h * 0.55 : 0);
+  }
+}
+// sky chunks hold no geometry at all: just cloud towers framing the play area, taller and
+// denser in the storm band, sparse and low in near-space
+function genSkies(w, ch, k, d0) {
+  const d1 = d0 + CHUNK;
+  styleReset();
+  for (let s = 0; s < 2; s++) {
+    const side = s ? 1 : -1;
+    let d = d0 + rr(0, 10);
+    while (d < d1) {
+      const b = biomeOf(d);
+      let sz, h, gap, a, layers;
+      if (b === 'stratosphere') { sz = rr(6, 9); h = rr(1.4, 2.6); gap = rr(12, 20); a = 0.82; layers = 3; }
+      else if (b === 'storm') { sz = rr(7.5, 11); h = rr(2.4, 3.4); gap = rr(9, 15); a = 0.92; layers = 4; }
+      else if (b === 'golden') { sz = rr(5.5, 8.5); h = rr(1.2, 2.8); gap = rr(12, 22); a = 0.8; layers = 3; }
+      else { sz = rr(4, 6.5); h = rr(0.4, 1.2); gap = rr(18, 32); a = 0.62; layers = 2; }
+      if (LOWQ) layers = Math.max(2, layers - 1);
+      const x = side * (SKY_LANE.x + 0.4 + sz * 0.42 + rr(0, 4.5));
+      puffTower(ch, x, d, sz, h, a, layers);
+      d += gap;
+    }
+  }
+}
+// (deck colours are kept below white: glowing bullets need something darker than themselves)
+const SKIES_TOD_SRC = [
+  { d: -60, sun: 0xfff6ea, sunI: 2.5, sky: 0xa6c6ee, gnd: 0xd4dce8, hemiI: 1.1, fog: 0x86acdc, near: 56, far: 176,
+    cLit: 0xf6f8fc, cShade: 0xa6b6d0, shadow: 0x3f5886, shA: 0.22, shK: 1.2, cloud: 0.95,
+    dLit: 0xd6dfec, dShade: 0x7a90b6, dAbyss: 0x21508c, dRim: 0xf2f6ff, cover: 0.7, flash: 0 },
+  { d: 385, sun: 0xfff3e4, sunI: 2.45, sky: 0xa2c0ea, gnd: 0xcfd6e2, hemiI: 1.08, fog: 0x82a8d8, near: 54, far: 172,
+    cLit: 0xf4f6fa, cShade: 0xa0b0ca, shadow: 0x3c5482, shA: 0.23, shK: 1.2, cloud: 0.95,
+    dLit: 0xd2dbe8, dShade: 0x768cb2, dAbyss: 0x1d4884, dRim: 0xf0f4ff, cover: 0.74, flash: 0 },
+  { d: 455, sun: 0xc9d2e2, sunI: 1.3, sky: 0x6c7690, gnd: 0x4c5466, hemiI: 0.95, fog: 0x565f74, near: 44, far: 142,
+    cLit: 0xb4bccb, cShade: 0x566078, shadow: 0x161c2c, shA: 0.3, shK: 1.1, cloud: 1.0,
+    dLit: 0x939cb0, dShade: 0x535c72, dAbyss: 0x0d1321, dRim: 0xb8c4d8, cover: 0.86, flash: 1 },
+  { d: 765, sun: 0xcfd4e2, sunI: 1.35, sky: 0x707890, gnd: 0x505668, hemiI: 0.95, fog: 0x5a6276, near: 44, far: 142,
+    cLit: 0xb6becc, cShade: 0x58627a, shadow: 0x161c2c, shA: 0.3, shK: 1.1, cloud: 1.0,
+    dLit: 0x959eb2, dShade: 0x555e74, dAbyss: 0x0f1524, dRim: 0xbac6da, cover: 0.84, flash: 1 },
+  { d: 835, sun: 0xffc47c, sunI: 2.4, sky: 0xbfaac6, gnd: 0xe2c6aa, hemiI: 1.0, fog: 0xcf9e7c, near: 50, far: 160,
+    cLit: 0xffe2bc, cShade: 0xa48aa0, shadow: 0x42243e, shA: 0.28, shK: 1.4, cloud: 0.85,
+    dLit: 0xecc79a, dShade: 0x866c8a, dAbyss: 0x31244c, dRim: 0xffe4c0, cover: 0.62, flash: 0 },
+  { d: 1205, sun: 0xffb872, sunI: 2.3, sky: 0xb49fc4, gnd: 0xdcbca4, hemiI: 0.98, fog: 0xc69478, near: 50, far: 160,
+    cLit: 0xffd8b4, cShade: 0x9c829a, shadow: 0x402240, shA: 0.29, shK: 1.45, cloud: 0.8,
+    dLit: 0xe6bd92, dShade: 0x80668c, dAbyss: 0x2e2450, dRim: 0xffdcbc, cover: 0.6, flash: 0 },
+  { d: 1275, sun: 0xff9e7e, sunI: 1.7, sky: 0x3c4280, gnd: 0x6e5e8e, hemiI: 0.9, fog: 0x252e62, near: 44, far: 150,
+    cLit: 0xd4a4c0, cShade: 0x3a3d7a, shadow: 0x0a0e2c, shA: 0.32, shK: 1.6, cloud: 0.6,
+    dLit: 0xa988b0, dShade: 0x55558c, dAbyss: 0x060a22, dRim: 0xf0a896, cover: 0.44, flash: 0 },
+];
+const SKIES_CLOUD = { stratosphere: 0.95, storm: 1.0, golden: 0.8, nearspace: 0.5 };
+
+// =============================================================================
+// stage table
+// =============================================================================
+function genCoastal(w, ch, k, d0) {
+  if (k <= 6) genOcean(w, ch, k, d0);
+  else if (k <= 9) genCoast(w, ch, k, d0);
+  else if (k <= 15) genCountry(w, ch, k, d0);
+  else if (k <= 23) genCity(w, ch, k, d0);
+  else if (k <= 30) genBase(w, ch, k, d0);
+}
+// calm (inland) water: harbour basin, river, ponds, canal
+function coastalCalm(x, d) {
+  if (d > 400 && d < BASE_END - 1) return 1;
+  if (d > 290 && d < HARBOR_D1 + 1 && x > HARBOR_X0 - 1) return 0.55 * sstep(shoreD(x) - 6, shoreD(x) + 6, d) * sstep(HARBOR_X0 - 1, HARBOR_X0 + 2.5, x);
+  return 0;
+}
+
+// Every stage world: layout (biome ranges, shared with the stage timelines), salt (mixed into the
+// per-chunk seeds), clear (lanes + cross roads guaranteed clear over [from, to)), corridors (mid-boss
+// and boss paths, |x| < x over [d0, d1)), terrainH / groundColor (stateless), hasGround(k, d0),
+// gen(world, chunk, k, d0), water (null = the stage never shows water), flatCheck (self-check
+// terrain flatness in the clear zones), tod (time-of-day keys), cloud (low-cloud density per
+// biome), cloudShadowK(biome), deck (show the cloud-sea deck).
+export const WORLD_STAGES = {
+  coastal: {
+    id: 'coastal', layout: LAYOUT, salt: 0,
+    clear: { from: CLEAR_FROM, to: CLEAR_TO }, corridors: [CRAWLER],
+    terrainH: coastalH, groundColor: coastalColor,
+    hasGround: (k, d0) => k <= 6 || (d0 + CHUNK > 280 && d0 < BASE_END + 6),
+    gen: genCoastal,
+    water: { seaFromK: 31, alwaysK: 6, calm: coastalCalm, open: (b) => b === 'ocean' || b === 'sea' },
+    flatCheck: false,
+    tod: makeTod(TOD_SRC), cloud: CLOUD_BIOME,
+    cloudShadowK: (b) => (b === 'city' || b === 'ocean' || b === 'sea' ? 0.16 : 0.32),
+    deck: false,
+  },
+  canyon: {
+    id: 'canyon', layout: CANYON_LAYOUT, salt: 7654321,
+    clear: { from: 260, to: CY_LAKE }, corridors: [CY_MIDBOSS, CY_ARENA],
+    midboss: CY_MIDBOSS, arena: CY_ARENA,
+    terrainH: canyonH, groundColor: canyonColor,
+    hasGround: () => true,
+    gen: genCanyon,
+    water: null, flatCheck: true,
+    tod: makeTod(CANYON_TOD_SRC), cloud: CANYON_CLOUD,
+    cloudShadowK: () => 0.22,
+    deck: false,
+  },
+  skies: {
+    id: 'skies', layout: SKIES_LAYOUT, salt: 3141593,
+    clear: { from: Infinity, to: -Infinity }, corridors: [SKY_LANE],    // no ground units in the sky
+    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, SKY_GND),
+    hasGround: () => false,
+    gen: genSkies,
+    water: null, flatCheck: false,
+    tod: makeTod(SKIES_TOD_SRC), cloud: SKIES_CLOUD,
+    cloudShadowK: () => 0.2,
+    deck: true,
+  },
+};
+// an unknown biome name would turn the low-cloud alpha into NaN (→ full opacity): check the tables
+for (const id in WORLD_STAGES) {
+  const st = WORLD_STAGES[id];
+  for (const L of st.layout) if (!(st.cloud[L.biome] >= 0)) console.error(`[world] stage '${id}': no cloud density for biome '${L.biome}'`);
+}
+S = WORLD_STAGES.coastal;

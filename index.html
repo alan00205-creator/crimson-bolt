@@ -24,6 +24,7 @@
   --cyan: #45e3ff;          /* laser, blue items */
   --lime: #8cff5a;          /* extends, homing */
   --violet: #b77bff;        /* nuke */
+  --gold: #ffcf4a;          /* CR (credits) */
   --danger: #ff3b30;
   --f-display: "Chakra Petch", "Rajdhani", "Segoe UI", system-ui, sans-serif;
   --f-cjk: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", "Heiti TC", sans-serif;
@@ -59,6 +60,19 @@ kbd, .side kbd { display: inline-block; min-width: 22px; padding: 2px 6px; margi
   border-bottom-width: 2px; border-radius: 4px; font: 600 11px var(--f-display); color: var(--ink); text-align: center; }
 .side .row { display: flex; align-items: center; gap: 6px; line-height: 1.9; }
 .side .big { font: 700 28px var(--f-display); color: var(--amber); font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
+.side .big.cr { display: flex; align-items: center; gap: 8px; color: var(--gold); font-size: 24px; }
+.side .big.cr .coin { width: 18px; height: 18px; }
+.side .row b { color: var(--ink); font-weight: 600; }
+.side .legend { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 5px 0; line-height: 1.35; }
+.route { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; font: 600 11px var(--f-cjk); letter-spacing: 0.08em; }
+.route i { font-style: normal; color: rgba(255,255,255,0.3); }
+.route span { color: rgba(155,166,191,0.7); }
+.route span.done { color: var(--ink-dim); text-decoration: line-through rgba(255,255,255,0.35); }
+.route span.on { color: var(--ink); text-shadow: 0 0 10px rgba(255,46,72,0.8); }
+/* CR coin (HUD, title, side panel, hangar, results) */
+.coin { display: inline-block; flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; vertical-align: -1px;
+  background: radial-gradient(circle at 35% 30%, #fff7cf 0 12%, #ffd84a 38%, #d99210 72%, #8a5400 100%);
+  box-shadow: inset 0 0 0 1px rgba(90,50,0,0.45), 0 0 6px rgba(255,200,60,0.45); }
 @media (min-width: 900px) { .side { display: flex; } }
 
 /* ---------- HUD ---------- */
@@ -70,6 +84,9 @@ kbd, .side kbd { display: inline-block; min-width: 22px; padding: 2px 6px; margi
 .hud-score { font: 700 20px/1.05 var(--f-display); letter-spacing: 0.05em; text-shadow: 0 1px 0 #000, 0 0 12px rgba(0,0,0,0.6); }
 .hud-hi { text-align: center; }
 .hud-hi .hud-score { font-size: 15px; color: var(--amber); }
+.hud-cr { display: flex; align-items: center; justify-content: center; gap: 4px; margin-top: 4px; font: 600 11px/1 var(--f-display);
+  letter-spacing: 0.08em; color: var(--gold); text-shadow: 0 1px 0 #000, 0 0 8px rgba(0,0,0,0.7); }
+.hud-cr .coin { width: 10px; height: 10px; }
 .hud-right { display: flex; justify-content: flex-end; }
 #btn-pause { pointer-events: auto; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--panel-line);
   background: rgba(8,10,18,0.5); display: grid; place-items: center; cursor: pointer; }
@@ -83,8 +100,8 @@ kbd, .side kbd { display: inline-block; min-width: 22px; padding: 2px 6px; margi
   padding: 0 12px calc(12px + var(--safe-b)) 12px; background: linear-gradient(rgba(4,6,12,0), rgba(4,6,12,0.5)); }
 .stock { display: flex; flex-direction: column; gap: 5px; }
 .stock .icons { display: flex; gap: 4px; min-height: 16px; align-items: center; }
-.icon-ship { width: 15px; height: 16px; background: var(--crimson);
-  clip-path: polygon(50% 0, 62% 38%, 100% 70%, 100% 82%, 60% 74%, 58% 100%, 42% 100%, 40% 74%, 0 82%, 0 70%, 38% 38%); filter: drop-shadow(0 0 3px rgba(255,46,72,0.8)); }
+.icon-ship { width: 15px; height: 16px; background: var(--ship, var(--crimson));
+  clip-path: polygon(50% 0, 62% 38%, 100% 70%, 100% 82%, 60% 74%, 58% 100%, 42% 100%, 40% 74%, 0 82%, 0 70%, 38% 38%); filter: drop-shadow(0 0 3px var(--ship, var(--crimson))); }
 .icon-bomb { width: 15px; height: 15px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ffd27a, #ff7a1a 55%, #a33c00); display: grid; place-items: center;
   font: 700 9px var(--f-display); color: #3b1400; }
 .weapon { text-align: left; font: 600 10px var(--f-display); letter-spacing: 0.16em; color: var(--ink-dim); margin-bottom: 2px; }
@@ -167,7 +184,8 @@ body.touch #keys { display: none; }
 .warn .stripe { height: 16px; background: repeating-linear-gradient(-45deg, #ff2d2d 0 14px, #1a0000 14px 28px); background-size: 40px 16px; animation: stripe 0.6s linear infinite; opacity: 0.9; }
 .warn .w { font: 700 50px/1 var(--f-display); letter-spacing: 0.18em; color: #ff3b3b; text-shadow: 0 0 30px rgba(255,40,40,0.9); animation: blink 0.5s steps(2) infinite; }
 .warn .s { font: 700 15px var(--f-cjk); letter-spacing: 0.35em; color: #ffd0d0; }
-.warn .e { font: 600 11px var(--f-display); letter-spacing: 0.5em; color: #ff9a9a; }
+.warn .e { font: 600 11px var(--f-display); letter-spacing: 0.5em; color: #ff9a9a; padding: 0 8px; }
+@media (max-width: 440px) { .warn .e { font-size: 10px; letter-spacing: 0.28em; } }
 @keyframes stripe { to { background-position: 40px 0; } }
 @keyframes blink { 50% { opacity: 0.25; } }
 #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; mix-blend-mode: screen; }
@@ -201,8 +219,8 @@ body.touch #keys { display: none; }
 .blink { font: 600 12px var(--f-display); letter-spacing: 0.4em; color: var(--amber); animation: blink 1.1s steps(2) infinite; }
 .foot { font: 500 11px var(--f-display); letter-spacing: 0.16em; color: var(--ink-dim); }
 .foot b { color: var(--amber); font-weight: 700; }
-.panel { width: min(360px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel); border: 1px solid var(--panel-line);
-  padding: 20px 18px; text-align: left; display: grid; gap: 14px;
+.panel { --px: 18px; --pb: 20px; width: min(360px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel); border: 1px solid var(--panel-line);
+  padding: 20px var(--px) var(--pb); text-align: left; display: grid; gap: 14px;
   clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px); }
 .panel h2 { margin: 0; font: 700 20px var(--f-display); letter-spacing: 0.24em; }
 .panel h2 small { display: block; font: 500 12px var(--f-cjk); letter-spacing: 0.2em; color: var(--ink-dim); margin-top: 2px; }
@@ -211,15 +229,20 @@ body.touch #keys { display: none; }
 .panel ul { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 4px; }
 .chip { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; margin-right: 6px; border-radius: 4px;
   font: 700 12px var(--f-display); color: #111; vertical-align: 1px; }
-.chip.red { background: #ff5a4a; } .chip.blue { background: var(--cyan); } .chip.h { background: var(--lime); }
-.chip.n { background: var(--violet); } .chip.b { background: #ff9a2a; } .chip.m { background: linear-gradient(#ffe68a, #d99a14); }
+.chip.b { background: #ff9a2a; } .chip.medal { background: linear-gradient(#ffe68a, #d99a14); }
+.legend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
+.legend-grid > span { display: flex; align-items: center; white-space: nowrap; font: 500 13px var(--f-cjk); }
+.panel .note { font: 500 12px/1.6 var(--f-cjk); color: var(--ink-dim); }
 .setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .setting label { font: 500 13px var(--f-cjk); }
 .seg { display: flex; border: 1px solid var(--panel-line); }
 .seg button { pointer-events: auto; min-height: 44px; min-width: 48px; padding: 0 12px; background: transparent; border: 0; cursor: pointer; font: 600 11px var(--f-display); letter-spacing: 0.12em; color: var(--ink-dim); }
 .seg button[aria-pressed="true"] { background: var(--ink); color: #0b0d14; }
 .setting input[type=range] { width: 130px; height: 36px; accent-color: var(--crimson); }
-.panel > .btn[data-act=back] { position: sticky; bottom: 0; }
+/* the OK row sticks to the bottom of a scrolling panel and covers the text scrolling under it
+   (sticky offsets are inset by the panel's padding, hence the negative bottom/margins) */
+.panel-foot { position: sticky; bottom: calc(-1 * var(--pb)); z-index: 1; display: grid; margin: 0 calc(-1 * var(--px)) calc(-1 * var(--pb));
+  padding: 8px var(--px) var(--pb); background: linear-gradient(rgba(10,12,21,0), #0a0c15 8px); }
 .tally .ln small { white-space: nowrap; }
 @media (max-height: 640px) {
   .screen { gap: 12px; }
@@ -230,7 +253,14 @@ body.touch #keys { display: none; }
   .logo .kanji { font-size: clamp(56px, 18vw, 90px); }
 }
 .big-num { font: 700 88px/1 var(--f-display); color: var(--amber); text-shadow: 0 0 30px rgba(255,182,39,0.5); }
-.h-title { font: 700 38px/1 var(--f-display); letter-spacing: 0.14em; }
+.h-title { font: 700 clamp(28px, 9.5vw, 38px)/1 var(--f-display); letter-spacing: 0.14em; }
+.h-sub { margin-top: -12px; font: 600 12px var(--f-display); letter-spacing: 0.3em; color: var(--ink-dim); }
+.h-sub b { font: 700 12px var(--f-cjk); letter-spacing: 0.2em; color: var(--amber); }
+#btn-next b { white-space: nowrap; }
+#res-title { white-space: nowrap; font-size: clamp(24px, 8vw, 38px); letter-spacing: 0.1em; }
+.res-next { text-align: center; font-family: var(--f-cjk); letter-spacing: 0.14em; }
+.res-next:empty { display: none; }
+#res-title.all { color: var(--amber); text-shadow: 0 0 26px rgba(255,182,39,0.65), 0 2px 0 #000; }
 .h-title.red { color: var(--danger); text-shadow: 0 0 24px rgba(255,59,48,0.6); }
 .tally { width: min(340px, 100%); display: grid; gap: 8px; }
 .tally .ln { display: flex; justify-content: space-between; gap: 10px; font: 600 14px var(--f-display); letter-spacing: 0.1em;
@@ -238,6 +268,12 @@ body.touch #keys { display: none; }
 .tally .ln.on { opacity: 1; transform: none; }
 .tally .ln span:first-child { color: var(--ink-dim); } .tally .ln span:first-child small { font: 500 11px var(--f-cjk); margin-left: 6px; }
 .tally .ln.total { font-size: 18px; color: var(--amber); border-bottom: 0; }
+.tally .ln.cr { color: var(--gold); border-top: 1px solid rgba(255,207,74,0.25); border-bottom: 0; padding-top: 8px; font-size: 16px; }
+.tally .ln.cr span:first-child { display: flex; align-items: center; gap: 6px; color: var(--gold); }
+.tally .ln.cr .coin { width: 13px; height: 13px; }
+.tally .ln.wallet { border-bottom: 0; font-size: 13px; padding-bottom: 0; }
+.tally .ln.wallet span:last-child { color: var(--gold); }
+.tally .ln.stage span:last-child { font: 700 13px var(--f-cjk); letter-spacing: 0.1em; }
 .rank { font: 700 64px/1 var(--f-display); color: var(--crimson); text-shadow: 0 0 30px rgba(255,46,72,0.7); opacity: 0; transform: scale(2.4); transition: all 0.35s cubic-bezier(.2,1.4,.3,1); }
 .rank.on { opacity: 1; transform: none; }
 .reserve { visibility: hidden; }
@@ -251,8 +287,71 @@ body.touch #keys { display: none; }
 #rotate small { display: block; margin-top: 8px; color: var(--ink-dim); font: 500 12px var(--f-cjk); }
 @media (orientation: landscape) and (max-height: 500px) { body.touch #rotate { display: grid; } }
 .err { color: #ffb3b3; font: 500 14px/1.7 var(--f-cjk); max-width: 320px; }
+.title-stats { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 18px; }
+.title-stats .cr { display: inline-flex; align-items: center; gap: 6px; }
+.title-stats .cr b { color: var(--gold); }
+
+/* ---------- hangar (機庫) ---------- */
+/* The panel stays in the top ~3/4 so the title fly-by jet below it is the live 3D preview. */
+.screen.hangar { justify-content: flex-start; gap: 0; padding-bottom: calc(22vh + var(--safe-b));
+  background: linear-gradient(rgba(4,6,12,0.88), rgba(4,6,12,0.82) 62%, rgba(4,6,12,0.25) 80%, rgba(4,6,12,0) 90%); }
+.hpanel { --px: 12px; --pb: 12px; width: min(440px, 100%); gap: 10px; padding: 14px var(--px) var(--pb); }
+.hhead { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; padding: 0 4px; }
+.hwallet { display: grid; justify-items: end; gap: 2px; font: 700 18px/1 var(--f-display); color: var(--gold); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+.hwallet small { font: 600 10px var(--f-cjk); letter-spacing: 0.2em; color: var(--ink-dim); }
+.hwallet div { display: flex; align-items: center; gap: 6px; }
+.hwallet .coin { width: 14px; height: 14px; }
+.hwallet.bump div { animation: bump 0.4s ease-out; }
+.ships { display: grid; gap: 7px; }
+.btn.ship { --ac: #fff; --ac-dim: rgba(255,255,255,0.12); display: grid; gap: 5px; padding: 9px 12px 10px 15px; letter-spacing: 0; justify-content: stretch;
+  box-shadow: inset 3px 0 0 var(--ac); clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); }
+.btn.ship:focus-visible { box-shadow: inset 3px 0 0 var(--ac), 0 0 0 2px var(--amber); }
+.btn.ship.sel { border-color: var(--ac); background: linear-gradient(100deg, var(--ac-dim), rgba(9,11,20,0.82) 70%); }
+.btn.ship.sel:focus-visible { border-color: var(--amber); }
+.sh-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.sh-top b { font: 700 15px var(--f-display); letter-spacing: 0.14em; color: var(--ink); white-space: nowrap; }
+.sh-top > i { font: 700 13px var(--f-cjk); font-style: normal; letter-spacing: 0.1em; color: var(--ac); white-space: nowrap; }
+.sh-tag { margin-left: auto; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; font: 700 11px/1.2 var(--f-cjk);
+  font-style: normal; letter-spacing: 0.12em; border: 1px solid var(--panel-line); color: var(--ink-dim); white-space: nowrap; align-self: center; }
+.sh-tag.on { background: var(--ac); border-color: var(--ac); color: #0b0d14; }
+.sh-tag.price { font-family: var(--f-display); letter-spacing: 0.06em; color: var(--gold); border-color: rgba(255,207,74,0.45); }
+.sh-tag.price.poor { color: #8f97aa; border-color: rgba(255,255,255,0.12); }
+.sh-tag.price.poor .coin { filter: grayscale(1) brightness(0.7); }
+.sh-tag .coin { width: 10px; height: 10px; }
+/* row heights never depend on the selection (a second tap must land on the same row) */
+.sh-desc { font: 500 12px/1.45 var(--f-cjk); letter-spacing: 0.02em; color: var(--ink-dim); min-width: 0; overflow: hidden; text-wrap: pretty;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.btn.ship.sel .sh-desc { color: #c9d1e2; }
+.btn.ship .sh-desc.msg { color: var(--amber); font-weight: 700; }
+.btn.ship .sh-desc.bad { color: #ff7a7a; font-weight: 700; }
+.btn.ship .sh-desc.good { color: var(--lime); font-weight: 700; }
+.sh-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 8px; }
+.sh-stats > div { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.sh-stats small { flex: 0 0 auto; font: 500 10px var(--f-cjk); letter-spacing: 0.04em; color: var(--ink-dim); }
+.sh-bar { display: flex; gap: 2px; flex: 1 1 auto; max-width: 46px; }
+.sh-bar i { flex: 1 1 0; height: 5px; background: rgba(255,255,255,0.13); }
+.sh-bar i.on { background: var(--ac); box-shadow: 0 0 5px var(--ac-dim); }
+.btn.ship.deny { animation: shake 0.36s linear; }
+.hhelp { text-align: center; font-family: var(--f-cjk); letter-spacing: 0.1em; }
+.hcap { position: absolute; left: 0; right: 0; bottom: calc(10px + var(--safe-b)); display: grid; justify-items: center; gap: 2px; pointer-events: none;
+  text-shadow: 0 1px 0 #000, 0 0 10px rgba(0,0,0,0.9); }
+.hcap small { font: 600 10px var(--f-display); letter-spacing: 0.4em; color: var(--ink-dim); }
+.hcap b { font: 700 14px var(--f-display); letter-spacing: 0.2em; color: var(--ink); }
+.hcap b i { font: 700 13px var(--f-cjk); font-style: normal; letter-spacing: 0.12em; margin-left: 8px; }
+body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
+@keyframes shake { 20% { transform: translateX(-6px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(2px); } }
+@keyframes bump { 40% { transform: scale(1.12); } }
+@media (max-height: 700px) {
+  .hpanel { --px: 10px; --pb: 10px; gap: 7px; padding: 10px var(--px) var(--pb); }
+  .ships { gap: 5px; }
+  .btn.ship { gap: 3px; padding: 6px 10px 7px 13px; }
+  .sh-desc { display: block; white-space: nowrap; text-overflow: ellipsis; }
+  .btn.ship .sh-desc.msg, .btn.ship .sh-desc.bad, .btn.ship .sh-desc.good { white-space: normal; }
+  .hhelp { display: none; }
+  .hpanel h2 { font-size: 17px; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .blink, .warn .w, .warn .stripe, .badge { animation: none; }
+  .blink, .warn .w, .warn .stripe, .badge, .btn.ship.deny, .hwallet.bump div { animation: none; }
   .bn, .logo { animation-duration: 0.01s; }
 }
 </style>
@@ -274,21 +373,17 @@ body.touch #keys { display: none; }
       <div class="row">射擊為自動</div>
     </div>
     <div><h3>ITEMS</h3>
-      <div class="row"><span class="chip red">P</span>紅＝散射火神砲</div>
-      <div class="row"><span class="chip blue">P</span>藍＝雷射</div>
-      <div class="row"><span class="chip h">H</span>追蹤飛彈</div>
-      <div class="row"><span class="chip n">N</span>核子飛彈</div>
-      <div class="row"><span class="chip b">B</span>炸彈</div>
+      <div class="legend" id="side-items"></div>
     </div>
   </aside>
   <div id="view">
     <div id="hud" hidden>
       <div class="hud-top">
         <div><div class="hud-label">SCORE</div><div class="hud-score" id="score">0</div><div class="chain" id="chain"></div></div>
-        <div class="hud-hi"><div class="hud-label">HI-SCORE</div><div class="hud-score" id="hiscore">0</div></div>
+        <div class="hud-hi"><div class="hud-label">HI-SCORE</div><div class="hud-score" id="hiscore">0</div><div class="hud-cr" aria-label="本次獲得 CR"><i class="coin"></i><span id="hud-cr">0</span></div></div>
         <div class="hud-right"><button id="btn-pause" aria-label="暫停"><i></i></button></div>
       </div>
-      <div id="bossbar" hidden><div class="name"><span id="boss-name">ARCLIGHT</span><span>要塞</span></div><div class="track"><div class="fill" id="boss-fill"></div></div></div>
+      <div id="bossbar" hidden><div class="name"><span id="boss-name">ARCLIGHT</span><span id="boss-sub">要塞</span></div><div class="track"><div class="fill" id="boss-fill"></div></div></div>
       <div class="hud-bottom">
         <div class="stock">
           <div class="weapon" id="weapon"></div>
@@ -320,12 +415,13 @@ body.touch #keys { display: none; }
       </div>
       <div class="menu">
         <button class="btn primary" data-act="start" id="btn-start">START<span>出擊</span></button>
+        <button class="btn" data-act="hangar" id="btn-hangar">HANGAR<span id="hangar-label">機庫</span></button>
         <button class="btn" data-act="howto">HOW TO PLAY<span>操作說明</span></button>
         <button class="btn" data-act="settings">SETTINGS<span>設定</span></button>
       </div>
       <div class="blink kbd-only" id="press-enter">PRESS ENTER ・ 按 Enter 出擊</div>
       <div class="foot kbd-only focus-note" id="focus-note" hidden>先點一下畫面，就能用鍵盤操作</div>
-      <div class="foot">HI-SCORE <b id="title-hi">0</b></div>
+      <div class="foot title-stats"><span>HI-SCORE <b id="title-hi">0</b></span><span class="cr"><i class="coin"></i>CR <b id="title-cr">0</b></span></div>
     </section>
 
     <section class="screen dim" id="howto" hidden>
@@ -338,16 +434,22 @@ body.touch #keys { display: none; }
         <div class="kbd-only"><h4>KEYBOARD 鍵盤</h4><ul>
           <li>方向鍵／WASD 移動，按住 Shift 慢速移動（精準閃避）；X 或空白鍵投彈；Esc／P 暫停。也支援手把。</li>
         </ul></div>
-        <div><h4>ITEMS 道具</h4><ul>
-          <li><span class="chip red">P</span><span class="chip blue">P</span>主武器。會紅藍交替變色：紅＝散射火神砲、藍＝雷射。吃同色升級，換色則切換武器。</li>
-          <li><span class="chip h">H</span><span class="chip n">N</span>副武器。H 追蹤飛彈、N 核子飛彈，同樣會交替變換。</li>
-          <li><span class="chip b">B</span>炸彈 +1。<span class="chip m">★</span>勳章：連續拾取分數遞增，漏接一枚就歸零。</li>
+        <div><h4>ITEMS 道具</h4><ul id="howto-items">
+          <li><span class="chip b">B</span>炸彈 +1。<span class="chip medal">★</span>勳章：連續拾取分數遞增，漏接一枚就歸零。</li>
+        </ul></div>
+        <div><h4>STAGES 關卡</h4><ul>
+          <li id="howto-route">共三關，破關後進入下一輪（難度提升）。</li>
+          <li>接關會從目前關卡繼續：分數歸零，已賺到的 CR 保留。</li>
+        </ul></div>
+        <div><h4>HANGAR 機庫</h4><ul>
+          <li><i class="coin"></i> 每得 40 分賺 1 CR，過關另有 CR 獎勵。CR 在過關、GAME OVER 或回標題時存入錢包。</li>
+          <li>在標題畫面的「機庫」用 CR 購買新戰機：速度、中彈判定、炸彈數與火力各不相同。</li>
         </ul></div>
         <div><h4>TIPS 訣竅</h4><ul>
           <li>中彈判定點只有機身中央的小光點；敵彈擦身而過（擦彈）每發 +100 分。</li>
           <li>攜帶道具的黃色運輸機優先擊落。每達 30 萬分、100 萬分各加一架戰機。</li>
         </ul></div>
-        <button class="btn primary" data-act="back">OK<span>返回</span></button>
+        <div class="panel-foot"><button class="btn primary" data-act="back">OK<span>返回</span></button></div>
       </div>
     </section>
 
@@ -364,8 +466,22 @@ body.touch #keys { display: none; }
           <button data-v="on">ON</button><button data-v="off">OFF</button></div></div>
         <div class="setting touch-only"><label>搖桿速度</label><div class="seg" id="set-touch" role="group" aria-label="搖桿速度">
           <button data-v="0.85">慢</button><button data-v="1">標準</button><button data-v="1.2">快</button></div></div>
-        <button class="btn primary" data-act="back">OK<span>返回</span></button>
+        <div class="panel-foot"><button class="btn primary" data-act="back">OK<span>返回</span></button></div>
       </div>
+    </section>
+
+    <section class="screen hangar" id="hangar" hidden>
+      <div class="panel hpanel">
+        <div class="hhead">
+          <h2>HANGAR<small>機庫・選擇出擊戰機</small></h2>
+          <div class="hwallet" id="hangar-wallet"><small>持有</small><div><i class="coin"></i><span id="hangar-cr">0</span></div></div>
+        </div>
+        <div class="ships" id="ships"></div>
+        <div class="foot hhelp kbd-only">↑↓ 選擇・ENTER 購買／設為出擊機・ESC 返回</div>
+        <div class="foot hhelp touch-only">點選即可預覽・購買時需再點一次確認</div>
+        <div class="panel-foot"><button class="btn primary" data-act="back">OK<span>返回</span></button></div>
+      </div>
+      <div class="hcap" aria-hidden="true"><small>PREVIEW</small><b id="hangar-cap">CRIMSON BOLT<i>赤電</i></b></div>
     </section>
 
     <section class="screen dim" id="pause" hidden>
@@ -381,7 +497,7 @@ body.touch #keys { display: none; }
     <section class="screen dim" id="continue" hidden>
       <div class="h-title red">CONTINUE?</div>
       <div class="big-num" id="cont-num">9</div>
-      <div class="foot">接關後分數歸零，從目前位置繼續</div>
+      <div class="foot">接關後分數歸零，從目前位置繼續（CR 保留）</div>
       <div class="menu">
         <button class="btn primary" data-act="cont-yes">YES<span>接關</span></button>
         <button class="btn" data-act="cont-no">NO<span>放棄</span></button>
@@ -390,8 +506,11 @@ body.touch #keys { display: none; }
 
     <section class="screen dim" id="gameover" hidden>
       <div class="h-title red">GAME OVER</div>
-      <div class="tally"><div class="ln on total"><span>SCORE</span><span id="go-score">0</span></div>
-        <div class="ln on"><span>HI-SCORE</span><span id="go-hi">0</span></div></div>
+      <div class="tally"><div class="ln on stage"><span>REACHED<small>到達關卡</small></span><span id="go-stage">STAGE 1</span></div>
+        <div class="ln on total"><span>SCORE</span><span id="go-score">0</span></div>
+        <div class="ln on"><span>HI-SCORE</span><span id="go-hi">0</span></div>
+        <div class="ln on cr"><span><i class="coin"></i>CR<small>獲得</small></span><span id="go-cr">+0</span></div>
+        <div class="ln on wallet"><span>WALLET<small>持有</small></span><span id="go-wallet">CR 0</span></div></div>
       <div class="badge" id="go-new" hidden>NEW RECORD</div>
       <div class="menu">
         <button class="btn primary" data-act="retry">RETRY<span>再來一次</span></button>
@@ -400,12 +519,14 @@ body.touch #keys { display: none; }
     </section>
 
     <section class="screen dim" id="results" hidden>
-      <div class="h-title">MISSION COMPLETE</div>
+      <div class="h-title" id="res-title">STAGE 1 CLEAR</div>
+      <div class="h-sub" id="res-sub">COASTAL FRONT</div>
       <div class="tally" id="tally"></div>
       <div class="rank" id="rank">S</div>
       <div class="badge" id="res-new" hidden>NEW RECORD</div>
       <div class="menu" id="res-menu" hidden>
-        <button class="btn primary" data-act="next">NEXT LOOP<span id="next-label">第二輪・難度提升</span></button>
+        <div class="foot res-next" id="res-next"></div>
+        <button class="btn primary" data-act="next" id="btn-next"><b id="next-title">NEXT STAGE</b><span id="next-label">下一關</span></button>
         <button class="btn" data-act="quit">TITLE<span>回標題</span></button>
       </div>
     </section>
@@ -414,7 +535,8 @@ body.touch #keys { display: none; }
   </div>
   <aside class="side" id="side-r" aria-hidden="true">
     <div><h3>HI-SCORE</h3><div class="big" id="side-hi">0</div></div>
-    <div><h3>MISSION</h3><div class="row">STAGE 1 · 沿岸前線</div><div class="row">擊破巨大要塞 ARCLIGHT</div></div>
+    <div><h3>WALLET</h3><div class="big cr"><i class="coin"></i><span id="side-cr">0</span></div><div class="row">出擊機 <b id="side-ship">CRIMSON BOLT 赤電</b></div></div>
+    <div><h3>MISSION</h3><div class="row" id="side-stage">STAGE 1 · 沿岸前線</div><div class="row" id="side-mission">擊破巨大要塞 ARCLIGHT</div><div class="route" id="side-route"></div></div>
     <div><h3>SCORING</h3>
       <div class="row">勳章連鎖 500 → 10,000</div>
       <div class="row">擦彈 +100 / 發</div>

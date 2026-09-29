@@ -1,6 +1,12 @@
-// ui.js — DOM HUD, banners, popups and menu screens.
+// ui.js — DOM HUD, banners, popups and menu screens (incl. the hangar list and item legends).
+import { AIRCRAFT, MAIN_WEAPONS, MAIN_ORDER, SUB_WEAPONS, SUB_ORDER, MAX_LEVEL, MONEY } from './defs.js';
+
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.floor(n).toLocaleString('en-US');
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const rgba = (hex, a) => `rgba(${(hex >> 16) & 255}, ${(hex >> 8) & 255}, ${hex & 255}, ${a})`;
+const STAT_ROWS = [['speed', '速度'], ['power', '火力'], ['bombs', '炸彈'], ['hitbox', '判定']];
+const WARN_DEFAULT = { e: 'HUGE FORTRESS APPROACHING', s: '巨大要塞 接近中' };
 
 export class UI {
   constructor() {
@@ -8,9 +14,11 @@ export class UI {
       hud: $('hud'), score: $('score'), hiscore: $('hiscore'), lives: $('lives'), bombs: $('bombs'),
       weapon: $('weapon'), bombBtn: $('btn-bomb'), bombCount: $('bomb-count'), bossbar: $('bossbar'),
       bossFill: $('boss-fill'), bossName: $('boss-name'), banner: $('banner'), popups: $('popups'),
-      flash: $('flash'), vignette: $('vignette'), titleHi: $('title-hi'), sideHi: $('side-hi'),
+      flash: $('flash'), vignette: $('vignette'), titleHi: $('title-hi'), sideHi: $('side-hi'), bossSub: $('boss-sub'),
+      hudCr: $('hud-cr'), titleCr: $('title-cr'), sideCr: $('side-cr'), hangarCr: $('hangar-cr'),
     };
-    this.screens = ['loading', 'title', 'howto', 'settings', 'pause', 'continue', 'gameover', 'results'];
+    this.screens = ['loading', 'title', 'howto', 'settings', 'hangar', 'pause', 'continue', 'gameover', 'results'];
+    this.ships = {}; // hangar rows by aircraft id (built once by buildHangar)
     this.cache = {};
     this.popPool = [];
     for (let i = 0; i < 18; i++) {
@@ -36,6 +44,31 @@ export class UI {
       this.el.hiscore.textContent = s; this.el.titleHi.textContent = s; if (this.el.sideHi) this.el.sideHi.textContent = s;
     });
   }
+  // CR earned in this run (HUD) and the wallet balance (title, side panel, hangar header).
+  setRunMoney(v) { this.set('runCr', Math.floor(v), (x) => { this.el.hudCr.textContent = fmt(x); }); }
+  setWallet(v) {
+    this.set('wallet', Math.floor(v), (x) => {
+      const s = fmt(x);
+      this.el.titleCr.textContent = s; this.el.hangarCr.textContent = s; if (this.el.sideCr) this.el.sideCr.textContent = s;
+    });
+  }
+  // The current aircraft: lives icons in its colour, its name on the title and in the side panel.
+  setShip(ac) {
+    this.set('ship', ac.id, () => {
+      this.el.lives.style.setProperty('--ship', ac.color);
+      $('hangar-label').textContent = '機庫・' + ac.zh;
+      const side = $('side-ship'); if (side) side.textContent = `${ac.name} ${ac.zh}`;
+    });
+  }
+  // Side-panel mission block and the how-to route line. stages: STAGES / STAGE_META entries.
+  setMission(stages, idx, loop = 1) {
+    const st = stages[idx] || stages[0];
+    this.set('mission', `${idx}:${loop}`, () => {
+      $('side-stage').textContent = `STAGE ${st.n}${loop > 1 ? ' · LOOP ' + loop : ''} · ${st.zh}`;
+      $('side-mission').textContent = st.mission;
+      $('side-route').innerHTML = stages.map((s, i) => `<span class="${i < idx ? 'done' : i === idx ? 'on' : ''}">${esc(s.zh)}</span>`).join('<i>›</i>');
+    });
+  }
   setLives(n) {
     this.set('lives', n, (x) => {
       const k = Math.max(0, Math.min(x, 6));
@@ -52,13 +85,13 @@ export class UI {
   setWeapon(main, level, sub, subLevel) {
     const key = `${main}${level}${sub}${subLevel}`;
     this.set('weapon', key, () => {
-      const col = main === 'red' ? '#ff6a4a' : '#45e3ff';
-      const name = main === 'red' ? 'VULCAN' : 'LASER';
+      const w = MAIN_WEAPONS[main] || MAIN_WEAPONS.red;
       let pips = '';
-      for (let i = 1; i <= 8; i++) pips += `<i class="${i <= level ? 'on' : ''}"></i>`;
+      for (let i = 1; i <= MAX_LEVEL; i++) pips += `<i class="${i <= level ? 'on' : ''}"></i>`;
       let subTxt = '';
-      if (sub) subTxt = ` <span style="color:${sub === 'H' ? '#8cff5a' : '#b77bff'}">${sub === 'H' ? 'HOMING' : 'NUKE'} ${subLevel}</span>`;
-      this.el.weapon.innerHTML = `<b style="color:${col}">${name} ${level === 8 ? 'MAX' : 'LV' + level}</b><div class="pips" style="color:${col}">${pips}</div><div style="margin-top:3px">${subTxt || '&nbsp;'}</div>`;
+      const sw = sub && SUB_WEAPONS[sub];
+      if (sw) subTxt = ` <span style="color:${sw.col}">${sw.name} ${subLevel}</span>`;
+      this.el.weapon.innerHTML = `<b style="color:${w.col}">${w.name} ${level >= MAX_LEVEL ? 'MAX' : 'LV' + level}</b><div class="pips" style="color:${w.col}">${pips}</div><div style="margin-top:3px">${subTxt || '&nbsp;'}</div>`;
     });
   }
   setChain(chain, nextValue) {
@@ -94,9 +127,10 @@ export class UI {
     h.classList.add('out');
     this.hintTimer = setTimeout(() => { h.hidden = true; }, 520);
   }
-  boss(on, name) {
+  boss(on, name, sub) {
     this.el.bossbar.hidden = !on;
     if (name) this.el.bossName.textContent = name;
+    if (sub !== undefined) this.el.bossSub.textContent = sub;
     if (on) this.cache.bossPct = -1;
   }
   setBossHP(frac) {
@@ -116,10 +150,11 @@ export class UI {
       }, ms);
     }
   }
-  warning(on) {
+  // warn: { e, s } from STAGE_META (English line, Chinese line)
+  warning(on, warn = WARN_DEFAULT) {
     clearTimeout(this.bannerTimer);
     this.el.banner.innerHTML = on
-      ? `<div class="warn"><div class="stripe"></div><div class="e">HUGE FORTRESS APPROACHING</div><div class="w">WARNING</div><div class="s">巨大要塞 接近中</div><div class="stripe"></div></div>`
+      ? `<div class="warn"><div class="stripe"></div><div class="e">${esc(warn.e)}</div><div class="w">WARNING</div><div class="s">${esc(warn.s)}</div><div class="stripe"></div></div>`
       : '';
   }
   clearBanner() { clearTimeout(this.bannerTimer); this.el.banner.innerHTML = ''; }
@@ -160,9 +195,102 @@ export class UI {
   }
   danger(on) { this.set('danger', on, (x) => { this.el.vignette.style.opacity = x ? '1' : '0'; }); }
 
+  // --- item legends (side panel + how-to), built from defs so they never go stale -----------
+  buildLegends() {
+    const chip = (col, t) => `<span class="chip" style="background:${col}">${t}</span>`;
+    const side = $('side-items');
+    if (side) {
+      side.innerHTML = MAIN_ORDER.map((k) => `${chip(MAIN_WEAPONS[k].col, 'P')}<span>${esc(MAIN_WEAPONS[k].zh)}</span>`).join('')
+        + SUB_ORDER.map((k) => `${chip(SUB_WEAPONS[k].col, k)}<span>${esc(SUB_WEAPONS[k].zh)}</span>`).join('')
+        + `<span class="chip b">B</span><span>炸彈</span>`;
+    }
+    const ul = $('howto-items');
+    if (ul) {
+      const grid = (keys, W, t) => `<li class="legend-grid">${keys.map((k) => `<span>${chip(W[k].col, t || k)}${esc(W[k].zh)}</span>`).join('')}</li>`;
+      ul.insertAdjacentHTML('afterbegin',
+        `<li>P 主武器：依序循環變色，吃同色升級，換色切換武器。</li>${grid(MAIN_ORDER, MAIN_WEAPONS, 'P')}`
+        + `<li>S 副武器：同樣循環變換，吃同字母升級。</li>${grid(SUB_ORDER, SUB_WEAPONS)}`);
+    }
+  }
+  setRoute(stages) {
+    const el = $('howto-route');
+    if (el) el.textContent = `共 ${stages.length} 關：${stages.map((s) => s.zh).join(' → ')}。全破後進入下一輪（難度提升）。`;
+  }
+
+  // --- hangar ---------------------------------------------------------------------
+  // One .btn row per aircraft: name, one-line description, 4 stat bars and a price / owned tag.
+  buildHangar() {
+    const box = $('ships');
+    box.innerHTML = '';
+    for (const ac of AIRCRAFT) {
+      const b = document.createElement('button');
+      b.className = 'btn ship';
+      b.dataset.act = 'ship';
+      b.dataset.ship = ac.id;
+      b.style.setProperty('--ac', ac.color);
+      b.style.setProperty('--ac-dim', rgba(ac.hex, 0.24));
+      const stats = STAT_ROWS.map(([k, label]) => {
+        let bar = '';
+        for (let i = 1; i <= 5; i++) bar += `<i class="${i <= (ac.stats[k] || 0) ? 'on' : ''}"></i>`;
+        return `<div><small>${label}</small><b class="sh-bar" aria-label="${label} ${ac.stats[k]}/5">${bar}</b></div>`;
+      }).join('');
+      b.innerHTML = `<div class="sh-top"><b>${esc(ac.name)}</b><i>${esc(ac.zh)}</i><em class="sh-tag"></em></div>`
+        + `<div class="sh-desc">${esc(ac.desc)}</div><div class="sh-stats">${stats}</div>`;
+      box.appendChild(b);
+      this.ships[ac.id] = { b, tag: b.querySelector('.sh-tag'), desc: b.querySelector('.sh-desc'), ac, msgT: 0 };
+    }
+  }
+  // w: the wallet { money, owned, equipped }; sel: the aircraft being previewed.
+  renderHangar(w, sel) {
+    for (const id in this.ships) {
+      const r = this.ships[id], ac = r.ac, owned = w.owned.includes(id);
+      let key, html;
+      if (owned && w.equipped === id) { key = 'on'; html = '使用中'; }
+      else if (owned) { key = 'own'; html = '已擁有'; }
+      else { key = w.money >= ac.price ? 'price' : 'price poor'; html = `<i class="coin"></i>${fmt(ac.price)}`; }
+      if (r.key !== key + html) { r.key = key + html; r.tag.className = 'sh-tag ' + key; r.tag.innerHTML = html; }
+      r.b.classList.toggle('sel', id === sel);
+      r.b.setAttribute('aria-current', String(owned && w.equipped === id));
+      r.b.setAttribute('aria-label', `${ac.name} ${ac.zh}，${owned ? (w.equipped === id ? '使用中' : '已擁有') : `${MONEY.label} ${fmt(ac.price)}`}。${ac.desc}`);
+    }
+    const ac = this.ships[sel] ? this.ships[sel].ac : null;
+    if (ac) {
+      const cap = $('hangar-cap');
+      cap.innerHTML = `${esc(ac.name)}<i style="color:${ac.color}">${esc(ac.zh)}</i>`;
+    }
+  }
+  // A short message in a row's description line (cls: msg | good | bad); ms <= 0 keeps it.
+  hangarMsg(id, text, cls = 'msg', ms = 1800) {
+    const r = this.ships[id];
+    if (!r) return;
+    clearTimeout(r.msgT);
+    r.desc.className = 'sh-desc ' + cls;
+    r.desc.textContent = text;
+    if (ms > 0) r.msgT = setTimeout(() => this.hangarMsgClear(id), ms);
+  }
+  hangarMsgClear(id) {
+    const r = this.ships[id];
+    if (!r) return;
+    clearTimeout(r.msgT);
+    r.desc.className = 'sh-desc';
+    r.desc.textContent = r.ac.desc;
+  }
+  hangarShake(id) {
+    const r = this.ships[id];
+    if (!r) return;
+    r.b.classList.remove('deny');
+    void r.b.offsetWidth; // restart the animation
+    r.b.classList.add('deny');
+  }
+  walletBump() {
+    const w = $('hangar-wallet');
+    w.classList.remove('bump'); void w.offsetWidth; w.classList.add('bump');
+  }
+
   // --- results tally --------------------------------------------------------------
   // Lay out every row first (invisible) so the screen never jumps, then reveal them in turn.
-  async tally(lines, total, rank, isNew, speedUp, sound = () => {}) {
+  // money: { earned, wallet } adds a counting "CR 獲得" row and the wallet balance after TOTAL.
+  async tally(lines, total, rank, isNew, speedUp, sound = () => {}, money = null) {
     const box = $('tally');
     box.innerHTML = '';
     const r = $('rank');
@@ -180,9 +308,33 @@ export class UI {
     tl.className = 'ln total';
     tl.innerHTML = `<span>TOTAL<small>總分</small></span><span>${fmt(total)}</span>`;
     box.appendChild(tl);
+    let cr = null, wal = null;
+    if (money) {
+      cr = document.createElement('div');
+      cr.className = 'ln cr';
+      cr.innerHTML = `<span><i class="coin"></i>${MONEY.label}<small>獲得</small></span><span>+0</span>`;
+      wal = document.createElement('div');
+      wal.className = 'ln wallet';
+      wal.innerHTML = `<span>WALLET<small>持有</small></span><span>${MONEY.label} ${fmt(money.wallet)}</span>`;
+      box.append(cr, wal);
+    }
     const wait = (ms) => new Promise((res) => setTimeout(res, speedUp() ? 0 : ms));
     for (const ln of rows) { await wait(60); ln.classList.add('on'); if (!speedUp()) sound('line'); await wait(360); }
     await wait(40); tl.classList.add('on'); sound('total');
+    if (cr) {
+      await wait(380);
+      cr.classList.add('on');
+      const v = cr.lastElementChild, n = Math.max(0, Math.floor(money.earned));
+      const steps = n > 0 ? 14 : 0;
+      for (let i = 1; i <= steps && !speedUp(); i++) {
+        v.textContent = '+' + fmt((n * i) / steps);
+        if (i % 2 === 1) sound('coin', i / steps);
+        await wait(45);
+      }
+      v.textContent = '+' + fmt(n);
+      sound('coinEnd');
+      await wait(200); wal.classList.add('on');
+    }
     await wait(500);
     r.classList.add('on'); sound('rank');
     await wait(450);

@@ -7,6 +7,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FX, Shake } from './fx.js';
 import { Input } from './input.js';
 import { UI, fmt } from './ui.js';
+import { AIRCRAFT_BY_ID, DEFAULT_AIRCRAFT, MONEY } from './defs.js';
 
 window.__cbBooted = true;
 clearTimeout(window.__cbBootTimer);
@@ -42,11 +43,55 @@ const isPortraitBlocked = () => touchUI && landscapeLock.matches;
 // ---------------------------------------------------------------------------------
 const store = {
   get(k, d) { try { const v = localStorage.getItem('crimsonbolt.' + k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } },
-  set(k, v) { try { localStorage.setItem('crimsonbolt.' + k, JSON.stringify(v)); } catch (_) { /* ignore */ } },
+  set(k, v) { try { localStorage.setItem('crimsonbolt.' + k, JSON.stringify(v)); return true; } catch (_) { return false; } },
 };
 const settings = Object.assign({ music: 0.7, sfx: 0.8, quality: 'auto', shake: !reducedMotion, haptics: true, touchSens: 1 }, store.get('settings', {}));
 if (![0.85, 1, 1.2].includes(settings.touchSens)) settings.touchSens = 1; // old drag-sensitivity values
 let hiScore = Number(store.get('hi', 0)) || 0;
+
+// Wallet + hangar: store 'hangar' → { money, owned: [aircraft ids], equipped }. Always sanitised
+// (bolt always owned, equipped must be owned, money a finite whole number ≥ 0). Like saveHi(),
+// every change re-reads storage first so two tabs can't overwrite each other's CR. If storage
+// is unavailable (or a write fails) the wallet keeps working in memory for this session.
+const MONEY_MAX = 999999999;
+function cleanWallet(w) {
+  const out = { money: 0, owned: [DEFAULT_AIRCRAFT], equipped: DEFAULT_AIRCRAFT };
+  if (!w || typeof w !== 'object') return out;
+  const m = Math.floor(Number(w.money));
+  if (Number.isFinite(m) && m > 0) out.money = Math.min(m, MONEY_MAX);
+  if (Array.isArray(w.owned)) for (const id of w.owned) if (AIRCRAFT_BY_ID[id] && !out.owned.includes(id)) out.owned.push(id);
+  if (out.owned.includes(w.equipped)) out.equipped = w.equipped;
+  return out;
+}
+let walletMem = cleanWallet(store.get('hangar', null));
+let walletStored = true; // false after a failed write: memory is the only truth from then on
+function readWallet() {
+  if (walletStored) { const v = store.get('hangar', null); if (v) walletMem = cleanWallet(v); }
+  return walletMem;
+}
+function writeWallet(w) {
+  walletMem = cleanWallet(w);
+  walletStored = store.set('hangar', walletMem) && walletStored;
+  showWallet();
+  return walletMem;
+}
+// CR of the current run already moved into the wallet (whole CR; game.runMoney is fractional).
+// A run's CR is banked at results, game over, quit, restart and page hide; each call adds only
+// what came in since the last one, so no path can credit the same CR twice.
+let runBanked = 0;
+function bankMoney() {
+  if (!game) return 0;
+  const earned = Math.floor(Math.max(0, game.runMoney || 0));
+  const delta = earned - runBanked;
+  if (!(delta > 0)) return 0;
+  const w = readWallet();
+  w.money = Math.min(MONEY_MAX, w.money + delta);
+  runBanked = earned;
+  writeWallet(w);
+  return delta;
+}
+// A new run starts from zero CR: bank what is left of the old one first.
+function endRunMoney() { bankMoney(); runBanked = 0; }
 
 // ---------------------------------------------------------------------------------
 // boot
@@ -63,16 +108,24 @@ function fail(msg) {
   m.textContent = msg;
 }
 
+// Sounds and tracks added by later audio versions fall back to an existing one until they exist.
+let sfxNames = null, musicNames = null;
+function sfx(name, fallback, opts) { audio.play(!sfxNames || sfxNames.has(name) ? name : fallback, opts); }
+function track(name, fallback) { return !name ? fallback : !musicNames || musicNames.has(name) ? name : fallback; }
+
 async function boot() {
-  let worldMod;
+  let worldMod, audioMod;
   try {
-    [models, worldMod, gameMod, { audio }] = await Promise.all([
+    [models, worldMod, gameMod, audioMod] = await Promise.all([
       import('./models.js'), import('./world.js'), import('./game.js'), import('./audio.js'),
     ]);
   } catch (err) {
     console.error(err);
     return fail('遊戲模組載入失敗，請重新整理頁面。');
   }
+  audio = audioMod.audio;
+  sfxNames = audioMod.SFX_NAMES ? new Set(audioMod.SFX_NAMES) : null;
+  musicNames = audioMod.MUSIC_TRACKS ? new Set(audioMod.MUSIC_TRACKS) : null;
   try {
     renderer = new THREE.WebGLRenderer({ antialias: !isTouch, powerPreference: 'high-performance', alpha: false, stencil: false });
   } catch (err) {
@@ -106,26 +159,47 @@ async function boot() {
 
   resize();
   game.initPools();
+  game.setAircraft(readWallet().equipped);
   game.resetRun();
+  ui.buildLegends();
+  ui.setRoute(gameMod.STAGES);
+  ui.buildHangar();
   setupComposer();
   applyQuality(true);
   await precompile();
   bindUI();
   applySettings();
   ui.setHi(hiScore);
+  showWallet();
   toTitle(true);
   requestAnimationFrame(frame);
   if (DEBUG) exposeDebug();
 }
 
-// Compile every pooled material once so the first enemy of each type doesn't hitch.
+// Compile every pooled material once so the first enemy of each type doesn't hitch, for every
+// stage world (stage 2/3 terrain too) at both qualities; stage 1 is restored afterwards. Programs
+// differ by render target (the bloom path renders the scene into the composer's linear target,
+// low quality straight to the canvas), and compile() also walks hidden objects (e.g. a stage's
+// cloud deck), so compile for both targets rather than relying on the render() at the end.
 async function precompile() {
   const shown = [];
   game.forEachPooled((o) => { o.mesh.visible = true; o.mesh.position.set(0, 0, -10); shown.push(o); });
   try {
-    const compile = async () => { if (renderer.compileAsync) await renderer.compileAsync(scene, camera); else renderer.compile(scene, camera); };
-    world.setQuality('low'); await compile();
-    world.setQuality(qualityLevel === 0 ? 'low' : 'high'); await compile();
+    const compileFor = async (rt) => {
+      renderer.setRenderTarget(rt);
+      if (renderer.compileAsync) await renderer.compileAsync(scene, camera); else renderer.compile(scene, camera);
+    };
+    const compile = async () => {
+      try { if (composer) await compileFor(composer.renderTarget1); await compileFor(null); } finally { renderer.setRenderTarget(null); }
+    };
+    const worlds = world.setStage ? [...new Set(gameMod.STAGES.map((s) => s.world))] : [null];
+    for (const id of worlds) {
+      if (id) { world.setStage(id); world.reset(0); }
+      world.setQuality('low'); await compile();
+      if (qualityLevel > 0) { world.setQuality('high'); await compile(); }
+    }
+    if (worlds.length > 1) { world.setStage(worlds[0]); world.reset(0); }
+    world.setQuality(qualityLevel === 0 ? 'low' : 'high');
     render();
   } catch (err) { console.warn('precompile', err); }
   for (const o of shown) { o.mesh.visible = false; if (o.shadow) o.shadow.visible = false; }
@@ -306,6 +380,7 @@ function updateHud() {
   ui.setBombs(g.bombs);
   ui.setWeapon(p.main, p.level, p.sub, p.subLevel);
   ui.setChain(g.medalChain, gameMod.MEDAL_VALUES[Math.min(g.medalChain, gameMod.MEDAL_VALUES.length - 1)]);
+  ui.setRunMoney(g.runMoney);
 }
 
 let hintFlags = store.get('hints', { moved: false, bomb: false });
@@ -319,16 +394,28 @@ function updateHints() {
     ui.bombHint(touchUI);
   }
 }
-function panelOpen() { return !$('howto').hidden || !$('settings').hidden; }
-function closePanel() { audio.play('select'); ui.only(backTo); focusFirst(backTo); }
+function panelOpen() { return !$('howto').hidden || !$('settings').hidden || !$('hangar').hidden; }
+function closePanel() {
+  const fromHangar = !$('hangar').hidden;
+  audio.play('select');
+  ui.only(backTo);
+  if (fromHangar) leaveHangar();
+  if (panelOpener && !panelOpener.hidden && panelOpener.closest('#' + backTo)) focusEl(panelOpener);
+  else focusFirst(backTo);
+  panelOpener = null;
+}
 
 function toTitle(first = false) {
   state = 'title';
   audio.setMusicDuck(1);
   pendingContinue = -1;
+  endRunMoney();
   game.clearField();
+  game.setAircraft(readWallet().equipped); // the title fly-by shows the equipped jet
   game.resetRun();
   game.player.mesh.visible = true;
+  ui.setShip(game.ac);
+  ui.setMission(gameMod.STAGES, 0);
   ui.hud(false);
   ui.hideHint();
   ui.clearBanner();
@@ -343,11 +430,15 @@ function toTitle(first = false) {
   focusFirst('title');
   updateFocusNote();
 }
-function startGame(loop = 1, keepScore = false) {
+// Start a stage. stage: 0-based index into STAGES. keepScore carries the run over (next stage /
+// next loop); otherwise it is a new run with the equipped aircraft (the old run's CR banked first).
+function startGame({ loop = 1, stage = 0, keepScore = false } = {}) {
   audio.init();
   audio.setMusicDuck(1);
   pendingContinue = -1;
-  game.resetRun({ keepScore, loop });
+  if (!keepScore) { endRunMoney(); game.setAircraft(readWallet().equipped); }
+  game.resetRun({ keepScore, loop, stage });
+  const st = game.stage;
   state = 'playing';
   ui.only();
   ui.hud(true);
@@ -355,12 +446,14 @@ function startGame(loop = 1, keepScore = false) {
   ui.danger(false);
   ui.clearPopups();
   ui.flash(0.45);
-  const lp = loop > 1 ? `<div class="k">LOOP ${loop} · 難度提升</div>` : '<div class="k">STAGE 1</div>';
-  ui.banner(`${lp}<div class="h">COASTAL FRONT</div><div class="s">沿岸前線</div>`, '', 2800);
-  audio.play('stageStart');
-  audio.music('stage');
+  ui.setShip(game.ac);
+  ui.setMission(gameMod.STAGES, game.stageIdx, loop);
+  const k = loop <= 1 ? `STAGE ${st.n}` : game.stageIdx === 0 ? `LOOP ${loop} · 難度提升` : `STAGE ${st.n} · LOOP ${loop}`;
+  ui.banner(`<div class="k">${k}</div><div class="h">${st.name}</div><div class="s">${st.zh}</div>`, '', 2800);
+  sfx(st.startSfx, 'stageStart');
+  audio.music(track(st.music, 'stage'));
   hintState = { moveShown: false, bombShown: false };
-  if (loop === 1 && !(hintFlags.moved && touchUI)) {
+  if (loop === 1 && game.stageIdx === 0 && !keepScore && !(hintFlags.moved && touchUI)) {
     setTimeout(() => { if (state === 'playing') { hintState.moveShown = true; input.dragTravel = 0; ui.hint(touchUI); } }, 1200);
   }
   try { if (!history.state || !history.state.cb) history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ }
@@ -409,11 +502,16 @@ function showContinue() {
 function continueYes() {
   if (state !== 'continue') return;
   saveHi();
+  // the score restarts at 0: keep this stage's points so far for the results screen
+  const stats = game.stats;
+  stats.stageCarry = (stats.stageCarry || 0) + Math.max(0, game.score - stats.stageScoreStart);
   game.continueRun();
+  stats.stageScoreStart = 0;
   state = 'playing';
   ui.only();
-  const tr = { boss: 'boss', warning: null, bossdead: null, clear: null }[game.phase];
-  audio.music(tr === undefined ? 'stage' : tr);
+  const st = game.stage;
+  const tr = { boss: track(st.bossMusic, 'boss'), warning: null, bossdead: null, clear: null }[game.phase];
+  audio.music(tr === undefined ? track(st.music, 'stage') : tr);
   audio.play('confirm');
   input.clearEdges();
 }
@@ -421,8 +519,13 @@ function gameOver() {
   state = 'gameover';
   audio.setMusicDuck(1);
   const isNew = saveHi();
+  bankMoney();
+  const st = game.stage;
+  $('go-stage').textContent = `STAGE ${st.n}${game.loop > 1 ? ' · LOOP ' + game.loop : ''} ${st.zh}`;
   $('go-score').textContent = fmt(game.score);
   $('go-hi').textContent = fmt(hiScore);
+  $('go-cr').textContent = '+' + fmt(Math.max(0, game.runMoney));
+  $('go-wallet').textContent = `${MONEY.label} ${fmt(readWallet().money)}`;
   $('go-new').hidden = !isNew;
   ui.only('gameover');
   ui.hud(false);
@@ -446,19 +549,23 @@ function saveHi() {
 let speedTally = false;
 async function showResults() {
   state = 'results';
-  const g = game, st = g.stats;
-  const stageScore = Math.max(0, g.score - st.stageScoreStart);
+  const g = game, st = g.stats, meta = g.stage;
+  const last = g.stageIdx >= gameMod.STAGES.length - 1;
+  if (!st.clearMoney && MONEY.stageClear[meta.n]) { st.clearMoney = MONEY.stageClear[meta.n]; g.runMoney += st.clearMoney; } // (game.js adds it at 'clear')
+  const stageScore = (st.stageCarry || 0) + Math.max(0, g.score - st.stageScoreStart);
   const pct = st.spawned ? st.killed / st.spawned : 1;
-  const clearBonus = 50000 * g.loop;
+  const clearBonus = 50000 * g.loop * meta.n;
   const noMiss = st.deaths === 0 ? 100000 : 0;
   const bombBonus = g.bombs * 10000;
   const destroy = Math.round(pct * 100) * 500;
   const chainBonus = g.medalMaxChain * 1000;
   const total = clearBonus + noMiss + bombBonus + destroy + chainBonus;
-  g.score += total;
+  g.addScore(total); // bonus points earn CR like any other points
   const pts = pct * 100 + (st.deaths === 0 ? 30 : Math.max(0, 18 - st.deaths * 8)) + Math.min(20, g.medalMaxChain * 1.2);
   const rank = pts >= 128 ? 'S' : pts >= 108 ? 'A' : pts >= 88 ? 'B' : 'C';
   const isNew = saveHi();
+  const earned = Math.floor(g.runMoney) - Math.floor(st.moneyStart); // this stage's CR (incl. the clear reward)
+  bankMoney();
   updateHud();
   ui.hud(false);
   ui.only('results');
@@ -472,15 +579,34 @@ async function showResults() {
     ['CHAIN × ' + g.medalMaxChain, '勳章連鎖', '+' + fmt(chainBonus)],
   ];
   const zh = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
-  $('next-label').textContent = `第${zh[g.loop + 1] || g.loop + 1}輪・難度提升`;
+  $('res-title').textContent = last ? 'ALL CLEAR' : `STAGE ${meta.n} CLEAR`;
+  $('res-title').classList.toggle('all', last);
+  $('res-sub').innerHTML = last
+    ? `LOOP ${g.loop} COMPLETE <b>全 ${gameMod.STAGES.length} 關制霸</b>`
+    : `${meta.name} <b>${meta.zh}</b>`;
+  $('res-next').textContent = last ? '' : `NEXT ▸ STAGE ${meta.n + 1} ${gameMod.STAGES[g.stageIdx + 1].zh}`;
+  if (last) {
+    $('next-title').textContent = 'NEXT LOOP';
+    $('next-label').textContent = `第${zh[g.loop + 1] || g.loop + 1}輪・難度提升`;
+  } else {
+    $('next-title').textContent = 'NEXT STAGE';
+    $('next-label').textContent = '下一關';
+  }
   audio.setMusicDuck(1);
-  await ui.tally(lines, g.score, rank, isNew, () => speedTally, (kind) => {
+  await ui.tally(lines, g.score, rank, isNew, () => speedTally, (kind, k) => {
     if (kind === 'line') audio.play('select', { vol: 0.5 });
     else if (kind === 'total') audio.play('confirm');
+    else if (kind === 'coin') sfx('coin', 'medal', { vol: 0.5, pitch: Math.round(k * 6) * 2 });
+    else if (kind === 'coinEnd') sfx('coin', 'item', { vol: 0.7, pitch: 12 });
     else if (kind === 'rank') audio.play('powerup');
     else if (kind === 'record') audio.play('oneup');
-  });
-  focusFirst('results');
+  }, { earned, wallet: readWallet().money });
+  if (state === 'results') focusFirst('results');
+}
+// Results → the next stage, or after the last stage the next loop from stage 1 (harder).
+function nextStage() {
+  const last = game.stageIdx >= gameMod.STAGES.length - 1;
+  startGame(last ? { loop: game.loop + 1, stage: 0, keepScore: true } : { loop: game.loop, stage: game.stageIdx + 1, keepScore: true });
 }
 
 function onGameEvent(ev) {
@@ -488,14 +614,14 @@ function onGameEvent(ev) {
     case 'warning':
       audio.music(null);
       audio.play('warning');
-      ui.warning(true);
+      ui.warning(true, game.stage.warn);
       ui.danger(true);
       break;
     case 'bossStart':
       ui.warning(false);
       ui.danger(false);
-      ui.boss(true, 'ARCLIGHT');
-      audio.music('boss');
+      ui.boss(true, game.stage.boss, game.stage.bossZh);
+      audio.music(track(game.stage.bossMusic, 'boss'));
       break;
     case 'midboss':
       audio.play('lock', { vol: 0.6 });
@@ -508,7 +634,7 @@ function onGameEvent(ev) {
       break;
     case 'clearBanner':
       ui.boss(false);
-      ui.banner('<div class="k">STAGE 1</div><div class="h">MISSION COMPLETE</div><div class="s">任務完成</div>', 'clear', 3000);
+      ui.banner(`<div class="k">STAGE ${game.stage.n}</div><div class="h">MISSION COMPLETE</div><div class="s">任務完成</div>`, 'clear', 3000);
       audio.music('clear');
       break;
     case 'clear':
@@ -522,29 +648,104 @@ function onGameEvent(ev) {
 // UI wiring
 // ---------------------------------------------------------------------------------
 let backTo = 'title';
-// Destructive pause-menu actions need a second tap within 2 s.
-function confirmTwice(btn) {
+let panelOpener = null; // the menu button that opened a panel gets the focus back
+// Destructive pause-menu actions (and purchases) need a second tap within ms (2 s). msg replaces
+// the text of el (default: the button's <span>) until then; cls is added to el meanwhile.
+function confirmTwice(btn, msg = '再按一次確認', el = btn.querySelector('span'), cls = '', ms = 2000) {
   if (btn.dataset.armed === '1') { btn.dataset.armed = ''; restoreLabel(btn); return true; }
   btn.dataset.armed = '1';
-  const span = btn.querySelector('span');
-  btn.dataset.label = span.textContent;
-  span.textContent = '再按一次確認';
+  btn._armEl = el; btn._armCls = cls;
+  btn.dataset.label = el.textContent;
+  el.textContent = msg;
+  if (cls) el.classList.add(cls);
   audio.play('select');
   clearTimeout(btn._armT);
-  btn._armT = setTimeout(() => { btn.dataset.armed = ''; restoreLabel(btn); }, 2000);
+  btn._armT = setTimeout(() => { btn.dataset.armed = ''; restoreLabel(btn); }, ms);
   return false;
 }
-function restoreLabel(btn) { const span = btn.querySelector('span'); if (btn.dataset.label) span.textContent = btn.dataset.label; clearTimeout(btn._armT); }
-function focusFirst(id) {
-  if (touchUI) return;
-  const el = document.querySelector(`#${id} .btn`);
-  if (el) setTimeout(() => el.focus({ preventScroll: true }), 30);
+function restoreLabel(btn) {
+  const el = btn._armEl || btn.querySelector('span');
+  if (btn.dataset.label) el.textContent = btn.dataset.label;
+  if (btn._armCls) el.classList.remove(btn._armCls);
+  btn.dataset.label = ''; btn._armCls = '';
+  clearTimeout(btn._armT);
 }
-function openPanel(id) {
+function disarm(btn) { if (btn.dataset.armed === '1') { btn.dataset.armed = ''; restoreLabel(btn); } }
+function focusEl(el) { if (!touchUI && el) setTimeout(() => el.focus({ preventScroll: true }), 30); }
+function focusFirst(id) { focusEl(document.querySelector(`#${id} .btn`)); }
+function openPanel(id, opener = null) {
   backTo = state === 'paused' ? 'pause' : 'title';
+  panelOpener = opener;
   ui.only(id);
   audio.play('select');
   focusFirst(id);
+}
+
+// --- wallet display + hangar -------------------------------------------------------
+function showWallet() {
+  ui.setWallet(walletMem.money);
+  if (!$('hangar').hidden) ui.renderHangar(walletMem, hangarSel);
+}
+let hangarSel = null; // the aircraft previewed on the title fly-by while the hangar is open
+function openHangar(opener) {
+  const w = readWallet();
+  hangarSel = w.equipped;
+  openPanel('hangar', opener);
+  $('ships').scrollTop = 0;
+  ui.renderHangar(w, hangarSel);
+  focusEl(ui.ships[w.equipped] && ui.ships[w.equipped].b);
+}
+// Show a jet on the fly-by and highlight its row (focus, hover or tap).
+function previewShip(id) {
+  if (!AIRCRAFT_BY_ID[id] || $('hangar').hidden || state !== 'title') return;
+  if (id === hangarSel) return;
+  for (const k in ui.ships) if (k !== id) disarm(ui.ships[k].b);
+  hangarSel = id;
+  game.setAircraft(id);
+  ui.renderHangar(readWallet(), id);
+  audio.play('select', { vol: 0.35 });
+}
+// Enter / click / tap on a row: owned → equip; affordable → confirm, then buy; else refuse.
+function activateShip(btn) {
+  const id = btn.dataset.ship, ac = AIRCRAFT_BY_ID[id];
+  if (!ac) return;
+  previewShip(id);
+  const w = readWallet();
+  if (w.owned.includes(id)) {
+    if (w.equipped === id) { audio.play('select'); ui.hangarMsg(id, '這架已是出擊機', 'good', 1200); return; }
+    w.equipped = id;
+    writeWallet(w);
+    sfx('equip', 'confirm');
+    ui.setShip(ac);
+    ui.hangarMsg(id, '已設為出擊機', 'good', 1400);
+    return;
+  }
+  if (w.money < ac.price) { refuse(id, ac.price - w.money); return; }
+  ui.hangarMsgClear(id);
+  if (!confirmTwice(btn, `再按一次確認購買（購買後剩 ${MONEY.label} ${fmt(w.money - ac.price)}）`, ui.ships[id].desc, 'msg', 3000)) return;
+  const w2 = readWallet(); // storage may have changed meanwhile (another tab)
+  if (w2.money < ac.price) { refuse(id, ac.price - w2.money); return; }
+  w2.money -= ac.price;
+  if (!w2.owned.includes(id)) w2.owned.push(id);
+  w2.equipped = id;
+  writeWallet(w2);
+  sfx('buy', 'oneup');
+  ui.flash(0.2);
+  ui.walletBump();
+  ui.setShip(ac);
+  ui.hangarMsg(id, `購買完成！已設為出擊機`, 'good', 2200);
+}
+function refuse(id, short) {
+  sfx('deny', 'hitArmor');
+  ui.hangarShake(id);
+  ui.hangarMsg(id, `還差 ${MONEY.label} ${fmt(short)}`, 'bad', 1600);
+}
+// Closing the hangar puts the equipped jet back on the fly-by.
+function leaveHangar() {
+  for (const k in ui.ships) { disarm(ui.ships[k].b); ui.hangarMsgClear(k); }
+  hangarSel = null;
+  if (state === 'title') game.setAircraft(readWallet().equipped);
+  ui.setShip(game.ac);
 }
 function bindUI() {
   // first gesture unlocks audio
@@ -559,18 +760,27 @@ function bindUI() {
     audio.init();
     switch (act) {
       case 'start': audio.play('confirm'); startGame(); break;
-      case 'howto': openPanel('howto'); break;
-      case 'settings': openPanel('settings'); break;
-      case 'back': audio.play('select'); ui.only(backTo); focusFirst(backTo); break;
+      case 'howto': openPanel('howto', b); break;
+      case 'settings': openPanel('settings', b); break;
+      case 'hangar': if (state === 'title') openHangar(b); break;
+      case 'ship': if (state === 'title' && !$('hangar').hidden) activateShip(b); break;
+      case 'back': closePanel(); break;
       case 'resume': resume(); break;
-      case 'restart': if (!confirmTwice(b)) break; audio.play('confirm'); if (game.score > 0) saveHi(); startGame(); break;
+      case 'restart': if (!confirmTwice(b)) break; audio.play('confirm'); if (game.score > 0) saveHi(); startGame(); break; // (banks the run's CR)
       case 'quit': if (state === 'paused' && !confirmTwice(b)) break; audio.play('select'); if (game.score > 0) saveHi(); toTitle(); break;
       case 'retry': audio.play('confirm'); startGame(); break;
       case 'cont-yes': continueYes(); break;
       case 'cont-no': gameOver(); break;
-      case 'next': audio.play('confirm'); startGame(game.loop + 1, true); break;
+      case 'next': if (state === 'results') { audio.play('confirm'); nextStage(); } break;
       default: break;
     }
+  });
+  // hangar: moving the focus (arrows, gamepad), hovering with the mouse or tapping previews a jet
+  const ships = $('ships');
+  ships.addEventListener('focusin', (e) => { const b = e.target.closest('.ship'); if (b) previewShip(b.dataset.ship); });
+  ships.addEventListener('pointerover', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    const b = e.target.closest('.ship'); if (b) previewShip(b.dataset.ship);
   });
   $('btn-pause').addEventListener('click', (e) => { e.stopPropagation(); pause(); });
   const bombBtn = $('btn-bomb');
@@ -597,9 +807,9 @@ function bindUI() {
     if (state === 'playing' || state === 'resuming') { pause(); try { history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ } }
     else if (panelOpen()) { closePanel(); try { history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ } }
   });
-  window.addEventListener('pagehide', () => { if (game.score > 0) saveHi(); });
+  window.addEventListener('pagehide', () => { bankMoney(); if (game.score > 0) saveHi(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { if (state === 'playing' || state === 'resuming') pause(); if (state === 'paused' && game.score > 0) saveHi(); audio.suspend(); }
+    if (document.hidden) { if (state === 'playing' || state === 'resuming') pause(); bankMoney(); if (state === 'paused' && game.score > 0) saveHi(); audio.suspend(); }
     else if (state !== 'paused') audio.resume();
   });
   window.addEventListener('blur', () => { if (state === 'playing' || state === 'resuming') pause(); updateFocusNote(); });
@@ -642,21 +852,49 @@ function exposeDebug() {
     get state() { return state; },
     get fps() { return fpsAvg; },
     get quality() { return qualityLevel; },
-    start: (loop = 1) => startGame(loop),
+    // start({ stage, loop }) — stage is the stage NUMBER (1..3, like STAGE_META.n); start(2) = loop 2
+    start(o = {}) {
+      if (typeof o === 'number') o = { loop: o };
+      startGame({ loop: Math.max(1, o.loop | 0 || 1), stage: Math.max(1, o.stage | 0 || 1) - 1, keepScore: !!o.keepScore });
+    },
+    // stage(n): play stage n now (keeps the run when one is in progress, else a new run)
+    stage(n = 1) {
+      const inRun = ['playing', 'paused', 'resuming', 'results', 'continue'].includes(state);
+      startGame({ loop: game.loop || 1, stage: Math.max(1, n | 0) - 1, keepScore: inRun });
+      return game.stage.n;
+    },
+    // money(n): set the wallet balance; ship(id): own + equip an aircraft (both persisted)
+    money(n) { const w = readWallet(); w.money = n; writeWallet(w); return walletMem.money; },
+    ship(id) {
+      if (!AIRCRAFT_BY_ID[id]) return null;
+      const w = readWallet();
+      if (!w.owned.includes(id)) w.owned.push(id);
+      w.equipped = id;
+      writeWallet(w);
+      game.setAircraft(id); ui.setShip(game.ac);
+      return id;
+    },
+    wallet: () => JSON.parse(JSON.stringify(readWallet())),
+    bank: () => bankMoney(),
+    get runBanked() { return runBanked; },
     god(on = true) { game.player.invuln = on ? 1e9 : 0; },
     jump(d) {
-      // fast-forward the stage to distance d (skips earlier events)
+      // fast-forward the current stage to distance d (skips earlier events)
+      const st = game.stage;
       game.clearField();
       game.world.reset(d);
-      game.phase = 'stage'; game.scrollTarget = 7; game.boss = null;
-      game.midbossDone = d > 600; game.warned = false;
+      game.phase = 'stage'; game.scrollTarget = st.scroll; game.boss = null; game.midboss = null;
+      game.midbossDone = d > st.midbossAt; game.warned = false;
       game.skipTo(d);
+      ui.warning(false); ui.danger(false);
     },
     power(level = 8, main = 'red', sub = 'H', subLevel = 4) { Object.assign(game.player, { level, main, sub, subLevel }); },
     killAll() { for (const e of game.enemies) { if (e.parts) for (const p of e.parts) game.damagePart(e, p, 1e6); game.damageEnemy(e, 1e6); } },
     info() {
       return { state, fps: Math.round(fpsAvg), d: Math.round(world.distance), phase: game.phase, enemies: game.enemies.length,
         bullets: game.eb.n, shots: game.ps.n, particles: fx.p.n, score: game.score, lives: game.lives, bombs: game.bombs,
+        stage: game.stage.n, stageIdx: game.stageIdx, loop: game.loop, aircraft: game.ac.id, continues: game.continues,
+        runMoney: Math.floor(game.runMoney), banked: runBanked, money: walletMem.money,
         calls: renderer.info.render.calls, tris: renderer.info.render.triangles, quality: qualityLevel };
     },
     pause, resume, toTitle,

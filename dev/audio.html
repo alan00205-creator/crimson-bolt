@@ -51,7 +51,7 @@
   #viz { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; }
   .tile { background: #0a0c11; border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
   .tile canvas { width: 100%; height: auto; display: block; border-radius: 4px; }
-  .tile div { font-size: 12px; color: var(--dim); display: flex; justify-content: space-between; padding: 2px 2px 4px; }
+  .tile div { font-size: 12px; color: var(--dim); display: flex; justify-content: space-between; gap: 10px; padding: 2px 2px 4px; }
   .tile div b { color: var(--ink); }
   .tile a { color: var(--cyan); }
   .note { color: var(--dim); font-size: 12px; margin: 8px 0 0; }
@@ -81,8 +81,11 @@
   <section>
     <h2>Music</h2>
     <div class="row" id="tracks"></div>
-    <p class="note">Tracks crossfade (~0.6 s). The loop plays twice with different orchestration (harmony, doubling, busier drums) before repeating. <b>stage</b> + <b>stageStart</b> together is what the game does at the start of a run (the fanfare is locked to the stage tempo).</p>
-    <div class="row" style="margin-top:8px"><button id="startrun">Start a run (stageStart + stage)</button><button id="bossin">Boss entrance (warning → boss)</button></div>
+    <p class="note">Tracks crossfade (~0.6 s). The loop plays twice with different orchestration (harmony, doubling, busier drums) before repeating. A stage's music + its fanfare together is what the game does when a stage starts (each fanfare is locked to its own theme's tempo and key): <b>stage</b> + <b>stageStart</b> (D minor, 140), <b>stage2</b> + <b>stageStart2</b> (B phrygian desert, 148), <b>stage3</b> + <b>stageStart3</b> (C lydian skies, 152). Bosses: <b>boss</b> (E minor, 155), <b>boss2</b> (A minor machine, 136), <b>boss3</b> (D minor finale, 165).</p>
+    <div class="row" style="margin-top:8px">
+      <button data-run="">Stage 1 start</button><button data-run="2">Stage 2 start</button><button data-run="3">Stage 3 start</button>
+      <button data-boss="boss">Boss 1 entrance (warning → boss)</button><button data-boss="boss2">Boss 2 entrance</button><button data-boss="boss3">Boss 3 entrance</button>
+    </div>
   </section>
 
   <section>
@@ -96,9 +99,16 @@
     <div class="row" style="margin-top:10px">
       <button id="vulcan">Vulcan 5 s (every 75 ms)</button>
       <button id="laserhold">Laser 5 s (called every frame)</button>
+      <button id="plasmahold">Plasma 5 s (called every frame)</button>
+      <button id="wavegun">Wave 5 s (every 90 ms)</button>
+      <button id="multisalvo">Multi 5 s (sub-weapon cadence, vol 0.6)</button>
       <button id="firefight">Firefight 6 s (as game.js calls it)</button>
       <button id="chain">Medal chain 0→6</button>
       <button id="pile">30 explosions at once</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="tally">Results CR count-up (coin every frame, 2 s)</button>
+      <button id="hangar">Hangar: deny → buy → equip</button>
     </div>
   </section>
 
@@ -106,12 +116,16 @@
     <h2>Automated verification</h2>
     <div class="row">
       <button class="primary" id="auto">Auto test</button>
+      <button id="secs">Section check (full cycle)</button>
       <button id="vizall">Draw waveforms + spectrograms</button>
-      <span class="note" id="autonote">Renders everything offline (OfflineAudioContext, 44.1 kHz, volumes at 1.0 = worst case). Scenarios call the module exactly as js/game.js does (vulcan every 75 ms, laser every frame, hits at vol 0.35 …). Click a row to visualise it; each tile links the exact render as a WAV.</span>
+      <span class="note" id="autonote">Renders everything offline (OfflineAudioContext, 44.1 kHz, volumes at 1.0 = worst case). Scenarios call the module exactly as js/game.js does (vulcan every 75 ms, laser / plasma every frame, hits at vol 0.35 …). Click a row to visualise it; each tile links the exact render as a WAV.</span>
     </div>
     <div class="scroll"><table id="results"></table></div>
     <p id="summary"></p>
+    <p id="cpu" class="note"></p>
     <div class="scroll"><table id="songs"></table></div>
+    <p class="note">Section check: renders each looping track over its whole variation cycle (intro + both loop passes) plus 4 bars past the wrap, and lists every section's peak, rms, rms above ~500 Hz (a small-speaker proxy) and below ~150 Hz, plus the loop seam (last bar before the wrap vs the first bar after it). Flags a section that is silent, clips, or sits more than 4 dB away from its track's average.</p>
+    <div class="scroll"><table id="sections"></table></div>
   </section>
 
   <section>
@@ -120,13 +134,20 @@
   </section>
 
 <script type="module">
-import { audio, SFX_NAMES, MUSIC_TRACKS, __renderForTest, __renderBuffer, __songInfo } from '../js/audio.js';
+import { audio, SFX_NAMES, MUSIC_TRACKS, __renderForTest, __renderBuffer, __songInfo, __bakeStats } from '../js/audio.js';
 
 const $ = (id) => document.getElementById(id);
 const DUR = { shot: 0.5, laser: 0.5, hit: 0.5, graze: 0.5, lock: 0.5, select: 0.5, hitArmor: 0.8, vulcan: 5, laserBeam: 5, firefight: 8, gameplayLaser: 8, runStart: 4, hitStream: 5, armorStream: 5,
   item: 0.8, missile: 1, pause: 1, confirm: 1.2, explodeS: 1.5, medal: 1.5, powerup: 1.5,
-  oneup: 2, explodeM: 3, explodeL: 5, death: 5, warning: 4, stageStart: 3.5, bomb: 6, bossDown: 9 };
+  oneup: 2, explodeM: 3, explodeL: 5, death: 5, warning: 4, stageStart: 3.5, bomb: 6, bossDown: 9,
+  stageStart2: 3.5, stageStart3: 3.5, plasma: 0.5, wave: 0.5, multi: 1, coin: 0.5, buy: 1.5, deny: 0.6, equip: 1,
+  runStart2: 4, runStart3: 4, plasmaBeam: 5, waveGun: 5, multiSalvo: 5, coinTally: 3, gameplay: 8, gameplay2: 8, gameplay3: 8,
+  stress: 6, stressRaw: 6, stress2: 6, stress3: 6 };
 const TRACK_SECONDS = 8;
+// scenario jobs of the auto test (besides every SFX and every track)
+const SCENARIOS = ['runStart', 'runStart2', 'runStart3', 'vulcan', 'laserBeam', 'plasmaBeam', 'waveGun', 'multiSalvo', 'coinTally',
+  'hitStream', 'armorStream', 'firefight', 'gameplay', 'gameplayLaser', 'gameplay2', 'gameplay3', 'stress', 'stress2', 'stress3', 'stressRaw'];
+const BUDGET_TRACKS = ['stage', 'boss'];      // the CPU budget: new tracks are measured against these
 
 // ---- live controls
 function refreshStatus() {
@@ -156,10 +177,17 @@ for (const t of [...MUSIC_TRACKS, null]) {
   b.onclick = () => { audio.init(); audio.music(t); refreshStatus(); };
   $('tracks').appendChild(b);
 }
-$('startrun').onclick = () => { audio.init(); audio.play('stageStart'); audio.music('stage'); refreshStatus(); };
-$('bossin').onclick = () => { audio.init(); audio.music(null); audio.play('warning'); setTimeout(() => audio.music('boss'), 3200); };
+// what main.js does when a stage starts: its fanfare and its music in the same frame
+for (const b of document.querySelectorAll('[data-run]')) {
+  b.onclick = () => { const n = b.dataset.run; audio.init(); audio.play('stageStart' + n); audio.music('stage' + n); refreshStatus(); };
+}
+for (const b of document.querySelectorAll('[data-boss]')) {
+  b.onclick = () => { audio.init(); audio.music(null); audio.play('warning'); setTimeout(() => audio.music(b.dataset.boss), 3200); };
+}
 const HINT = { shot: 'vulcan · 13/s', laser: 'beam · hold to sustain', medal: 'uses chain step', warning: '3 s klaxon',
-  bossDown: 'long tail', stageStart: 'fanfare', bomb: 'screen clear', graze: 'sparkle' };
+  bossDown: 'long tail', stageStart: 'fanfare', bomb: 'screen clear', graze: 'sparkle',
+  stageStart2: 'stage 2 fanfare', stageStart3: 'stage 3 fanfare', plasma: 'beam · hold to sustain', wave: 'wave gun · rapid',
+  multi: 'rocket fan', coin: 'results CR tick', buy: 'hangar purchase', deny: 'not enough CR', equip: 'hangar equip' };
 for (const n of SFX_NAMES) {
   const b = document.createElement('button');
   b.innerHTML = `${n}<small>${HINT[n] || '&nbsp;'}</small>`;
@@ -175,6 +203,11 @@ function every(ms, dur, fn) { audio.init(); const t0 = performance.now(); const 
 function eachFrame(dur, fn) { audio.init(); const t0 = performance.now(); const f = () => { if (performance.now() - t0 < dur) { fn(); requestAnimationFrame(f); } }; requestAnimationFrame(f); }
 $('vulcan').onclick = () => every(75, 5000, () => audio.play('shot'));
 $('laserhold').onclick = () => eachFrame(5000, () => audio.play('laser'));
+$('plasmahold').onclick = () => eachFrame(5000, () => audio.play('plasma'));
+$('wavegun').onclick = () => every(90, 5000, () => audio.play('wave'));
+$('multisalvo').onclick = () => every(450, 5000, () => audio.play('multi', { vol: 0.6 }));
+$('tally').onclick = () => { eachFrame(2000, () => audio.play('coin')); setTimeout(() => audio.play('confirm'), 2100); };
+$('hangar').onclick = () => { audio.init(); audio.play('deny'); setTimeout(() => audio.play('buy'), 700); setTimeout(() => audio.play('equip'), 2200); };
 $('firefight').onclick = () => {
   let chain = 0, k = 0;
   every(75, 6000, () => audio.play('shot'));
@@ -197,8 +230,7 @@ async function runAuto() {
   const tbl = $('results');
   tbl.innerHTML = '<tr><th>name</th><th>kind</th><th>sec</th><th>peak</th><th>peak dBFS</th><th>pre-limiter</th><th>rms dBFS</th><th>NaN</th><th>render ms</th><th>ms / s</th><th>result</th></tr>';
   const jobs = [...SFX_NAMES.map((n) => [n, DUR[n] || 2]), ...MUSIC_TRACKS.map((t) => [t, TRACK_SECONDS]),
-    ['runStart', 4], ['vulcan', 5], ['laserBeam', 5], ['hitStream', 5], ['armorStream', 5], ['firefight', 8], ['gameplay', 8],
-    ['gameplayLaser', 8], ['stress', 6], ['stressRaw', 6]];
+    ...SCENARIOS.map((n) => [n, DUR[n] || 5])];
   let pass = 0;
   for (const [name, sec] of jobs) {
     const r = await __renderForTest(name, sec);
@@ -215,14 +247,76 @@ async function runAuto() {
   }
   $('summary').textContent = `${pass} / ${jobs.length} passed (rms > 0, no NaN, final peak ≤ 1.0).`;
   $('summary').style.color = pass === jobs.length ? 'var(--ok)' : 'var(--bad)';
+  // music CPU next to the budget (the heavier of the stage-1 theme and the boss theme). Single
+  // 8 s renders are noisy (±20 %): re-run, or use the section check's whole-cycle numbers.
+  const ms = Object.fromEntries(rows.filter((r) => r.kind === 'music' && MUSIC_TRACKS.includes(r.name)).map((r) => [r.name, r.msPerSec]));
+  const budget = Math.max(...BUDGET_TRACKS.map((t) => ms[t] || 0));
+  const cpu = MUSIC_TRACKS.filter((t) => ms[t] !== undefined).map((t) => {
+    const ratio = budget ? ms[t] / budget : 0;
+    return `<b style="color:${BUDGET_TRACKS.includes(t) ? 'var(--ink)' : ratio > 1.2 ? 'var(--bad)' : 'var(--ok)'}">${t} ${ms[t].toFixed(1)}</b>` +
+      (BUDGET_TRACKS.includes(t) ? '' : ` (${(ratio * 100).toFixed(0)} %)`);
+  });
+  $('cpu').innerHTML = `Music CPU, ms of rendering per s of audio (first ${TRACK_SECONDS} s; budget = max(${BUDGET_TRACKS.join(', ')}) = ${budget.toFixed(1)}): ` + cpu.join(' · ');
+  // the startup bake: every sample must exist and be non-silent
+  const bake = await __bakeStats();
+  const silent = bake.entries.filter((e) => !(e[2] > 0 && e[3] > 0)).map((e) => e[0]);
+  $('cpu').innerHTML += `<br>Startup bake: ${bake.entries.length} samples, ${bake.seconds.toFixed(1)} s of audio, rendered in ${bake.ms.toFixed(0)} ms — ` +
+    (silent.length ? `<b style="color:var(--bad)">silent: ${silent.join(', ')}</b>` : '<b style="color:var(--ok)">all present</b>');
   const info = __songInfo();
-  $('songs').innerHTML = '<tr><th>track</th><th>BPM</th><th>intro bars</th><th>loop bars</th><th>intro s</th><th>loop s</th><th>variation cycle s</th><th>one-shot length s</th><th>notation warnings</th></tr>' +
+  $('songs').innerHTML = '<tr><th>track</th><th>BPM</th><th>intro bars</th><th>loop bars</th><th>intro s</th><th>loop s</th><th>variation cycle s</th><th>one-shot length s</th><th>sections</th><th>notation warnings</th></tr>' +
     Object.entries(info).map(([k, v]) => `<tr><td>${k}</td><td>${v.bpm}</td><td>${v.introBars}</td><td>${v.loopBars || '—'}</td><td>${v.introSec}</td>` +
-      `<td>${v.loopSec ?? '—'}</td><td>${v.variationCycleSec ?? '—'}</td><td>${v.lengthSec ?? '—'}</td><td class="${v.warn.length ? 'bad' : 'ok'}">${v.warn.length ? v.warn.join('; ') : 'none'}</td></tr>`).join('');
-  window.__autoResults = { rows, pass, total: jobs.length, songs: info };
+      `<td>${v.loopSec ?? '—'}</td><td>${v.variationCycleSec ?? '—'}</td><td>${v.lengthSec ?? '—'}</td>` +
+      `<td style="text-align:left">${v.sections.filter((s) => !s.name.endsWith("'")).map((s) => s.name + '·' + s.bars).join(' ')}</td>` +
+      `<td class="${v.warn.length ? 'bad' : 'ok'}">${v.warn.length ? v.warn.join('; ') : 'none'}</td></tr>`).join('');
+  window.__autoResults = { rows, pass, total: jobs.length, songs: info, cpu: { budget, ms }, bake: { ms: bake.ms, seconds: bake.seconds, count: bake.entries.length, silent } };
   return window.__autoResults;
 }
 $('auto').onclick = runAuto;
+
+// ---- section check (listen proxy): per-section levels over a whole variation cycle
+async function runSections(list) {
+  const info = __songInfo();
+  const tracks = list || MUSIC_TRACKS.filter((t) => info[t].loopBars);
+  const tbl = $('sections');
+  tbl.innerHTML = '<tr><th>track · section</th><th>bars</th><th>starts s</th><th>peak</th><th>rms dB</th><th>&gt;500 Hz dB</th><th>&lt;150 Hz dB</th><th>vs track avg</th><th>result</th></tr>';
+  const out = {};
+  let bad = 0;
+  for (const t of tracks) {
+    const v = info[t], secs = v.sections, barSec = 240 / v.bpm, end = secs[secs.length - 1].t1;
+    const total = end + 4 * barSec;
+    const { buf, stats, from } = await __renderBuffer(t, total);
+    const L = buf.getChannelData(0), R = buf.getChannelData(1), sr = buf.sampleRate, n = L.length;
+    const hpA = Math.exp(-2 * Math.PI * 500 / sr), lpA = Math.exp(-2 * Math.PI * 150 / sr);
+    const win = (t0, t1) => {
+      const a = from + Math.floor(t0 * sr), b = Math.min(n, from + Math.floor(t1 * sr));
+      let pk = 0, s = 0, sh = 0, sl = 0, yh = 0, xh = 0, yl = 0;
+      for (let i = a; i < b; i++) {
+        const x = (L[i] + R[i]) * 0.5, p = Math.max(Math.abs(L[i]), Math.abs(R[i]));
+        if (p > pk) pk = p;
+        yh = hpA * (yh + x - xh); xh = x; yl = (1 - lpA) * x + lpA * yl;
+        s += x * x; sh += yh * yh; sl += yl * yl;
+      }
+      const c = Math.max(1, b - a), d = (e) => (e > 0 ? 10 * Math.log10(e / c) : -999);
+      return { pk, rms: d(s), hi: d(sh), lo: d(sl) };
+    };
+    const whole = win(0, end);
+    const rows = secs.map((x) => ({ name: x.name, bars: x.bars, t0: x.t0, ...win(x.t0, x.t1) }));
+    rows.push({ name: 'seam: last bar', bars: 1, t0: +(end - barSec).toFixed(2), ...win(end - barSec, end) });
+    rows.push({ name: 'seam: wrapped', bars: 1, t0: +end.toFixed(2), ...win(end, end + barSec) });
+    for (const r of rows) {
+      const dev = r.rms - whole.rms, ok = r.pk <= 1 && r.rms > -40 && Math.abs(dev) <= 4 && !stats.nan;
+      if (!ok) bad++;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${t} · ${r.name}</td><td>${r.bars}</td><td>${r.t0}</td><td>${r.pk.toFixed(3)}</td><td>${r.rms.toFixed(1)}</td>` +
+        `<td>${r.hi.toFixed(1)}</td><td>${r.lo.toFixed(1)}</td><td>${dev >= 0 ? '+' : ''}${dev.toFixed(1)}</td><td class="${ok ? 'ok' : 'bad'}">${ok ? 'ok' : 'CHECK'}</td>`;
+      tbl.appendChild(tr);
+    }
+    out[t] = { whole, rows, msPerSec: stats.msPerSec, seconds: total, nan: stats.nan };
+  }
+  window.__sectionResults = { tracks: out, bad };
+  return window.__sectionResults;
+}
+$('secs').onclick = () => runSections();
 
 // ---- visualiser: waveform (post-limiter, with pre-limiter ghost) + log-frequency spectrogram
 function fft(re, im) {
@@ -316,15 +410,17 @@ async function drawOne(name, sec, prepend) {
 }
 async function drawAll(list) {
   $('viz').innerHTML = '';
-  const names = list || [...SFX_NAMES, ...MUSIC_TRACKS, 'runStart', 'vulcan', 'laserBeam', 'armorStream', 'gameplay', 'stress'];
-  for (const n of names) await drawOne(n, MUSIC_TRACKS.includes(n) ? TRACK_SECONDS : n === 'stress' ? 6 : n === 'gameplay' ? 8 : (DUR[n] || 2));
+  const names = list || [...SFX_NAMES, ...MUSIC_TRACKS, 'runStart', 'runStart2', 'runStart3', 'vulcan', 'laserBeam', 'plasmaBeam', 'waveGun',
+    'armorStream', 'gameplay', 'stress'];
+  for (const n of names) await drawOne(n, MUSIC_TRACKS.includes(n) ? TRACK_SECONDS : (DUR[n] || 2));
   window.__vizDone = true;
 }
 $('vizall').onclick = () => drawAll();
 
-window.__lab = { audio, runAuto, drawAll, drawOne, __renderForTest, __renderBuffer, __songInfo };
+window.__lab = { audio, runAuto, runSections, drawAll, drawOne, __renderForTest, __renderBuffer, __songInfo, __bakeStats };
 const q = new URLSearchParams(location.search);
 if (q.has('auto')) runAuto();
+if (q.has('sections')) runSections(q.get('sections') ? q.get('sections').split(',') : null);
 if (q.has('viz')) drawAll(q.get('viz') ? q.get('viz').split(',') : null);
 </script>
 </body>

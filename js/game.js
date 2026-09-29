@@ -1049,6 +1049,7 @@ export class Game {
         else { this.addScore(5000); this.popupAt(it.x, it.z, '5,000', 'big'); this.audio.play('item'); }
       } else {
         p.main = c; p.level = Math.min(MAX_LEVEL, p.level + 1); p.fireT = 0; p.laserT = 0; // new weapon: fire at once
+        WP.equipped(this, p, 'main');
         this.audio.play('powerup');
         this.popupAt(it.x, it.z, MAIN_WEAPONS[c] ? MAIN_WEAPONS[c].name : 'POWER UP', 'big');
       }
@@ -1059,6 +1060,7 @@ export class Game {
         else { this.addScore(5000); this.popupAt(it.x, it.z, '5,000', 'big'); this.audio.play('item'); }
       } else {
         p.sub = c; p.subLevel = Math.max(1, Math.min(MAX_SUB_LEVEL, p.subLevel + 1)); p.subT = 0;
+        WP.equipped(this, p, 'sub');
         this.audio.play('powerup');
         this.popupAt(it.x, it.z, name, 'big');
       }

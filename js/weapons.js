@@ -7,9 +7,11 @@
 //   drawWeapons(g, fx)   every rendered frame: shots, then beam roots / muzzle glows
 //
 // Tables — a new weapon is one entry in each (plus its item colour / letter in defs.js):
-//   MAIN[key]  = { fire(g, p, dt), draw?(g, p, fx, t) }   key: MAIN_WEAPONS key (p.main)
-//   SUB[key]   = { fire(g, p) }                           key: SUB_WEAPONS key (p.sub); called when
-//                                                         p.subT runs out, must set p.subT again
+//   MAIN[key]  = { fire(g, p, dt), draw?(g, p, fx, t), equip?(g, p) }   key: MAIN_WEAPONS key (p.main)
+//   SUB[key]   = { fire(g, p), equip?(g, p) }            key: SUB_WEAPONS key (p.sub); fire is called
+//                                                         when p.subT runs out and must set p.subT again
+//   equip runs when an item switches to that weapon (after p.main / p.sub changed; game.collect
+//   already zeroes p.fireT, p.laserT and p.subT) — reset any timer or lock state of your own there.
 //   SHOT[kind] = { life, update?(g, i, dt) → 'remove'?, hit(g, i, t) → 'remove' | 'keep',
 //                  armor?(g, i, t) → 'remove' | 'keep', draw(g, i, fx) }      kind: SK value
 // Continuous weapons keep a cadence timer on the player and fire with the age-compensated loop
@@ -20,7 +22,8 @@
 // Shot fields (g.ps, index i): x z vx vz, dmg (already × aircraft dmg), r (hit radius), t (age),
 // kind, w (beam width), target (homing lock), trail (smoke timer), and three generic ones for new
 // weapons: pierce (Uint8: >0 = passes through, skips targets already in its hit list), hits (4 target
-// uids per shot: hits[i * 4 .. i * 4 + 3], see markHit / wasHit) and aux (one free float).
+// uids per shot: hits[i * 4 .. i * 4 + 3], see markHit / wasHit; a target's uid is t.uid — its own
+// for a boss part, else the enemy's e.uid) and aux (one free float).
 // addShot() initialises every field and game.removeShot() copies every field.
 import { F, flatRot } from './fx.js';
 import { MAIN_WEAPONS, SUB_WEAPONS } from './defs.js';
@@ -311,7 +314,12 @@ for (const k of Object.keys(MAIN_WEAPONS)) if (!MAIN[k]) console.error(`weapons:
 for (const k of Object.keys(SUB_WEAPONS)) if (!SUB[k]) console.error(`weapons: no SUB entry for sub-weapon "${k}" (falls back to HOMING)`);
 for (const [name, k] of Object.entries(SK)) if (!SHOT[k] || typeof SHOT[k].draw !== 'function' || typeof SHOT[k].hit !== 'function') console.error(`weapons: SHOT[SK.${name}] is missing or incomplete`);
 
-// --- per-frame entry points (called by game.js) ---------------------------------------------
+// --- entry points (called by game.js) --------------------------------------------------------
+/** an item just switched p.main (slot 'main') or p.sub (slot 'sub') */
+export function equipped(g, p, slot) {
+  const W = slot === 'main' ? MAIN[p.main] : SUB[p.sub];
+  if (W && W.equip) W.equip(g, p);
+}
 export function fireWeapons(g, dt) {
   if (!canShoot(g)) return;
   const p = g.player;

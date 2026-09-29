@@ -1,15 +1,11 @@
-// input.js — keyboard, on-screen joystick (touch), mouse drag (desktop) and gamepad.
+// input.js — keyboard (computer), on-screen joystick (touch) and gamepad.
 export class Input {
   constructor(surface) {
     this.surface = surface;
     this.keys = new Set();
     this.edges = new Set();       // actions triggered since last consume
-    this.dragId = null;
-    this.dragLast = null;         // {x, y} in client px
-    this.dragDX = 0; this.dragDY = 0; // accumulated px since last consume
-    this.touches = new Map();
     this.usingTouch = false;
-    this.dragTravel = 0; // total drag distance in px (used to retire the movement hint)
+    this.dragTravel = 0; // total joystick travel in px (used to retire the movement hint)
     this.pad = { x: 0, y: 0, bomb: false, pause: false, prevBomb: false, prevPause: false, prevStart: false, start: false };
     this.enabled = true;
     this._bind();
@@ -35,46 +31,17 @@ export class Input {
       this.usingTouch = false;
     });
     window.addEventListener('keyup', (e) => { const a = map[e.code]; if (a) this.keys.delete(a); });
-    window.addEventListener('blur', () => { this.keys.clear(); this.touches.clear(); this._endDrag(); this.releaseStick(); });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) { this.touches.clear(); this._endDrag(); this.releaseStick(); } });
+    window.addEventListener('blur', () => { this.keys.clear(); this.releaseStick(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.releaseStick(); });
 
     const s = this.surface;
     s.addEventListener('pointerdown', (e) => {
       if (e.target.closest && e.target.closest('button, input, .panel, #stick')) return;
-      // Touch/pen move the jet only through the joystick; the rest of the screen does nothing.
-      if (e.pointerType !== 'mouse') { this.usingTouch = true; this.edges.add('tap'); return; }
-      if (this.dragId !== null && !this.touches.has(this.dragId)) this._endDrag(); // stale drag (lost pointerup)
-      this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
-      if (this.dragId === null) {
-        this.dragId = e.pointerId;
-        this.dragLast = { x: e.clientX, y: e.clientY };
-        try { s.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-      }
+      // The jet moves only with the joystick (touch) or the keyboard/gamepad (computer);
+      // taps and clicks elsewhere just count as a 'tap' (e.g. to skip the results tally).
+      if (e.pointerType !== 'mouse') this.usingTouch = true;
       this.edges.add('tap');
     });
-    s.addEventListener('pointermove', (e) => {
-      const tp = this.touches.get(e.pointerId);
-      if (tp) { tp.x = e.clientX; tp.y = e.clientY; }
-      if (e.pointerId !== this.dragId || !this.dragLast) return;
-      // coalesced events give smoother movement on high-rate touch screens
-      const list = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
-      const last = list && list.length ? list[list.length - 1] : e;
-      this.dragDX += last.clientX - this.dragLast.x;
-      this.dragDY += last.clientY - this.dragLast.y;
-      this.dragTravel += Math.abs(last.clientX - this.dragLast.x) + Math.abs(last.clientY - this.dragLast.y);
-      this.dragLast.x = last.clientX; this.dragLast.y = last.clientY;
-    });
-    const end = (e) => {
-      this.touches.delete(e.pointerId);
-      if (e.pointerId === this.dragId) {
-        // hand the drag over to a remaining finger, if any
-        this._endDrag();
-        for (const [id, t] of this.touches) { this.dragId = id; this.dragLast = { x: t.x, y: t.y }; break; }
-      }
-    };
-    s.addEventListener('pointerup', end);
-    s.addEventListener('pointercancel', end);
-    s.addEventListener('lostpointercapture', (e) => { if (e.pointerId === this.dragId) this._endDrag(); });
     // keep the page from scrolling/zooming under the game
     s.addEventListener('contextmenu', (e) => e.preventDefault());
     document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -86,7 +53,6 @@ export class Input {
       e.preventDefault();
     }, { passive: false });
   }
-  _endDrag() { this.dragId = null; this.dragLast = null; }
   // On-screen joystick. zone: the touch area; base: the ring; knob: the moving cap.
   bindStick(zone, base, knob) {
     const st = this.stick = { id: null, x: 0, y: 0, cx: 0, cy: 0, R: 48, zone, knob };
@@ -128,9 +94,6 @@ export class Input {
     st.knob.style.transform = '';
     st.zone.classList.remove('active');
   }
-  get dragging() { return this.dragId !== null; }
-  // Accumulated drag in client pixels since the last call.
-  consumeDrag() { const d = { x: this.dragDX, y: this.dragDY }; this.dragDX = 0; this.dragDY = 0; return d; }
   // Digital + analog movement axis in [-1, 1] (x right, y down).
   axis() {
     let x = 0, y = 0;
@@ -172,7 +135,7 @@ export class Input {
     if (navY !== this.pad.prevNav) { if (navY < 0) this.edges.add('navUp'); if (navY > 0) this.edges.add('navDown'); }
     this.pad.prevNav = navY;
     this.pad.prevBomb = bomb; this.pad.prevStart = start; this.pad.prevPause = confirm;
-    if (x || y) this.usingTouch = false;
+    if (x || y || bomb || start || confirm) { this.usingTouch = false; this.padUsed = true; }
   }
   // Edge-triggered action (true once per press).
   take(action) { if (this.edges.has(action)) { this.edges.delete(action); return true; } return false; }

@@ -13,14 +13,29 @@ clearTimeout(window.__cbBootTimer);
 
 const $ = (id) => document.getElementById(id);
 const DEBUG = /debug/.test(location.hash);
-const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
-if (isTouch) document.body.classList.add('touch');
+// Phones/tablets (coarse pointer, no mouse) start in touch mode with the joystick; computers start in
+// keyboard mode. Hybrid devices switch live: a finger on the screen shows the joystick, a movement
+// key or gamepad hides it again.
+const isTouch = matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
+let touchUI = isTouch;
+document.body.classList.toggle('touch', touchUI);
+function setTouchUI(on) {
+  if (touchUI === on) return;
+  touchUI = on;
+  document.body.classList.toggle('touch', on);
+  if (!on && input) input.releaseStick();
+  if (renderer) resize();
+}
+window.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') setTouchUI(true); }, { capture: true, passive: true });
+window.addEventListener('keydown', (e) => {
+  if (/^(Arrow|Key[WASDXKP]$|Space|Shift|Escape|Enter)/.test(e.code)) setTouchUI(false);
+}, { capture: true });
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const landscapeLock = matchMedia('(orientation: landscape) and (max-height: 500px)');
 const safeProbe = document.createElement('div');
 safeProbe.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none';
 document.body.appendChild(safeProbe);
-const isPortraitBlocked = () => isTouch && landscapeLock.matches;
+const isPortraitBlocked = () => touchUI && landscapeLock.matches;
 
 // ---------------------------------------------------------------------------------
 // persistence (never required to work)
@@ -186,7 +201,7 @@ function resize() {
   renderer.setSize(W, H, false);
   if (composer) composer.setSize(W, H);
   // keep the jet clear of the bottom HUD (lives/weapon/bomb button) and the thumb
-  view.bottomPx = (isTouch ? 158 : 60) + (safeProbe.offsetHeight || 0); // touch: stay above the joystick
+  view.bottomPx = (touchUI ? 158 : 70) + (safeProbe.offsetHeight || 0); // touch: stay above the joystick
   view.fit(W, H);
   if (isPortraitBlocked() && (state === 'playing' || state === 'resuming')) pause();
 }
@@ -212,6 +227,7 @@ function frame(now) {
   t += rawDt;
   fpsAvg = fpsAvg * 0.95 + (1 / rawDt) * 0.05;
   input.pollGamepad();
+  if (input.padUsed) { input.padUsed = false; setTouchUI(false); }
   fx.begin();
 
   if (input.take('mute')) { audio.setMuted(!audio.muted); }
@@ -271,7 +287,8 @@ let resumeT = 0, resumeShown = 0;
 
 // Gamepad menu navigation: D-pad/stick moves focus, A activates, B goes back.
 function menuNav() {
-  const up = input.take('navUp'), down = input.take('navDown'), ok = input.take('padConfirm'), back = input.take('padBack');
+  const up = input.take('navUp') || input.take('up'), down = input.take('navDown') || input.take('down');
+  const ok = input.take('padConfirm'), back = input.take('padBack');
   if (!up && !down && !ok && !back) return;
   const btns = [...document.querySelectorAll('.screen:not([hidden]) .btn')].filter((b) => b.offsetParent !== null);
   if (!btns.length) return;
@@ -299,7 +316,7 @@ function updateHints() {
   }
   if (!hintFlags.bomb && !hintState.bombShown && game.eb.n >= 6 && game.bombs > 0 && game.player.alive) {
     hintState.bombShown = true; hintFlags.bomb = true; store.set('hints', hintFlags);
-    ui.bombHint(isTouch || input.usingTouch);
+    ui.bombHint(touchUI);
   }
 }
 function panelOpen() { return !$('howto').hidden || !$('settings').hidden; }
@@ -324,6 +341,7 @@ function toTitle(first = false) {
   releaseWake();
   if (!first) ui.flash(0.3);
   focusFirst('title');
+  updateFocusNote();
 }
 function startGame(loop = 1, keepScore = false) {
   audio.init();
@@ -342,14 +360,13 @@ function startGame(loop = 1, keepScore = false) {
   audio.play('stageStart');
   audio.music('stage');
   hintState = { moveShown: false, bombShown: false };
-  if (loop === 1 && !(hintFlags.moved && isTouch)) {
-    setTimeout(() => { if (state === 'playing') { hintState.moveShown = true; input.dragTravel = 0; ui.hint(input.usingTouch || isTouch); } }, 1200);
+  if (loop === 1 && !(hintFlags.moved && touchUI)) {
+    setTimeout(() => { if (state === 'playing') { hintState.moveShown = true; input.dragTravel = 0; ui.hint(touchUI); } }, 1200);
   }
   try { if (!history.state || !history.state.cb) history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ }
   updateHud();
   requestWake();
   input.clearEdges();
-  input.consumeDrag();
 }
 function pause() {
   if (state !== 'playing' && state !== 'resuming') return;
@@ -378,7 +395,6 @@ function finishResume() {
   state = 'playing';
   ui.clearBanner();
   input.clearEdges();
-  input.consumeDrag();
   last = performance.now();
   requestWake();
 }
@@ -400,7 +416,6 @@ function continueYes() {
   audio.music(tr === undefined ? 'stage' : tr);
   audio.play('confirm');
   input.clearEdges();
-  input.consumeDrag();
 }
 function gameOver() {
   state = 'gameover';
@@ -521,7 +536,7 @@ function confirmTwice(btn) {
 }
 function restoreLabel(btn) { const span = btn.querySelector('span'); if (btn.dataset.label) span.textContent = btn.dataset.label; clearTimeout(btn._armT); }
 function focusFirst(id) {
-  if (isTouch) return;
+  if (touchUI) return;
   const el = document.querySelector(`#${id} .btn`);
   if (el) setTimeout(() => el.focus({ preventScroll: true }), 30);
 }
@@ -587,8 +602,11 @@ function bindUI() {
     if (document.hidden) { if (state === 'playing' || state === 'resuming') pause(); if (state === 'paused' && game.score > 0) saveHi(); audio.suspend(); }
     else if (state !== 'paused') audio.resume();
   });
-  window.addEventListener('blur', () => { if (state === 'playing' || state === 'resuming') pause(); });
+  window.addEventListener('blur', () => { if (state === 'playing' || state === 'resuming') pause(); updateFocusNote(); });
+  window.addEventListener('focus', updateFocusNote);
 }
+// Embedded pages (e.g. an iframe preview) don't get key presses until clicked once; say so on the title.
+function updateFocusNote() { $('focus-note').hidden = document.hasFocus(); }
 let lastQualitySetting = settings.quality;
 function applySettings() {
   const setSeg = (id, v) => { for (const b of $(id).querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === String(v))); };

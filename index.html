@@ -55,7 +55,7 @@ button { font: inherit; color: inherit; }
 .side { position: absolute; top: 0; bottom: 0; display: none; flex-direction: column; justify-content: center;
   gap: 18px; padding: 28px; color: var(--ink-dim); font-size: 13px; letter-spacing: 0.04em; }
 .side h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.24em; color: var(--ink); font-weight: 600; }
-.side kbd { display: inline-block; min-width: 22px; padding: 2px 6px; margin-right: 4px; border: 1px solid var(--panel-line);
+kbd, .side kbd { display: inline-block; min-width: 22px; padding: 2px 6px; margin-right: 4px; border: 1px solid var(--panel-line);
   border-bottom-width: 2px; border-radius: 4px; font: 600 11px var(--f-display); color: var(--ink); text-align: center; }
 .side .row { display: flex; align-items: center; gap: 6px; line-height: 1.9; }
 .side .big { font: 700 28px var(--f-display); color: var(--amber); font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
@@ -134,6 +134,16 @@ body:not(.touch) #btn-bomb { display: none; }
 #btn-bomb.pulse { animation: pulse 0.6s ease-in-out 6; }
 @keyframes pulse { 50% { transform: scale(1.14); box-shadow: 0 0 34px rgba(255,160,0,0.9), inset 0 0 14px rgba(255,140,0,0.5); } }
 body.touch .kbd-only { display: none; }
+body:not(.touch) .touch-only { display: none; }
+/* keyboard legend where the joystick sits on phones */
+#keys { position: absolute; left: 50%; bottom: calc(14px + var(--safe-b)); transform: translateX(-50%); display: flex; flex-wrap: wrap;
+  justify-content: center; gap: 4px 12px; max-width: calc(100% - 240px); pointer-events: none;
+  font: 600 11px var(--f-cjk); letter-spacing: 0.06em; color: var(--ink-dim); text-shadow: 0 1px 0 #000; opacity: 0.85; }
+#keys span { white-space: nowrap; }
+#keys kbd { margin-right: 5px; background: rgba(8, 10, 18, 0.55); }
+body.touch #keys { display: none; }
+@media (min-width: 900px) { #keys { display: none; } } /* the side panel already lists the keys */
+.focus-note { color: var(--amber); }
 @keyframes drag { 0%, 100% { transform: translateX(-10px); } 50% { transform: translateX(10px); } }
 @keyframes hintIn { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes hintOut { to { opacity: 0; transform: translate(-50%, 10px); } }
@@ -250,11 +260,17 @@ body.touch .kbd-only { display: none; }
 <body>
 <div id="app">
   <aside class="side" id="side-l" aria-hidden="true">
-    <div><h3>CONTROLS</h3>
+    <div class="kbd-only"><h3>CONTROLS</h3>
       <div class="row"><kbd>←↑↓→</kbd>/<kbd>WASD</kbd> 移動</div>
-      <div class="row"><kbd>SHIFT</kbd> 精準移動</div>
+      <div class="row"><kbd>SHIFT</kbd> 慢速移動</div>
       <div class="row"><kbd>X</kbd>/<kbd>SPACE</kbd> 炸彈</div>
       <div class="row"><kbd>ESC</kbd>/<kbd>P</kbd> 暫停</div>
+      <div class="row">射擊為自動</div>
+    </div>
+    <div class="touch-only"><h3>CONTROLS</h3>
+      <div class="row">下方搖桿 移動</div>
+      <div class="row">右下 <kbd>B</kbd> 炸彈</div>
+      <div class="row">右上 <kbd>‖</kbd> 暫停</div>
       <div class="row">射擊為自動</div>
     </div>
     <div><h3>ITEMS</h3>
@@ -281,6 +297,7 @@ body.touch .kbd-only { display: none; }
         </div>
         <button id="btn-bomb" aria-label="炸彈">B<small id="bomb-count">3</small></button>
       </div>
+      <div id="keys" aria-hidden="true"><span><kbd>←↑↓→</kbd>移動</span><span><kbd>Shift</kbd>慢速</span><span><kbd>X</kbd>炸彈</span><span><kbd>Esc</kbd>暫停</span></div>
       <div id="stick" aria-label="移動搖桿"><div class="stick-base"><i class="stick-dir"></i><div class="stick-knob"></div></div></div>
     </div>
     <div id="hint" hidden></div>
@@ -306,13 +323,15 @@ body.touch .kbd-only { display: none; }
         <button class="btn" data-act="howto">HOW TO PLAY<span>操作說明</span></button>
         <button class="btn" data-act="settings">SETTINGS<span>設定</span></button>
       </div>
+      <div class="blink kbd-only" id="press-enter">PRESS ENTER ・ 按 Enter 出擊</div>
+      <div class="foot kbd-only focus-note" id="focus-note" hidden>先點一下畫面，就能用鍵盤操作</div>
       <div class="foot">HI-SCORE <b id="title-hi">0</b></div>
     </section>
 
     <section class="screen dim" id="howto" hidden>
       <div class="panel">
         <h2>HOW TO PLAY<small>操作說明</small></h2>
-        <div><h4>TOUCH 手機</h4><ul>
+        <div class="touch-only"><h4>TOUCH 手機</h4><ul>
           <li>用畫面下方中央的搖桿移動：推得越遠飛得越快，輕推可微調位置。</li>
           <li>射擊全自動。右下角 <b>B</b> 鈕投下炸彈：清除敵彈、重創全畫面敵人，並短暫無敵。</li>
         </ul></div>
@@ -343,7 +362,7 @@ body.touch .kbd-only { display: none; }
           <button data-v="on">ON</button><button data-v="off">OFF</button></div></div>
         <div class="setting"><label>手機震動回饋</label><div class="seg" id="set-haptics" role="group" aria-label="手機震動回饋">
           <button data-v="on">ON</button><button data-v="off">OFF</button></div></div>
-        <div class="setting"><label>搖桿速度</label><div class="seg" id="set-touch" role="group" aria-label="搖桿速度">
+        <div class="setting touch-only"><label>搖桿速度</label><div class="seg" id="set-touch" role="group" aria-label="搖桿速度">
           <button data-v="0.85">慢</button><button data-v="1">標準</button><button data-v="1.2">快</button></div></div>
         <button class="btn primary" data-act="back">OK<span>返回</span></button>
       </div>

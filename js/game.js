@@ -444,7 +444,6 @@ export class Game {
     if (!p.alive) {
       p.respawn -= rawDt;
       if (p.respawn <= 0 && this.lives >= 0 && this.phase !== 'clear') this.respawnPlayer();
-      input.consumeDrag();
       return;
     }
     const prevX = p.x, prevZ = p.z;
@@ -452,17 +451,7 @@ export class Game {
       p.entering -= dt;
       const tz = Math.min(v.zBottom - 5, (v.zPlayerMax ?? v.zBottom) - 1.5);
       p.z = lerp(p.z, tz, Math.min(1, dt * 4));
-      input.consumeDrag();
     } else if (this.phase !== 'clear' && !(this.phase === 'bossdead' && this.clearT > 5.5)) {
-      // relative drag: convert pixel delta at the jet's screen position into plane units
-      const drag = input.consumeDrag();
-      if (drag.x || drag.y) {
-        const sens = this.settings.touchSens || 1;
-        const s = v.toScreen(p.x, 0, p.z, this.tmpS);
-        const a = v.screenToPlane(s.x, s.y, { x: 0, z: 0 });
-        const b = v.screenToPlane(s.x + drag.x * sens, s.y + drag.y * sens, { x: 0, z: 0 });
-        p.x += b.x - a.x; p.z += b.z - a.z;
-      }
       const ax = input.axis();
       const sp = (ax.slow ? 6.5 : 13.5) * (ax.stick ? (this.settings.touchSens || 1) : 1);
       p.x += ax.x * sp * dt; p.z += ax.y * sp * dt;

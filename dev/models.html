@@ -45,6 +45,11 @@
   th, td { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); }
   th { color: var(--ink-soft); font-weight: 500; }
   td.n { text-align: right; }
+  tr.grp td { color: var(--ink-soft); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; padding-top: 8px; border-bottom-color: #3a4456; }
+  td .warn { color: var(--warn); cursor: help; }
+  #empty { white-space: pre-line; position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); max-width: 80%; text-align: center;
+    font: 600 12px/1.5 system-ui, sans-serif; color: #e6edf5; background: rgba(8, 10, 16, .72); border: 1px solid var(--line);
+    padding: 10px 14px; pointer-events: none; }
   .ok { color: var(--ok); } .bad { color: var(--bad); font-weight: 700; }
   #hud { position: absolute; left: 8px; top: 8px; font: 11px/1.35 ui-monospace, Menlo, Consolas, monospace; color: #cfd8e3;
     text-shadow: 0 1px 2px #000; pointer-events: none; white-space: pre; }
@@ -61,19 +66,22 @@
 </style>
 </head>
 <body class="game has-panel">
-<div id="stage"><div id="view"><div id="labels"></div><div id="hud"></div></div></div>
+<div id="stage"><div id="view"><div id="labels"></div><div id="hud"></div><div id="empty" hidden></div></div></div>
 <button id="toggle">☰ controls</button>
 <aside id="panel">
   <h1>CRIMSON BOLT <b>赤電</b> · models</h1>
-  <p class="sub">Preview for <code>js/models.js</code>. Gameplay view uses the game camera and lights at true scale.</p>
+  <p class="sub">Preview for <code>js/models.js</code> and its extension files (<code>models_ships / models_s2 / models_s3</code>). Gameplay view uses the game camera and lights at true scale.</p>
   <div class="row"><span class="seg" id="modeSeg"><button data-mode="game">Gameplay view</button><button data-mode="inspect">Inspect</button></span></div>
 
   <div id="gameCtl">
+    <h2>Layout</h2>
+    <div class="row"><span class="seg" id="layoutSeg"><button data-l="s1">Stage 1</button><button data-l="s2">Stage 2</button><button data-l="s3">Stage 3</button><button data-l="hangar">Hangar</button></span></div>
     <h2>Ground (y = −6)</h2>
-    <div class="row"><span class="seg" id="groundSeg"><button data-g="sea">Sea</button><button data-g="country">Country</button><button data-g="city">City</button><button data-g="dusk">Dusk sea</button></span></div>
+    <div class="row"><span class="seg" id="groundSeg"><button data-g="sea">Sea</button><button data-g="country">Country</button><button data-g="city">City</button><button data-g="dusk">Dusk sea</button><button data-g="desert">Desert</button><button data-g="clouds">Clouds</button></span></div>
     <h2>Show</h2>
     <div class="row">
       <label><input type="checkbox" id="gBoss"> Boss</label>
+      <select id="gBossSel"></select>
       <label><input type="checkbox" id="gBossFlip"> Boss faces player</label>
     </div>
     <div class="row">
@@ -107,15 +115,21 @@
       <div class="row"><span class="k">yaw</span><input type="range" id="iAim" min="-180" max="180" step="1" value="0"><span class="v" id="iAimV">0°</span></div>
     </div>
     <div id="bossCtl">
-      <h2>Boss core</h2>
-      <div class="row"><span class="k">open</span><input type="range" id="iOpen" min="0" max="1" step="0.01" value="0"><span class="v" id="iOpenV">0</span></div>
+      <div id="openCtl">
+        <h2>Boss core</h2>
+        <div class="row"><span class="k">open</span><input type="range" id="iOpen" min="0" max="1" step="0.01" value="0"><span class="v" id="iOpenV">0</span></div>
+      </div>
       <h2>Destroyed parts</h2>
       <div class="row" id="partBoxes"></div>
     </div>
     <div id="itemCtl">
       <h2>Item variant</h2>
-      <div class="row"><span class="seg" id="pSeg"><button data-c="red">P red</button><button data-c="blue">P blue</button></span>
-        <span class="seg" id="sSeg"><button data-k="H">S · H</button><button data-k="N">S · N</button></span></div>
+      <div class="row"><span class="seg" id="pSeg"></span></div>
+      <div class="row"><span class="seg" id="sSeg"></span></div>
+    </div>
+    <div id="infoCtl">
+      <h2>Contract</h2>
+      <div class="row sub" id="contractInfo"></div>
     </div>
   </div>
 
@@ -124,7 +138,8 @@
 
   <h2>Budgets</h2>
   <table id="stats"><thead><tr><th>model</th><th class="n">meshes</th><th class="n">tris</th><th class="n">budget</th></tr></thead><tbody></tbody></table>
-  <p class="sub" style="margin-top:8px">Drag to orbit in Inspect. URL params: <code>mode, model, ground, boss, flip, open, destroy, flash, bank, thrust, aim, view, bloom, ui</code>.</p>
+  <p class="sub" style="margin-top:8px">⚠ = userData contract problem (hover, or see the console). Budgets: player 4/1500 · option 3/500 · enemy 4/700 · mid-boss 6/2500 · boss 24/8000 · item 4/700.</p>
+  <p class="sub" style="margin-top:8px">Drag to orbit in Inspect. URL params: <code>mode, model, layout (s1 s2 s3 hangar), ground, boss, bossId, flip, open, destroy, flash, bank, thrust, aim, view, color, kind, bloom, ui</code>.</p>
 </aside>
 
 <script type="module">
@@ -134,7 +149,13 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { createPlayer, createEnemy, createBoss, createItem, createShadow, modelStats, ENEMY_TYPES, GROUND_TYPES } from '../js/models.js';
+import { createPlayer, createOption, createEnemy, createBoss, createItem, createShadow, modelStats,
+  PLAYER_TYPES, OPTION_TYPES, BOSS_TYPES, ENEMY_TYPES, GROUND_TYPES } from '../js/models.js';
+import { AIRCRAFT, MAIN_ORDER, SUB_ORDER } from '../js/defs.js';
+// the raw extension tables: which stage a type belongs to, and the unpatched factory output for the contract check
+import * as SHIPS from '../js/models_ships.js';
+import * as S2 from '../js/models_s2.js';
+import * as S3 from '../js/models_s3.js';
 
 const GROUND_Y = -6;
 const SUN_POS = new THREE.Vector3(-14, 30, 10);
@@ -175,6 +196,13 @@ renderPass.render = (...a) => { renderer.info.reset(); _rpRender(...a); sceneInf
 function makeGroundTex(kind) {
   const S = 512, cv = document.createElement('canvas'); cv.width = cv.height = S;
   const g = cv.getContext('2d');
+  // repeat a shape of reach r at the opposite edges so the tiled texture has no seams
+  const wrap = (x, y, r, draw) => {
+    for (const dx of [0, -S, S]) for (const dy of [0, -S, S]) {
+      if ((dx && (x + dx < -r || x + dx > S + r)) || (dy && (y + dy < -r || y + dy > S + r))) continue;
+      draw(x + dx, y + dy);
+    }
+  };
   let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   if (kind === 'sea' || kind === 'dusk') {
     g.fillStyle = kind === 'sea' ? '#1c3d56' : '#2a2440'; g.fillRect(0, 0, S, S);
@@ -193,6 +221,30 @@ function makeGroundTex(kind) {
     }
     for (let i = 0; i < 140; i++) { g.fillStyle = `rgba(28,40,20,${0.5 + rnd() * 0.4})`; g.beginPath(); g.arc(rnd() * S, rnd() * S, 3 + rnd() * 7, 0, 7); g.fill(); }
     g.fillStyle = '#55524a'; g.fillRect(S / 2 - 14, 0, 28, S);
+  } else if (kind === 'desert') {
+    g.fillStyle = '#b8925b'; g.fillRect(0, 0, S, S);
+    for (let i = 0; i < 700; i++) {          // wind ripples, light and dark
+      const x = rnd() * S, y = rnd() * S, w = 20 + rnd() * 60, lt = rnd() < 0.5;
+      g.strokeStyle = lt ? `rgba(245,214,160,${0.1 + rnd() * 0.12})` : `rgba(110,72,38,${0.1 + rnd() * 0.12})`;
+      g.lineWidth = 1 + rnd() * 2;
+      wrap(x, y, w + 4, (px, py) => { g.beginPath(); g.moveTo(px, py); g.quadraticCurveTo(px + w / 2, py + 4, px + w, py); g.stroke(); });
+    }
+    for (let i = 0; i < 36; i++) {         // scattered scrub / rock patches
+      const x = rnd() * S, y = rnd() * S, r = 3 + rnd() * 10;
+      g.fillStyle = `rgba(104,66,38,${0.14 + rnd() * 0.18})`;
+      wrap(x, y, r, (px, py) => { g.beginPath(); g.arc(px, py, r, 0, 7); g.fill(); });
+    }
+    g.fillStyle = 'rgba(92,70,48,0.4)'; g.fillRect(S / 2 - 14, 0, 28, S);
+  } else if (kind === 'clouds') {
+    g.fillStyle = '#6f93b8'; g.fillRect(0, 0, S, S);          // deep sky through the gaps
+    for (let i = 0; i < 260; i++) {
+      const x = rnd() * S, y = rnd() * S, r = 14 + rnd() * 42, v = 222 + Math.floor(rnd() * 30);
+      wrap(x, y, r, (px, py) => {
+        const gr = g.createRadialGradient(px, py, 0, px, py, r);
+        gr.addColorStop(0, `rgba(${v},${v},${Math.min(255, v + 10)},0.92)`); gr.addColorStop(1, `rgba(${v},${v},255,0)`);
+        g.fillStyle = gr; g.beginPath(); g.arc(px, py, r, 0, 7); g.fill();
+      });
+    }
   } else {
     g.fillStyle = '#2f3237'; g.fillRect(0, 0, S, S);
     for (let y = 0; y < S; y += 64) for (let x = 0; x < S; x += 64) {
@@ -215,7 +267,7 @@ const groundMat = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 160), groundMat);
 ground.rotation.x = -Math.PI / 2; ground.position.set(0, GROUND_Y, -10);
 scene.add(ground);
-const SKY = { sea: 0x8fb4cf, country: 0xa7bfd0, city: 0x9aa7b4, dusk: 0x4a3a58 };
+const SKY = { sea: 0x8fb4cf, country: 0xa7bfd0, city: 0x9aa7b4, dusk: 0x4a3a58, desert: 0xd9bd8f, clouds: 0xa9c9ea };
 function setGround(kind) {
   if (!GROUND_TEX[kind]) GROUND_TEX[kind] = makeGroundTex(kind);
   groundMat.map = GROUND_TEX[kind]; groundMat.needsUpdate = true;
@@ -227,42 +279,126 @@ function setGround(kind) {
 }
 
 // ------------------------------------------------------------------ catalog
+// Every registered model: aircraft + option drones, each stage's enemies and boss, items.
+const BUDGET = { player: [4, 1500], option: [3, 500], enemy: [4, 700], midboss: [6, 2500], boss: [24, 8000], item: [4, 700] };
+const S2E = S2.ENEMIES || {}, S3E = S3.ENEMIES || {}, S2B = S2.BOSSES || {}, S3B = S3.BOSSES || {};
+const S1_TYPES = ['dart', 'hornet', 'tank', 'turret', 'gunboat', 'carrier', 'bomber', 'crawler'];
+// same precedence as the registry: stage-1 names win, then models_s3 over models_s2
+const srcOf = (t) => (S1_TYPES.includes(t) ? 's1' : S3E[t] ? 's3' : 's2');
+const bossSrc = (id) => (id === 'arclight' ? 's1' : S3B[id] ? 's3' : 's2');
+const OPTION_IDS = [...new Set([...AIRCRAFT.filter((a) => a.options > 0).map((a) => a.id), ...OPTION_TYPES])];
+const SECTIONS = [['ships', 'Aircraft · models_ships.js'], ['s1', 'Stage 1 · models.js'], ['s2', 'Stage 2 · models_s2.js'], ['s3', 'Stage 3 · models_s3.js'], ['items', 'Items']];
 const CATALOG = [
-  { id: 'player', make: () => createPlayer(), budget: [4, 1500] },
-  ...ENEMY_TYPES.map((t) => ({ id: t, make: () => createEnemy(t), budget: t === 'crawler' ? [6, 2500] : [4, 700], ground: GROUND_TYPES.includes(t) })),
-  { id: 'boss', make: () => createBoss(), budget: [24, 8000] },
-  { id: 'item P', make: () => createItem('P'), budget: [4, 700] },
-  { id: 'item S', make: () => createItem('S'), budget: [4, 700] },
-  { id: 'item B', make: () => createItem('B'), budget: [4, 700] },
-  { id: 'item medal', make: () => createItem('medal'), budget: [4, 700] },
-  { id: 'item 1UP', make: () => createItem('1UP'), budget: [4, 700] },
+  // 'player' / 'boss' keep their old ids (bookmarks, ?model=player)
+  { id: 'player', group: 'player', src: 'ships', make: () => createPlayer('bolt') },
+  ...PLAYER_TYPES.filter((id) => id !== 'bolt').map((id) => ({ id: 'player:' + id, group: 'player', src: 'ships', make: () => createPlayer(id), raw: () => SHIPS.PLAYERS[id]() })),
+  ...OPTION_IDS.map((id) => ({ id: 'option:' + id, group: 'option', src: 'ships', make: () => createOption(id),
+    raw: OPTION_TYPES.includes(id) ? () => SHIPS.OPTIONS[id]() : null, note: OPTION_TYPES.includes(id) ? '' : 'placeholder pod' })),
+  ...ENEMY_TYPES.map((t) => ({ id: t, group: 'enemy', src: srcOf(t), make: () => createEnemy(t), ground: GROUND_TYPES.includes(t),
+    raw: srcOf(t) === 's1' ? null : () => (S3E[t] || S2E[t])() })),
+  ...BOSS_TYPES.map((id) => ({ id: id === 'arclight' ? 'boss' : 'boss:' + id, bossId: id, group: 'boss', src: bossSrc(id), make: () => createBoss(id),
+    raw: id === 'arclight' ? null : () => (S3B[id] || S2B[id])() })),
+  ...['P', 'S', 'B', 'medal', '1UP'].map((k) => ({ id: 'item ' + k, group: 'item', src: 'items', make: () => createItem(k) })),
 ];
+CATALOG.sort((a, b) => SECTIONS.findIndex((s) => s[0] === a.src) - SECTIONS.findIndex((s) => s[0] === b.src));   // stable
+
+function budgetOf(c, m) {
+  if (c.group === 'enemy') return c.id === 'crawler' || m.userData.midboss ? BUDGET.midboss : BUDGET.enemy;
+  return BUDGET[c.group];
+}
+// userData contract (see the headers of modelkit.js / models_ships.js / models_s2.js). Extension models are
+// checked on the raw factory output, before the registry patches in its safe defaults.
+const NEED = {
+  player: ['radius', 'grazeRadius', 'debrisColor', 'muzzles', 'muzzleZ', 'trail', 'hitboxMarker', 'bankPivot', 'setBank', 'setThrust', 'setFlash', 'update', 'dispose'],
+  option: ['radius', 'debrisColor', 'muzzles', 'setFlash', 'update', 'dispose'],
+  enemy: ['radius', 'debrisColor', 'muzzles', 'setFlash', 'update', 'dispose'],
+  boss: ['radius', 'debrisColor', 'muzzles', 'setFlash', 'update', 'dispose', 'parts'],
+};
+function kindWanted(c) {
+  if (c.group === 'player') return 'player:' + (c.id === 'player' ? 'bolt' : c.id.slice(7));
+  if (c.group === 'boss') return 'boss:' + c.bossId;
+  if (c.group === 'option' || c.group === 'enemy') return c.id;
+  return null;
+}
+function contractIssues(c, m) {
+  const issues = [];
+  const want = kindWanted(c);
+  if (want && m.userData.kind !== want) issues.push(`kind "${m.userData.kind}" ≠ "${want}"`);
+  let raw = null;
+  if (c.raw) { try { raw = c.raw(); } catch (e) { issues.push('factory throws: ' + e.message); } }
+  const src = raw || m, ud = src.userData;
+  if (!src.isObject3D) return ['factory must return a THREE.Group'];
+  for (const k of NEED[c.group] || []) if (ud[k] === undefined || ud[k] === null) issues.push('missing ' + k);
+  if (Array.isArray(ud.muzzles) && !ud.muzzles.every((v) => v && v.isVector3)) issues.push('muzzles must be Vector3[]');
+  if (c.group === 'player') {
+    if (ud.trail && !(Array.isArray(ud.trail) && ud.trail.every((p) => Array.isArray(p) && p.length === 2))) issues.push('trail must be [[x, z], …]');
+    if (typeof ud.muzzleZ === 'number' && ud.muzzleZ >= 0) issues.push('muzzleZ ≥ 0: the nose must point to −z');
+  }
+  for (const [k, p] of partList(src)) for (const f of ['radius', 'muzzles', 'setFlash', 'setDestroyed']) if (p.userData[f] === undefined) issues.push(`part ${k}: missing ${f}`);
+  if (c.src === 's3' && ud.ground) issues.push('stage 3 has no ground (userData.ground)');
+  if (c.group !== 'item') {
+    src.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(src);
+    if (ud.ground && box.min.y < -0.3) issues.push(`ground unit sinks below y = 0 (min y ${box.min.y.toFixed(2)})`);
+    if (!ud.ground && (box.min.y > 0.05 || box.max.y < -0.05)) issues.push(`air unit is not centred on y = 0 (y ${box.min.y.toFixed(2)}…${box.max.y.toFixed(2)})`);
+  }
+  if (raw && raw.userData.dispose) raw.userData.dispose();
+  return issues;
+}
 
 // budget table + console log
 const tbody = document.querySelector('#stats tbody');
-for (const c of CATALOG) {
-  const m = c.make(); m.updateMatrixWorld(true);
+for (const [src, title] of SECTIONS) {
+  const tr = document.createElement('tr'); tr.className = 'grp';
+  tr.innerHTML = `<td colspan="4">${title}</td>`;
+  tbody.appendChild(tr);
+  const list = CATALOG.filter((c) => c.src === src);
+  if (!list.length) {
+    const e = document.createElement('tr');
+    e.innerHTML = '<td colspan="4" style="color:var(--ink-soft)">— nothing registered yet —</td>';
+    tbody.appendChild(e);
+  }
+  for (const c of list) addStatsRow(c);
+}
+function addStatsRow(c) {
+  let m;
+  try { m = c.make(); } catch (e) {
+    console.error(`[models] ${c.id}: build failed`, e);
+    c.issues = ['build failed: ' + e.message]; c.stats = { meshes: 0, sprites: 0, drawCalls: 0, tris: 0 }; c.budget = BUDGET[c.group] || BUDGET.enemy;
+    const tr = document.createElement('tr'); tr.innerHTML = `<td class="bad">${c.id} ✗</td><td colspan="3" class="bad">build failed</td>`; tbody.appendChild(tr);
+    return;
+  }
+  m.updateMatrixWorld(true);
+  if (m.userData.ground) c.ground = true;
   const s = modelStats(m);
+  c.budget = budgetOf(c, m);
+  c.issues = contractIssues(c, m);
   const okM = s.drawCalls <= c.budget[0], okT = s.tris <= c.budget[1];
-  console.log(`[models] ${c.id.padEnd(11)} meshes=${s.meshes} sprites=${s.sprites} drawCalls=${s.drawCalls} tris=${s.tris}  budget ≤${c.budget[0]} / ≤${c.budget[1]}  ${okM && okT ? 'OK' : 'OVER'}`);
+  console.log(`[models] ${c.id.padEnd(15)} meshes=${s.meshes} sprites=${s.sprites} drawCalls=${s.drawCalls} tris=${s.tris}  budget ≤${c.budget[0]} / ≤${c.budget[1]}  ${okM && okT ? 'OK' : 'OVER'}${c.note ? '  (' + c.note + ')' : ''}`);
+  if (!okM || !okT) console.warn(`[models] ${c.id}: OVER BUDGET ${s.drawCalls}/${s.tris} > ${c.budget[0]}/${c.budget[1]}`);
+  if (c.issues.length) console.error(`[models] ${c.id}: contract: ${c.issues.join('; ')}`);
   const tr = document.createElement('tr');
-  tr.innerHTML = `<td>${c.id}</td><td class="n ${okM ? 'ok' : 'bad'}">${s.drawCalls}</td><td class="n ${okT ? 'ok' : 'bad'}">${s.tris}</td><td class="n" style="color:var(--ink-soft)">${c.budget[0]}/${c.budget[1]}</td>`;
+  const warn = c.issues.length ? ` <span class="warn" title="${c.issues.join('\n').replace(/"/g, '&quot;')}">⚠</span>` : '';
+  tr.innerHTML = `<td>${c.id}${c.note ? ` <span style="color:var(--ink-soft)">· ${c.note}</span>` : ''}${warn}</td><td class="n ${okM ? 'ok' : 'bad'}">${s.drawCalls}</td><td class="n ${okT ? 'ok' : 'bad'}">${s.tris}</td><td class="n" style="color:var(--ink-soft)">${c.budget[0]}/${c.budget[1]}</td>`;
   tbody.appendChild(tr);
   c.stats = s;
   if (m.userData.dispose) m.userData.dispose();
 }
 
 // ------------------------------------------------------------------ state
-const state = { mode: 'game', ground: 'sea', t: 0, anim: true, flash: 0, pulse: 0, aim: 0, sweep: false };
+const state = { mode: 'game', layout: 's1', ground: 'sea', t: 0, anim: true, flash: 0, pulse: 0, aim: 0, sweep: false };
 const labelsEl = document.getElementById('labels');
 const hud = document.getElementById('hud');
 
-// ------------------------------------------------------------------ gameplay layout
+// ------------------------------------------------------------------ gameplay layouts
 const game = new THREE.Group(); scene.add(game);
-const gameItems = [];   // { model, shadow, label, air }
+const gameItems = [];   // { id, model, shadow, label, air, player, lz }
+const LABEL_Z = { boss: 5.2, bomber: 2.8, crawler: 2.8 };
 function sunOffset(h) { return new THREE.Vector3(SUN_POS.x, 0, SUN_POS.z).multiplyScalar(-h / SUN_POS.y); }
 function place(id, make, x, y, z, ry = 0, extra) {
-  const m = make(); m.position.set(x, y, z); m.rotation.y = ry;
+  let m, failed = false;
+  try { m = make(); } catch (e) { console.error(`[models] ${id}: build failed`, e); m = new THREE.Group(); failed = true; }
+  m.position.set(x, y, z); m.rotation.y = ry;
   if (extra) extra(m);
   game.add(m);
   const air = y > GROUND_Y + 1;
@@ -270,37 +406,144 @@ function place(id, make, x, y, z, ry = 0, extra) {
   const off = sunOffset(air ? y - GROUND_Y : 0.35);
   sh.position.set(x + off.x, GROUND_Y, z + off.z); sh.rotation.y = ry;
   game.add(sh);
-  const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = id; labelsEl.appendChild(lbl);
-  const it = { id, model: m, shadow: sh, label: lbl, air };
+  const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = failed ? id + ' ✗ build failed' : id; labelsEl.appendChild(lbl);
+  if (failed) lbl.style.color = 'var(--bad)';
+  let lz = LABEL_Z[id] ?? 0.9;
+  if (id.startsWith('boss:') || id.startsWith('ext ')) {    // extension units: label just below the footprint
+    m.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(m);
+    lz = Math.max(0.9, b.max.z - z + 0.25);
+  }
+  const it = { id, model: m, shadow: sh, label: lbl, air, player: id === 'player' || id.startsWith('player:'), lz };
   gameItems.push(it);
   return it;
 }
-// air units on the gameplay plane (y=0), ground units on the ground (y=−6)
-place('player', createPlayer, 0, 0, 5.2);
-place('dart', () => createEnemy('dart'), -5.2, 0, -3.5, Math.PI);
-place('dart', () => createEnemy('dart'), -3.4, 0, -4.6, Math.PI);
-place('hornet', () => createEnemy('hornet'), 0.4, 0, -4.2, Math.PI);
-place('carrier', () => createEnemy('carrier'), 5.0, 0, -3.6, Math.PI);
-place('bomber', () => createEnemy('bomber'), 3.0, 0, -12.5, Math.PI);
-place('tank', () => createEnemy('tank'), -8.0, GROUND_Y, -12.0, Math.PI, (m) => { m.userData.turret.rotation.y = 0.5; });
-place('turret', () => createEnemy('turret'), -4.0, GROUND_Y, -14.5, 0, (m) => { m.userData.turret.rotation.y = Math.PI + 0.3; });
-place('gunboat', () => createEnemy('gunboat'), 7.2, GROUND_Y, -8.5, Math.PI * 0.92, (m) => { m.userData.turret.rotation.y = 0.4; });
-place('crawler', () => createEnemy('crawler'), -2.5, GROUND_Y, -24.0, Math.PI);
-const ITEMS_ROW = [['P', (m) => m.userData.setColor('red')], ['P', (m) => m.userData.setColor('blue')], ['S', (m) => m.userData.setKind('H')],
-  ['S', (m) => m.userData.setKind('N')], ['B'], ['medal'], ['1UP']];
-ITEMS_ROW.forEach(([k, f], i) => place(k === 'P' ? (i ? 'P blue' : 'P red') : k === 'S' ? (i === 2 ? 'S·H' : 'S·N') : k,
-  () => { const m = createItem(k); if (f) f(m); return m; }, -6.0 + i * 2.0, 0, 1.2));
+function clearLayout() {
+  for (const it of gameItems) { game.remove(it.model, it.shadow); it.label.remove(); if (it.model.userData.dispose) it.model.userData.dispose(); }
+  gameItems.length = 0;
+}
+/** pack a stage's extension enemies in rows in front of the player: air units first, then ground, mid-bosses at the back */
+function packUnits(src) {
+  const specs = ENEMY_TYPES.filter((t) => srcOf(t) === src).map((t) => {
+    let m; try { m = createEnemy(t); } catch (e) { console.error(e); return null; }
+    m.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(m), ud = m.userData;
+    return { t, m, w: b.max.x - b.min.x, d: b.max.z - b.min.z, ground: !!ud.ground, big: !!ud.midboss };
+  }).filter(Boolean);
+  specs.sort((a, b) => (a.big - b.big) || (a.ground - b.ground));
+  let z = 2.8, row = [], rowW = 0;
+  const flush = () => {
+    if (!row.length) return;
+    const rowD = Math.max(...row.map((s) => s.d));
+    let x = -rowW / 2;
+    for (const s of row) {
+      // the game yaws units that face the player by π — show them that way
+      place('ext ' + s.t, () => s.m, x + s.w / 2, s.ground ? GROUND_Y : 0, z - rowD / 2, Math.PI);
+      gameItems[gameItems.length - 1].label.textContent = s.t;
+      x += s.w + 0.9;
+    }
+    z -= rowD + 1.6; row = []; rowW = 0;
+  };
+  for (const s of specs) {
+    if (row.length && (rowW + 0.9 + s.w > 13 || s.big !== row[0].big || s.ground !== row[0].ground)) flush();
+    rowW += (row.length ? 0.9 : 0) + s.w; row.push(s);
+  }
+  flush();
+  return specs.length;
+}
+const LAYOUT_GROUND = { s1: 'sea', s2: 'desert', s3: 'clouds', hangar: 'city' };
+const LAYOUT_BOSS = { s1: 'arclight', s2: Object.keys(S2B)[0], s3: Object.keys(S3B)[0], hangar: null };
+const LAYOUTS = {
+  s1() {
+    // air units on the gameplay plane (y=0), ground units on the ground (y=−6)
+    place('player', createPlayer, 0, 0, 5.2);
+    place('dart', () => createEnemy('dart'), -5.2, 0, -3.5, Math.PI);
+    place('dart', () => createEnemy('dart'), -3.4, 0, -4.6, Math.PI);
+    place('hornet', () => createEnemy('hornet'), 0.4, 0, -4.2, Math.PI);
+    place('carrier', () => createEnemy('carrier'), 5.0, 0, -3.6, Math.PI);
+    place('bomber', () => createEnemy('bomber'), 3.0, 0, -12.5, Math.PI);
+    place('tank', () => createEnemy('tank'), -8.0, GROUND_Y, -12.0, Math.PI, (m) => { m.userData.turret.rotation.y = 0.5; });
+    place('turret', () => createEnemy('turret'), -4.0, GROUND_Y, -14.5, 0, (m) => { m.userData.turret.rotation.y = Math.PI + 0.3; });
+    place('gunboat', () => createEnemy('gunboat'), 7.2, GROUND_Y, -8.5, Math.PI * 0.92, (m) => { m.userData.turret.rotation.y = 0.4; });
+    place('crawler', () => createEnemy('crawler'), -2.5, GROUND_Y, -24.0, Math.PI);
+    const ITEMS_ROW = [['P', (m) => m.userData.setColor('red')], ['P', (m) => m.userData.setColor('blue')], ['S', (m) => m.userData.setKind('H')],
+      ['S', (m) => m.userData.setKind('N')], ['B'], ['medal'], ['1UP']];
+    ITEMS_ROW.forEach(([k, f], i) => place(k === 'P' ? (i ? 'P blue' : 'P red') : k === 'S' ? (i === 2 ? 'S·H' : 'S·N') : k,
+      () => { const m = createItem(k); if (f) f(m); return m; }, -6.0 + i * 2.0, 0, 1.2));
+    return '';
+  },
+  s2() {
+    place('player', createPlayer, 0, 0, 5.2);
+    const n = packUnits('s2');
+    return n || Object.keys(S2B).length ? '' : 'No stage-2 models registered yet — fill ENEMIES / BOSSES in js/models_s2.js';
+  },
+  s3() {
+    place('player', createPlayer, 0, 0, 5.2);
+    const n = packUnits('s3');
+    return n || Object.keys(S3B).length ? '' : 'No stage-3 models registered yet — fill ENEMIES / BOSSES in js/models_s3.js';
+  },
+  hangar() {
+    // every aircraft in defs.js (bolt stands in for any without a model yet) with its option drones,
+    // then every item variant: P per main weapon, S per sub-weapon, B, medal, 1UP
+    const n = AIRCRAFT.length, missing = [];
+    AIRCRAFT.forEach((ac, i) => {
+      const x = (i - (n - 1) / 2) * 3.3, real = PLAYER_TYPES.includes(ac.id);
+      if (!real) missing.push(ac.id);
+      const it = place(ac.id === 'bolt' ? 'player' : 'player:' + ac.id, () => createPlayer(ac.id), x, 0, 5.0);
+      it.label.textContent = ac.id + (real ? '' : '*');
+      for (let k = 0; k < ac.options; k++) {
+        const sx = k % 2 ? 1 : -1, row = Math.floor(k / 2);
+        const o = place('option:' + ac.id, () => createOption(ac.id), x + sx * 1.15, 0, 5.5 + row * 0.8);
+        o.label.textContent = ''; o.lz = -0.75;       // label above the pair, clear of the aircraft label
+        if (k === 0) { o.label.textContent = 'options' + (OPTION_TYPES.includes(ac.id) ? '' : '*'); o.dx = 1.15; }
+      }
+    });
+    const row1 = [...MAIN_ORDER.map((c) => ['P ' + c, () => { const m = createItem('P'); m.userData.setColor(c); return m; }]), ['B', () => createItem('B')]];
+    const row2 = [...SUB_ORDER.map((k) => ['S·' + k, () => { const m = createItem('S'); m.userData.setKind(k); return m; }]),
+      ['medal', () => createItem('medal')], ['1UP', () => createItem('1UP')]];
+    for (const [r, z] of [[row1, 1.0], [row2, -1.4]]) r.forEach(([id, mk], i) => place(id, mk, (i - (r.length - 1) / 2) * 2.2, 0, z));
+    const noOpt = AIRCRAFT.filter((a) => a.options > 0 && !OPTION_TYPES.includes(a.id)).map((a) => a.id);
+    const msg = [];
+    if (missing.length) msg.push(`* no model yet for ${missing.join(', ')} — bolt stands in`);
+    if (noOpt.length) msg.push(`* no option drone yet for ${noOpt.join(', ')} — placeholder pod`);
+    return msg.length ? msg.join('\n') + '\n(js/models_ships.js)' : '';
+  },
+};
+function setLayout(name, keepGround = false) {
+  if (!LAYOUTS[name]) name = 's1';
+  setBoss(false);
+  clearLayout();
+  state.layout = name;
+  const msg = LAYOUTS[name]();
+  const empty = document.getElementById('empty');
+  empty.textContent = msg; empty.hidden = !msg;
+  seg('layoutSeg', 'l', name);
+  const bs = document.getElementById('gBossSel');
+  if (LAYOUT_BOSS[name]) bs.value = LAYOUT_BOSS[name];
+  if (!keepGround && state.mode === 'game') setGround(LAYOUT_GROUND[name]);
+  labelsEl.style.display = state.mode === 'game' && document.getElementById('gLabels').checked ? '' : 'none';
+}
 let bossItem = null;
 function setBoss(on) {
   if (on && !bossItem) {
-    bossItem = place('boss', createBoss, 0, 0, -14.5, state.bossFlip ? Math.PI : 0);
+    const id = document.getElementById('gBossSel').value || 'arclight';
+    bossItem = place(id === 'arclight' ? 'boss' : 'boss:' + id, () => createBoss(id), 0, 0, -14.5, state.bossFlip ? Math.PI : 0);
+    if (bossItem.model.userData.ground) {        // land battleship: sits on the ground plane
+      bossItem.model.position.y = GROUND_Y; bossItem.air = false;
+      const off = sunOffset(0.35); bossItem.shadow.position.set(off.x, GROUND_Y, -14.5 + off.z);
+    }
     for (const it of gameItems) if (it !== bossItem && it.air && it.model.position.z < -8) it.model.visible = it.shadow.visible = false, it.label.style.display = 'none';
   } else if (!on && bossItem) {
     game.remove(bossItem.model, bossItem.shadow); bossItem.label.remove();
+    if (bossItem.model.userData.dispose) bossItem.model.userData.dispose();
     gameItems.splice(gameItems.indexOf(bossItem), 1); bossItem = null;
     for (const it of gameItems) { it.model.visible = it.shadow.visible = true; it.label.style.display = ''; }
   }
   document.getElementById('gBoss').checked = on;
+}
+{
+  const bs = document.getElementById('gBossSel');
+  for (const id of BOSS_TYPES) { const o = document.createElement('option'); o.value = id; o.textContent = id; bs.appendChild(o); }
 }
 
 // ------------------------------------------------------------------ inspect
@@ -315,7 +558,8 @@ function select(i) {
   if (cur) { insp.remove(cur); if (cur.userData.dispose) cur.userData.dispose(); }
   if (curShadow) insp.remove(curShadow);
   const c = CATALOG[curIdx];
-  cur = c.make(); insp.add(cur);
+  try { cur = c.make(); } catch (e) { console.error(`[models] ${c.id}: build failed`, e); cur = new THREE.Group(); cur.userData.kind = '(build failed)'; }
+  insp.add(cur);
   cur.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(cur);
   const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
@@ -330,12 +574,26 @@ function select(i) {
   controls.target.copy(center);
   state.inspR = r; state.inspCenter = center.clone();
   setView(state.view || '34');
-  document.getElementById('playerCtl').classList.toggle('hidden', c.id !== 'player');
-  const hasAim = !!(cur.userData.turret || (cur.userData.parts && cur.userData.parts.turrets));
+  const ud = cur.userData;
+  document.getElementById('playerCtl').classList.toggle('hidden', !(c.group === 'player' && ud.setBank));
+  const hasAim = !!(ud.turret || partList(cur).some(([k]) => /turret|^t\d|^gun/i.test(k)));
   document.getElementById('aimCtl').classList.toggle('hidden', !hasAim);
-  document.getElementById('bossCtl').classList.toggle('hidden', !cur.userData.parts);
-  document.getElementById('itemCtl').classList.toggle('hidden', !c.id.startsWith('item P') && !c.id.startsWith('item S'));
-  document.getElementById('iOpen').parentElement.classList.toggle('hidden', c.id !== 'boss');
+  document.getElementById('bossCtl').classList.toggle('hidden', !ud.parts);
+  document.getElementById('openCtl').classList.toggle('hidden', !(ud.parts && ud.parts.core && ud.parts.core.userData.setOpen));
+  document.getElementById('itemCtl').classList.toggle('hidden', c.id !== 'item P' && c.id !== 'item S');
+  document.getElementById('pSeg').parentElement.classList.toggle('hidden', c.id !== 'item P');
+  document.getElementById('sSeg').parentElement.classList.toggle('hidden', c.id !== 'item S');
+  if (ud.setColor) seg('pSeg', 'c', ud.color);
+  if (ud.setKind) seg('sSeg', 'k', ud.subKind);
+  const info = [`kind <code>${ud.kind}</code>`];
+  if (ud.radius !== undefined) info.push(`radius ${ud.radius}`);
+  if (ud.grazeRadius !== undefined) info.push(`graze ${ud.grazeRadius}`);
+  if (ud.muzzleZ !== undefined) info.push(`muzzleZ ${ud.muzzleZ}`);
+  if (ud.trail) info.push(`trail ${JSON.stringify(ud.trail)}`);
+  if (ud.ground) info.push('ground');
+  const issues = c.issues || [];
+  document.getElementById('contractInfo').innerHTML = info.join(' · ') + '<br>' + (issues.length
+    ? `<span class="bad">${issues.map((x) => x.replace(/</g, '&lt;')).join('<br>')}</span>` : '<span class="ok">userData contract OK</span>');
   buildPartBoxes();
   applyInspectControls();
   const s = modelStats(cur);
@@ -381,12 +639,15 @@ function applyInspectControls() {
   if (ud.parts && ud.parts.core && ud.parts.core.userData.setOpen) ud.parts.core.userData.setOpen(+document.getElementById('iOpen').value);
   setWire(document.getElementById('iWire').checked);
 }
+/** yaw turrets: ud.turret and turret arrays in parts fully, side guns (parts 'gun…') half as far */
 function aimAll(m, a) {
   const ud = m.userData;
   if (ud.turret) ud.turret.rotation.y = a;
   if (ud.parts) {
-    if (ud.parts.turrets) ud.parts.turrets.forEach((t) => (t.rotation.y = a));
-    if (ud.parts.gunL) { ud.parts.gunL.rotation.y = a * 0.5; ud.parts.gunR.rotation.y = a * 0.5; }
+    for (const [k, v] of Object.entries(ud.parts)) {
+      if (Array.isArray(v)) { if (/turret/i.test(k)) v.forEach((t) => (t.rotation.y = a)); }
+      else if (/^gun/i.test(k) && v !== ud.turret) v.rotation.y = a * 0.5;
+    }
   }
 }
 function setWire(on) {
@@ -417,6 +678,8 @@ function seg(id, key, val) {
 const $ = (id) => document.getElementById(id);
 for (const b of document.querySelectorAll('#modeSeg button')) b.onclick = () => setMode(b.dataset.mode);
 for (const b of document.querySelectorAll('#groundSeg button')) b.onclick = () => setGround(b.dataset.g);
+for (const b of document.querySelectorAll('#layoutSeg button')) b.onclick = () => setLayout(b.dataset.l);
+$('gBossSel').onchange = () => { if (bossItem) { setBoss(false); setBoss(true); } };
 for (const b of document.querySelectorAll('#viewSeg button')) b.onclick = () => setView(b.dataset.v);
 $('gBoss').onchange = (e) => setBoss(e.target.checked);
 $('gBossFlip').onchange = (e) => { state.bossFlip = e.target.checked; if (bossItem) { bossItem.model.rotation.y = bossItem.shadow.rotation.y = e.target.checked ? Math.PI : 0; } };
@@ -440,8 +703,15 @@ bindRange('iAim', (x) => x + '°', () => applyInspectControls());
 bindRange('iOpen', (x) => x.toFixed(2), () => applyInspectControls());
 $('iHitbox').onchange = () => applyInspectControls();
 $('iPulse').onclick = () => (state.pulse = 1);
-for (const b of document.querySelectorAll('#pSeg button')) b.onclick = () => { if (cur.userData.setColor) cur.userData.setColor(b.dataset.c); seg('pSeg', 'c', b.dataset.c); };
-for (const b of document.querySelectorAll('#sSeg button')) b.onclick = () => { if (cur.userData.setKind) cur.userData.setKind(b.dataset.k); seg('sSeg', 'k', b.dataset.k); };
+// item variants straight from defs.js: one P per main weapon, one S per sub-weapon
+for (const c of MAIN_ORDER) {
+  const b = document.createElement('button'); b.dataset.c = c; b.textContent = 'P ' + c; $('pSeg').appendChild(b);
+  b.onclick = () => { if (cur.userData.setColor) cur.userData.setColor(c); seg('pSeg', 'c', cur.userData.color); };
+}
+for (const k of SUB_ORDER) {
+  const b = document.createElement('button'); b.dataset.k = k; b.textContent = 'S · ' + k; $('sSeg').appendChild(b);
+  b.onclick = () => { if (cur.userData.setKind) cur.userData.setKind(k); seg('sSeg', 'k', cur.userData.subKind); };
+}
 $('bloom').onchange = () => {};
 $('toggle').onclick = () => document.body.classList.toggle('has-panel');
 
@@ -473,21 +743,21 @@ function frame() {
     for (const it of gameItems) {
       const ud = it.model.userData;
       if (state.anim && ud.update) ud.update(dt, t);
-      ud.setFlash(fl);
+      if (ud.setFlash) ud.setFlash(fl);
       if (state.sweep) aimAll(it.model, Math.sin(t * 0.8) * 2.2);
-      if (it.id === 'player' && ud.setBank) ud.setBank(state.anim ? Math.sin(t * 0.9) * 0.8 : qnum('bank', 0));
+      if (it.player && ud.setBank) ud.setBank(state.anim ? Math.sin(t * 0.9) * 0.8 : qnum('bank', 0));
     }
     // labels
     const w = view.clientWidth, h = view.clientHeight;
     if (labelsEl.style.display !== 'none') for (const it of gameItems) {
       if (!it.model.visible) continue;
-      _p.copy(it.model.position); _p.z += it.id === 'boss' ? 5.2 : it.id === 'bomber' || it.id === 'crawler' ? 2.8 : 0.9;
+      _p.copy(it.model.position); _p.z += it.lz; _p.x += it.dx || 0;
       _p.project(gameCam);
       it.label.style.left = ((_p.x * 0.5 + 0.5) * w) + 'px'; it.label.style.top = ((-_p.y * 0.5 + 0.5) * h) + 'px';
     }
   } else if (cur) {
     if (state.anim && cur.userData.update) cur.userData.update(dt, t);
-    cur.userData.setFlash(fl);
+    if (cur.userData.setFlash) cur.userData.setFlash(fl);
     controls.update();
   }
   const cam = state.mode === 'game' ? gameCam : inspCam;
@@ -505,7 +775,8 @@ function frame() {
 if (Q.get('ui') === '0') document.body.classList.add('noui');
 if (Q.has('bloom')) $('bloom').checked = Q.get('bloom') !== '0';
 if (Q.get('labels') === '0') $('gLabels').checked = false;
-state.ground = Q.get('ground') || 'sea';
+state.layout = LAYOUTS[Q.get('layout')] ? Q.get('layout') : 's1';
+state.ground = Q.get('ground') || LAYOUT_GROUND[state.layout];
 state.bossFlip = Q.get('flip') === '1'; $('gBossFlip').checked = state.bossFlip;
 if (Q.has('anim')) { state.anim = Q.get('anim') !== '0'; $('gAnim').checked = $('iAnim').checked = state.anim; }
 if (Q.has('t')) state.t = +Q.get('t');
@@ -514,6 +785,8 @@ $('iBank').value = qnum('bank', 0); $('iThrust').value = qnum('thrust', 0.5); $(
 for (const [id, fmt] of [['iFlash', (x) => x.toFixed(2)], ['iBank', (x) => x.toFixed(2)], ['iThrust', (x) => x.toFixed(2)], ['iAim', (x) => x + '°'], ['iOpen', (x) => x.toFixed(2)]]) $(id + 'V').textContent = fmt(+$(id).value);
 if (Q.has('view')) state.view = Q.get('view');
 if (Q.has('model')) { const i = CATALOG.findIndex((c) => c.id === Q.get('model') || c.id === 'item ' + Q.get('model')); if (i >= 0) curIdx = i; }
+setLayout(state.layout, true);
+if (Q.has('bossId') && BOSS_TYPES.includes(Q.get('bossId'))) $('gBossSel').value = Q.get('bossId');
 setMode(Q.get('mode') === 'inspect' ? 'inspect' : 'game');
 if (Q.get('boss') === '1') setBoss(true);
 if (state.mode === 'inspect' && Q.has('destroy')) {
@@ -523,11 +796,11 @@ if (state.mode === 'inspect' && Q.has('destroy')) {
   }
 }
 if (state.mode === 'inspect') {
-  if (Q.has('color') && cur.userData.setColor) cur.userData.setColor(Q.get('color'));
-  if (Q.has('kind') && cur.userData.setKind) cur.userData.setKind(Q.get('kind'));
+  if (Q.has('color') && cur.userData.setColor) { cur.userData.setColor(Q.get('color')); seg('pSeg', 'c', cur.userData.color); }
+  if (Q.has('kind') && cur.userData.setKind) { cur.userData.setKind(Q.get('kind')); seg('sSeg', 'k', cur.userData.subKind); }
 }
 if (Q.get('ui') === '0') resize();
-window.__preview = { setMode, select, setBoss, setGround, setView, state, scene, CATALOG, get current() { return cur; } };
+window.__preview = { setMode, setLayout, select, setBoss, setGround, setView, state, scene, CATALOG, get current() { return cur; } };
 requestAnimationFrame(frame);
 </script>
 </body>

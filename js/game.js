@@ -133,6 +133,7 @@ const B_COLOR = [[1.5, 0.16, 0.75], [1.8, 0.42, 0.03], [1.3, 0.2, 1.4], [1.8, 0.
 
 const SK = WP.SK; // player shot kinds live with the weapons
 const HIT_R0 = 0.3; // the hitbox dot is drawn for this radius (bolt); other aircraft scale it
+const TRAIL_COL = [2.6, 1.1, 0.35]; // engine exhaust sprite colour when the model has no userData.trailColor
 // debris fallbacks for models without userData.debrisColor
 const DEATH_DEBRIS = new THREE.Color(0.9, 0.15, 0.18);
 const PART_DEBRIS = new THREE.Color(0.4, 0.4, 0.45);
@@ -150,7 +151,7 @@ export class Game {
     // aircraft (setAircraft): stats, gun line and exhaust points of the current mesh
     this.ac = AIRCRAFT_BY_ID[DEFAULT_AIRCRAFT];
     this.playerO = null;
-    this.muzzleZ = -1.0; this.trail = [[0, 0.95]]; this.trailJ = 0.18; this.hitK = 1;
+    this.muzzleZ = -1.0; this.trail = [[0, 0.95]]; this.trailJ = 0.18; this.hitK = 1; this.trailCol = TRAIL_COL;
     // option drones: [{ o, mesh, shadow, x, z, bank, side, row, muzzleZ, trail }]
     this.options = []; this.optLive = false; this.optSpread = 1; this.optCol = [1, 1, 1];
     this.enemies = [];
@@ -240,6 +241,7 @@ export class Game {
     let mx = 0;
     for (const t of this.trail) mx = Math.max(mx, Math.abs(t[0]));
     this.trailJ = Math.max(0.06, 0.18 - mx); // bolt: ±0.095 nozzles ± 0.085 = the old ±0.18 spread
+    this.trailCol = Array.isArray(ud.trailColor) && ud.trailColor.length === 3 ? ud.trailColor : TRAIL_COL; // bolt has none: the old orange
     this.hitK = ac.hitR / HIT_R0;
     const c = new THREE.Color(ac.hex);
     this.optCol = [c.r, c.g, c.b];
@@ -1134,7 +1136,8 @@ export class Game {
     // engine trail from one of the jet's exhaust points
     if (emit && p.alive && p.mesh.visible && Math.random() < 0.7) {
       const tr = this.trail, e = tr.length === 1 ? tr[0] : tr[(Math.random() * tr.length) | 0], j = this.trailJ;
-      fx.trail(p.x + e[0] + rnd(-j, j), 0.05, p.z + e[1], 2.6, 1.1, 0.35, 0.45, 0.22, 0.2);
+      const tc = this.trailCol;
+      fx.trail(p.x + e[0] + rnd(-j, j), 0.05, p.z + e[1], tc[0], tc[1], tc[2], 0.45, 0.22, 0.2);
     }
     if (emit && this.optLive) {
       const c = this.optCol;

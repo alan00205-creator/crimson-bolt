@@ -1,14 +1,21 @@
-// game.js — gameplay runtime: player, weapons, enemies, bullets, items, collisions, scoring.
-// The stage timeline and enemy behaviours live in stage.js; menus/flow live in main.js.
+// game.js — gameplay runtime: player aircraft and option drones, enemies, bullets, items,
+// collisions, scoring and the stage phases. Stage timelines, enemy definitions and behaviours live
+// in stage.js / stage2.js / stage3.js (assembled by stages.js); the player's weapons and shot kinds
+// in weapons.js; menus and flow in main.js; shared data (aircraft, weapons, money) in defs.js.
 import * as THREE from 'three';
 import { F, flatRot } from './fx.js';
-import { ENEMY, TIMELINE, STAGE_BOSS_AT, spawnBoss } from './stage.js';
+import { ENEMY, STAGES } from './stages.js';
+import * as WP from './weapons.js';
+import {
+  AIRCRAFT, AIRCRAFT_BY_ID, DEFAULT_AIRCRAFT, MONEY, MAIN_WEAPONS, MAIN_ORDER, SUB_WEAPONS, SUB_ORDER, MAX_LEVEL, MAX_SUB_LEVEL,
+} from './defs.js';
 
 const DEG = Math.PI / 180;
 const TILT = 20 * DEG;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 const rnd = (a, b) => a + Math.random() * (b - a);
+const r9 = (v) => Math.round(v * 1e9) / 1e9; // canonical doubles: 1 + 0.3 * 1 === 1.3 exactly
 
 // ---------------------------------------------------------------------------
 // View: camera fitting and plane/ground/screen conversions.
@@ -115,21 +122,6 @@ class Pool {
   prewarm(n) { const a = []; for (let i = 0; i < n; i++) a.push(this.get()); for (const o of a) this.put(o); }
 }
 
-// Weapon patterns --------------------------------------------------------------
-// Vulcan (red): per level, a list of [xOffset, angleDeg]. Angle 0 = straight up.
-// Forward (near-0°) streams grow 2,2,3,3,4,4,5,5 so every level adds focused damage; outer
-// streams add coverage.
-const VULCAN = [
-  null,
-  [[-0.2, 0], [0.2, 0]],
-  [[-0.2, 0], [0.2, 0], [-0.35, -8], [0.35, 8]],
-  [[-0.3, 0], [0, 0], [0.3, 0], [-0.4, -9], [0.4, 9]],
-  [[-0.3, 0], [0, 0], [0.3, 0], [-0.4, -7], [0.4, 7], [-0.5, -16], [0.5, 16]],
-  [[-0.36, -1], [-0.12, 0], [0.12, 0], [0.36, 1], [-0.45, -7], [0.45, 7], [-0.55, -17], [0.55, 17]],
-  [[-0.36, -1], [-0.12, 0], [0.12, 0], [0.36, 1], [-0.45, -6], [0.45, 6], [-0.5, -13], [0.5, 13], [-0.6, -24], [0.6, 24]],
-  [[-0.4, -1.5], [-0.2, -0.5], [0, 0], [0.2, 0.5], [0.4, 1.5], [-0.45, -7], [0.45, 7], [-0.5, -15], [0.5, 15], [-0.6, -26], [0.6, 26]],
-  [[-0.4, -1.5], [-0.2, -0.5], [0, 0], [0.2, 0.5], [0.4, 1.5], [-0.45, -6], [0.45, 6], [-0.5, -12], [0.5, 12], [-0.55, -20], [0.55, 20], [-0.6, -30], [0.6, 30]],
-];
 export const MEDAL_VALUES = [500, 1000, 2000, 4000, 6000, 8000, 10000];
 const EXTENDS = [300000, 1000000];
 
@@ -139,14 +131,28 @@ const B_RADIUS = [0.2, 0.36, 0.17, 0.4];
 const B_SIZE = [0.66, 1.08, 0.34, 1.2];
 const B_COLOR = [[1.5, 0.16, 0.75], [1.8, 0.42, 0.03], [1.3, 0.2, 1.4], [1.8, 0.25, 0.06]]; // saturated, lightly HDR
 
-// Player shot kinds
-const SK = { VULCAN: 0, LASER: 1, HOMING: 2, NUKE: 3 };
+const SK = WP.SK; // player shot kinds live with the weapons
+const HIT_R0 = 0.3; // the hitbox dot is drawn for this radius (bolt); other aircraft scale it
+// debris fallbacks for models without userData.debrisColor
+const DEATH_DEBRIS = new THREE.Color(0.9, 0.15, 0.18);
+const PART_DEBRIS = new THREE.Color(0.4, 0.4, 0.45);
+const ENEMY_DEBRIS = new THREE.Color(0.35, 0.36, 0.4);
 
 export class Game {
   constructor(ctx) {
     Object.assign(this, ctx); // scene, world, fx, audio, ui, models, view, shake, settings, GROUND_Y, LANES_X
     this.time = 0;
     this.loop = 1;
+    this.stageIdx = 0; this.stage = STAGES[0];
+    this.diff = { bs: 1, fr: 1, hp: 1, level: 0, part: 1 };
+    this.score = 0; this.runMoney = 0; this.continues = 0;
+    this.uidN = 0; // enemy / part uids (pierce hit lists)
+    // aircraft (setAircraft): stats, gun line and exhaust points of the current mesh
+    this.ac = AIRCRAFT_BY_ID[DEFAULT_AIRCRAFT];
+    this.playerO = null;
+    this.muzzleZ = -1.0; this.trail = [[0, 0.95]]; this.trailJ = 0.18; this.hitK = 1;
+    // option drones: [{ o, mesh, shadow, x, z, bank, side, row, muzzleZ, trail }]
+    this.options = []; this.optLive = false; this.optSpread = 1; this.optCol = [1, 1, 1];
     this.enemies = [];
     this.items = [];
     this.pools = {};
@@ -154,9 +160,9 @@ export class Game {
     this.tmpV = new THREE.Vector3();
     this.tmpS = { x: 0, y: 0 };
     this.targets = [];
-    for (let i = 0; i < 64; i++) this.targets.push({ x: 0, z: 0, r: 0, e: null, part: null, armored: false });
+    for (let i = 0; i < 64; i++) this.targets.push({ x: 0, z: 0, r: 0, e: null, part: null, armored: false, uid: 0 });
     this.nTargets = 0;
-    this.hullTarget = { x: 0, z: 0, r: 0, e: null, part: null, armored: true };
+    this.hullTarget = { x: 0, z: 0, r: 0, e: null, part: null, armored: true, uid: 0 };
     // enemy bullets (SoA)
     const EB = 800;
     this.eb = {
@@ -170,10 +176,11 @@ export class Game {
       n: 0, max: PS, x: new Float32Array(PS), z: new Float32Array(PS), vx: new Float32Array(PS), vz: new Float32Array(PS),
       dmg: new Float32Array(PS), r: new Float32Array(PS), t: new Float32Array(PS), kind: new Uint8Array(PS), w: new Float32Array(PS),
       target: new Array(PS).fill(null), trail: new Float32Array(PS),
+      pierce: new Uint8Array(PS), hits: new Int32Array(PS * 4), aux: new Float32Array(PS), // generic (see weapons.js)
     };
     this.player = {
-      x: 0, z: 5, alive: true, mesh: null, shadow: null, invuln: 0, respawn: 0, bank: 0, thrust: 0.5,
-      main: 'red', level: 1, sub: null, subLevel: 0, fireT: 0, subT: 0, laserT: 0, entering: 0, lastX: 0, lastZ: 5,
+      x: 0, z: 5, alive: true, mesh: null, shadow: null, invuln: 0, respawn: 0, bank: 0, thrust: 0.5, slow: false,
+      main: 'red', level: 1, sub: null, subLevel: 0, fireT: 0, subT: 0, laserT: 0, optT: 0, entering: 0, lastX: 0, lastZ: 5,
     };
     this.scrollSpeed = 7; this.scrollTarget = 7;
     this.stats = null;
@@ -182,48 +189,108 @@ export class Game {
   }
 
   // --- setup ------------------------------------------------------------------------
+  // One pool per ENEMY key (model: def.model or the key; air units get a ground shadow), per item
+  // kind, per aircraft ('player:<id>', one mesh each) and per drone type ('option:<id>'). Every
+  // model is built here and parked in a free list, so main.js precompile() compiles its shaders.
   initPools() {
     const M = this.models;
     const mk = (fn) => () => { try { return fn(); } catch (e) { console.error(e); return new THREE.Group(); } };
-    const air = ['dart', 'hornet', 'carrier', 'bomber'];
-    const ground = ['tank', 'turret', 'gunboat', 'crawler'];
-    for (const t of air) this.pools[t] = new Pool(this.scene, mk(() => M.createEnemy(t)), true, M);
-    for (const t of ground) this.pools[t] = new Pool(this.scene, mk(() => M.createEnemy(t)), false, M);
-    this.pools.boss = new Pool(this.scene, mk(() => M.createBoss()), true, M);
+    for (const [type, def] of Object.entries(ENEMY)) {
+      const make = def.boss ? () => M.createBoss(def.model || 'arclight') : () => M.createEnemy(def.model || type);
+      this.pools[type] = new Pool(this.scene, mk(make), !!def.air, M);
+    }
     for (const k of ['P', 'S', 'B', 'medal', '1UP']) this.pools['item_' + k] = new Pool(this.scene, mk(() => M.createItem(k)), false, M);
-    const pp = new Pool(this.scene, mk(() => M.createPlayer()), true, M);
-    const po = pp.get();
-    this.player.mesh = po.mesh; this.player.shadow = po.shadow;
-    const hm = po.mesh.userData.hitboxMarker; if (hm) hm.visible = false;
-    const counts = { dart: 14, hornet: 5, carrier: 2, bomber: 2, tank: 10, turret: 8, gunboat: 4, crawler: 1, boss: 1, item_P: 4, item_S: 2, item_B: 2, item_medal: 16, item_1UP: 1 };
+    for (const ac of AIRCRAFT) {
+      this.pools['player:' + ac.id] = new Pool(this.scene, mk(() => M.createPlayer(ac.id)), true, M);
+      if (ac.options > 0) this.pools['option:' + ac.id] = new Pool(this.scene, mk(() => M.createOption(ac.id)), true, M);
+    }
+    this.setAircraft(this.ac.id); // the current jet (+ drones) come out of their pools first
+    for (const [type, def] of Object.entries(ENEMY)) this.pools[type].prewarm(def.prewarm ?? (def.boss || def.midboss ? 1 : 4));
+    const counts = { item_P: 4, item_S: 2, item_B: 2, item_medal: 16, item_1UP: 1 };
     for (const [k, n] of Object.entries(counts)) this.pools[k].prewarm(n);
+    for (const ac of AIRCRAFT) {
+      if (ac === this.ac) continue; // already built and in use
+      this.pools['player:' + ac.id].prewarm(1);
+      if (ac.options > 0) this.pools['option:' + ac.id].prewarm(ac.options);
+    }
   }
   // Make every pooled model visible for one compile pass (avoids first-spawn hitches).
   forEachPooled(fn) { for (const p of Object.values(this.pools)) for (const o of p.free) fn(o); }
 
-  resetRun({ keepScore = false, loop = 1 } = {}) {
+  // Switch the player aircraft (AIRCRAFT id): mesh + shadow, option drones and every stat
+  // (speed, hitbox, graze, bombs, damage, start level). Works at any time: in a run, on the title
+  // fly-by and as the hangar preview. Lives, bombs and weapons carry over; new runs start with
+  // ac.bombs and ac.startLevel. Returns the aircraft def.
+  setAircraft(id) {
+    const ac = AIRCRAFT_BY_ID[id] || AIRCRAFT_BY_ID[DEFAULT_AIRCRAFT];
+    if (ac === this.ac && this.playerO) return ac;
+    const pool = this.pools['player:' + ac.id];
+    if (!pool) { this.ac = ac; return ac; } // before initPools: just remember the choice
+    const p = this.player;
+    if (this.playerO) this.pools['player:' + this.ac.id].put(this.playerO);
+    for (const d of this.options) this.pools['option:' + this.ac.id].put(d.o);
+    this.options.length = 0;
+    this.ac = ac;
+    const o = pool.get();
+    this.playerO = o; p.mesh = o.mesh; p.shadow = o.shadow;
+    const ud = o.mesh.userData;
+    if (ud.hitboxMarker) ud.hitboxMarker.visible = false; // the game draws its own hitbox dot
+    this.muzzleZ = typeof ud.muzzleZ === 'number' ? ud.muzzleZ : -1.0;
+    this.trail = ud.trail && ud.trail.length ? ud.trail : [[0, 0.95]];
+    let mx = 0;
+    for (const t of this.trail) mx = Math.max(mx, Math.abs(t[0]));
+    this.trailJ = Math.max(0.06, 0.18 - mx); // bolt: ±0.095 nozzles ± 0.085 = the old ±0.18 spread
+    this.hitK = ac.hitR / HIT_R0;
+    const c = new THREE.Color(ac.hex);
+    this.optCol = [c.r, c.g, c.b];
+    const op = this.pools['option:' + ac.id];
+    for (let k = 0; op && k < ac.options; k++) {
+      const oo = op.get(), dud = oo.mesh.userData;
+      const tr = dud.trail && dud.trail.length ? dud.trail[0] : [0, 0.3];
+      this.options.push({ o: oo, mesh: oo.mesh, shadow: oo.shadow, x: p.x, z: p.z, bank: 0, side: k % 2 ? 1 : -1, row: k >> 1,
+        muzzleZ: typeof dud.muzzleZ === 'number' ? dud.muzzleZ : -0.4, trail: tr });
+    }
+    this.optLive = false;
+    // place the new jet at once (menus may not run an update before the next render)
+    this.syncPlayerMesh(0, true);
+    this.updateOptions(0, true);
+    return ac;
+  }
+
+  // Start a stage. stage: 0-based index into STAGES. keepScore carries score, lives, bombs,
+  // weapons, continues and runMoney over (next stage / next loop); otherwise it is a new run.
+  resetRun({ keepScore = false, loop = 1, stage = 0 } = {}) {
     this.clearField();
     this.loop = loop;
+    this.stageIdx = clamp(stage | 0, 0, STAGES.length - 1);
+    this.stage = STAGES[this.stageIdx];
+    const ac = this.ac;
     if (!keepScore) {
-      this.score = 0; this.lives = 2; this.bombs = 3; this.credits = 1;
+      this.score = 0; this.lives = 2; this.bombs = ac.bombs; this.continues = 0;
+      this.runMoney = 0;
       this.extendIdx = 0;
-      Object.assign(this.player, { main: 'red', level: 1, sub: null, subLevel: 0 });
+      Object.assign(this.player, { main: 'red', level: ac.startLevel, sub: null, subLevel: 0 });
     }
     this.medalChain = 0; this.medalMaxChain = 0;
-    this.stats = { spawned: 0, killed: 0, deaths: 0, bombsUsed: 0, grazes: 0, medals: 0, stageScoreStart: this.score };
+    this.stats = { spawned: 0, killed: 0, deaths: 0, bombsUsed: 0, grazes: 0, medals: 0, stageScoreStart: this.score, moneyStart: this.runMoney, clearMoney: 0 };
     this.tlIndex = 0;
     this.phase = 'stage'; // stage | midboss | warning | boss | bossdead | clear
     this.boss = null; this.midboss = null;
     this.midbossDone = false; this.warned = false; this.clearAnnounced = false; this.clearDone = false;
+    this.lostT = 0;
     this.bombT = 0; this.bombWave = 0;
     this.timeScale = 1; this.slowT = 0;
     this.warningT = 0;
     this.clearT = 0;
-    this.scrollSpeed = 7; this.scrollTarget = 7;
+    this.scrollSpeed = this.stage.scroll; this.scrollTarget = this.stage.scroll;
     const p = this.player;
     p.alive = true; p.x = 0; p.z = this.view.zBottom + 2; p.entering = 1.2; p.invuln = 2.2; p.respawn = 0;
-    p.fireT = 0; p.subT = 0; p.bank = 0; p.mesh.visible = true;
-    this.diff = loop > 1 ? { bs: 1.22, fr: 1.35, hp: 1.3 } : { bs: 1, fr: 1, hp: 1 };
+    p.fireT = 0; p.subT = 0; p.optT = 0; p.bank = 0; p.slow = false; p.mesh.visible = true;
+    this.optLive = false;
+    // difficulty climbs by a third of a loop per stage: loop 1 stage 1 = 1/1/1, loop 2 stage 1 = 1.22/1.35/1.3
+    const level = r9((loop - 1) + 0.35 * this.stageIdx);
+    this.diff = { bs: r9(1 + 0.22 * level), fr: r9(1 + 0.35 * level), hp: r9(1 + 0.3 * level), level, part: r9(1 + 0.2 * level) };
+    if (this.world.setStage) this.world.setStage(this.stage.world);
     this.world.reset(0);
   }
   clearField() {
@@ -269,7 +336,7 @@ export class Game {
   canFire(e) {
     const p = this.player;
     if (!p.alive || p.entering > 0) return false;
-    if (e.def.boss || e.type === 'crawler') return true; // bosses never go quiet when hugged
+    if (e.def.boss || e.def.midboss) return true;        // bosses never go quiet when hugged
     if (e.z < this.view.zTop + 0.8 || e.z > this.view.zBottom - 1) return false;
     if (e.ground && e.z > p.z - 1.5) return false;       // ground units hold fire once level with the jet
     const dx = p.x - e.x, dz = p.z - e.z;
@@ -281,13 +348,15 @@ export class Game {
   topGd(margin = 2) { return this.world.distance - (this.view.gTop - margin); }
 
   spawn(type, opts) {
-    const def = ENEMY[type];
-    const o = this.pools[type].get();
+    const def = ENEMY[type], pool = this.pools[type];
+    if (!def || !pool) throw new Error('spawn: unknown enemy type "' + type + '"');
+    const o = pool.get();
     const d = this.world.distance;
-    const seg = (def.boss || type === 'crawler' || type === 'dart' || type === 'carrier') ? 1 : d < 380 ? 1 : d < 640 ? 1.15 : d < 960 ? 1.3 : 1.45;
+    const st = this.stage;
+    const seg = (def.boss || def.midboss || def.noHpSeg || !st.hpSeg) ? 1 : st.hpSeg(d);
     const hpMul = def.boss ? 1 : this.diff.hp * seg;
     const e = {
-      type, def, o, mesh: o.mesh, shadow: o.shadow, ground: !def.air,
+      type, def, o, mesh: o.mesh, shadow: o.shadow, ground: !def.air, uid: ++this.uidN,
       hp: def.hp * hpMul, maxHp: def.hp * hpMul, r: def.radius, alive: true,
       x: 0, z: -40, gx: 0, gd: 0, vx: 0, vz: 0, yaw: Math.PI, roll: 0, t: 0, flash: 0,
       ai: opts.ai, s: opts.s || {}, drops: opts.drops || null, parts: null, armored: false,
@@ -300,7 +369,7 @@ export class Game {
     e.mesh.rotation.set(0, e.yaw, 0);
     if (!e.noCount) this.stats.spawned++;
     this.enemies.push(e);
-    if (def.boss || type === 'crawler') this.initParts(e);
+    if (def.parts) this.initParts(e);
     // let the behaviour place the unit before its first rendered frame
     try { e.ai(e, 0, this); } catch (err) { console.error('ai-init', type, err); }
     if (e.ground) this.syncGround(e);
@@ -313,34 +382,35 @@ export class Game {
     e.x = this.view.gToPx(e.gx);
     e.z = this.view.gToPz(gz);
   }
+  // Part records from def.parts (see stage.js ENEMY) for the parts the model exposes.
   initParts(e) {
     const ud = e.mesh.userData;
     const P = ud.parts;
     if (!P) return;
     const list = [];
-    const add = (key, obj, hp, extra = {}) => {
+    const k = this.diff.part;
+    const add = (key, obj, spec) => {
       if (!obj) return;
       const pud = obj.userData || {};
       if (pud.setDestroyed) pud.setDestroyed(false);
       if (pud.setFlash) pud.setFlash(0);
-      list.push({ key, obj, hp: hp * (this.loop > 1 ? 1.2 : 1), maxHp: hp * (this.loop > 1 ? 1.2 : 1), r: pud.radius || 1, dead: false, flash: 0, x: 0, z: 0, fireT: rnd(0.5, 1.5), ...extra });
+      const core = !!spec.core, hp = spec.hp * k;
+      list.push({ key, obj, hp, maxHp: hp, r: pud.radius || 1, dead: false, flash: 0, x: 0, z: 0, fireT: rnd(0.5, 1.5), core,
+        uid: ++this.uidN, score: spec.score ?? (core ? 100000 : 3000), medals: spec.medals ?? 1, big: spec.big ?? (core ? 3 : 1.3) });
+      if (core && pud.setOpen) pud.setOpen(0);
     };
-    if (e.type === 'crawler') {
-      add('gunL', P.gunL, 45); add('gunR', P.gunR, 45);
-    } else if (e.def.boss) {
-      add('wingL', P.wingL, 170); add('wingR', P.wingR, 170);
-      add('podL', P.podL, 80); add('podR', P.podR, 80);
-      (P.turrets || []).forEach((t, i) => add('turret' + i, t, 36));
-      add('core', P.core, 680, { core: true });
-      if (P.core && P.core.userData.setOpen) P.core.userData.setOpen(0);
+    for (const spec of e.def.parts) {
+      const obj = P[spec.key];
+      if (spec.list) { if (Array.isArray(obj)) obj.forEach((o, i) => add(spec.key + i, o, spec)); }
+      else add(spec.key, obj, spec);
     }
     e.parts = list;
   }
   partByKey(e, key) { return e.parts ? e.parts.find((p) => p.key === key) : null; }
 
   releaseEnemy(e) {
-    if (e.mesh.userData.parts && e.def.boss) {
-      const P = e.mesh.userData.parts;
+    const P = e.mesh.userData.parts;
+    if (P && e.def.parts) { // pooled models come back whole
       for (const k of Object.keys(P)) { const o = P[k]; if (Array.isArray(o)) o.forEach((x) => x.userData.setDestroyed && x.userData.setDestroyed(false)); else if (o && o.userData.setDestroyed) o.userData.setDestroyed(false); }
     }
     e.mesh.scale.setScalar(1);
@@ -349,12 +419,14 @@ export class Game {
   }
 
   // --- items ---------------------------------------------------------------------
+  // P items cycle through MAIN_ORDER from opts.color, S items through SUB_ORDER from opts.sub.
   dropItem(kind, x, z, opts = {}) {
     const o = this.pools['item_' + kind].get();
     const a = rnd(-2.4, -0.7);
+    const ci = Math.max(0, MAIN_ORDER.indexOf(opts.color || 'red')), si = Math.max(0, SUB_ORDER.indexOf(opts.sub || 'H'));
     const it = {
       kind, o, mesh: o.mesh, x, z, vx: opts.vx ?? Math.cos(a) * rnd(1.2, 2.4) * (Math.random() < 0.5 ? -1 : 1), vz: opts.vz ?? -rnd(1.5, 3),
-      t: 0, color: opts.color || 'red', sub: opts.sub || 'H', life: kind === 'medal' ? 99 : 10, bounce: kind !== 'medal',
+      t: 0, color: MAIN_ORDER[ci], sub: SUB_ORDER[si], ci, si, cur: null, life: kind === 'medal' ? 99 : 10, bounce: kind !== 'medal',
     };
     if (kind === 'medal') { it.vx = rnd(-0.6, 0.6); it.vz = -rnd(2.5, 4.5); }
     const ud = it.mesh.userData;
@@ -400,31 +472,53 @@ export class Game {
     const bank = Math.cos(t * 0.45) * 0.45;
     p.bank = lerp(p.bank, bank, 0.1);
     this.syncPlayerMesh(dt, true);
+    this.updateOptions(dt, true);
     this.fx.update(dt, this.GROUND_Y, 5.5);
   }
 
   // Debug: skip timeline events before distance d.
-  skipTo(d) { let i = 0; while (i < TIMELINE.length && TIMELINE[i].d < d) i++; this.tlIndex = i; }
+  skipTo(d) { const T = this.stage.timeline; let i = 0; while (i < T.length && T[i].d < d) i++; this.tlIndex = i; }
   runTimeline() {
-    if (this.phase === 'midboss') return; // the city waits for the siege tank
-    const d = this.world.distance;
-    while (this.tlIndex < TIMELINE.length && TIMELINE[this.tlIndex].d <= d) {
-      const ev = TIMELINE[this.tlIndex++];
+    if (this.phase === 'midboss') return; // the stage waits for the mid-boss
+    const d = this.world.distance, T = this.stage.timeline;
+    while (this.tlIndex < T.length && T[this.tlIndex].d <= d && this.phase !== 'midboss') {
+      const ev = T[this.tlIndex++];
       try { ev.run(this); } catch (err) { console.error('timeline', ev.d, err); }
     }
   }
 
   updatePhase(dt) {
-    const d = this.world.distance;
-    if (this.phase === 'midboss' && this.midbossDone) { this.phase = 'stage'; this.scrollTarget = 7; this.onEvent('midbossEnd'); }
-    if (this.phase === 'stage' && d >= STAGE_BOSS_AT - 40 && !this.warned) {
+    const d = this.world.distance, st = this.stage;
+    if (this.phase === 'midboss' && this.midbossDone) { this.phase = 'stage'; this.scrollTarget = st.scroll; this.midboss = null; this.lostT = 0; this.onEvent('midbossEnd'); }
+    if (this.phase === 'stage' && d >= st.bossAt - 40 && !this.warned) {
       this.warned = true; this.phase = 'warning'; this.warningT = 4.2;
-      this.scrollTarget = 3;
+      this.scrollTarget = st.warnScroll;
       this.onEvent('warning');
     }
     if (this.phase === 'warning') {
       this.warningT -= dt;
-      if (this.warningT <= 0) { this.phase = 'boss'; this.scrollTarget = 2.2; this.boss = spawnBoss(this); this.onEvent('bossStart'); }
+      if (this.warningT <= 0) {
+        this.phase = 'boss'; this.scrollTarget = st.bossScroll; this.lostT = 0;
+        try { this.boss = st.spawnBoss(this); } catch (err) { console.error('spawnBoss', err); this.boss = null; }
+        this.onEvent('bossStart');
+      }
+    }
+    // Safety nets: a mid-boss / boss whose AI crashed is removed without its hand-off, which would
+    // stall the stage for good. Log it loudly and move on.
+    if (this.phase === 'midboss' && !this.midbossDone) {
+      const m = this.midboss;
+      if (m && m.def && m.def.midboss && !m.alive) {
+        this.lostT += dt;
+        if (this.lostT > 2) { console.error('mid-boss removed without setting midbossDone — continuing the stage'); this.midbossDone = true; }
+      }
+    }
+    if (this.phase === 'boss' && (!this.boss || !this.boss.alive)) {
+      this.lostT += dt;
+      if (this.lostT > 2) {
+        console.error('boss missing or removed without bossDefeated — clearing the stage');
+        this.ui.boss(false); this.audio.music(null);
+        this.phase = 'bossdead'; this.clearT = 0;
+      }
     }
     if (this.phase === 'bossdead') {
       this.clearT += dt;
@@ -433,7 +527,12 @@ export class Game {
         const p = this.player; // fly off the top
         p.z -= (6 + (this.clearT - 5.5) * 30) * dt;
       }
-      if (this.clearT > 7.8 && !this.clearDone) { this.clearDone = true; this.phase = 'clear'; this.onEvent('clear'); }
+      if (this.clearT > 7.8 && !this.clearDone) {
+        this.clearDone = true; this.phase = 'clear';
+        const bonus = MONEY.stageClear[st.n] || 0; // stage-clear CR (stats.clearMoney: this stage's)
+        this.runMoney += bonus; this.stats.clearMoney = bonus;
+        this.onEvent('clear');
+      }
     }
   }
 
@@ -444,6 +543,7 @@ export class Game {
     if (!p.alive) {
       p.respawn -= rawDt;
       if (p.respawn <= 0 && this.lives >= 0 && this.phase !== 'clear') this.respawnPlayer();
+      this.updateOptions(dt, false);
       return;
     }
     const prevX = p.x, prevZ = p.z;
@@ -452,8 +552,9 @@ export class Game {
       const tz = Math.min(v.zBottom - 5, (v.zPlayerMax ?? v.zBottom) - 1.5);
       p.z = lerp(p.z, tz, Math.min(1, dt * 4));
     } else if (this.phase !== 'clear' && !(this.phase === 'bossdead' && this.clearT > 5.5)) {
-      const ax = input.axis();
-      const sp = (ax.slow ? 6.5 : 13.5) * (ax.stick ? (this.settings.touchSens || 1) : 1);
+      const ax = input.axis(), ac = this.ac;
+      p.slow = !!ax.slow;
+      const sp = (ax.slow ? ac.slow : ac.speed) * (ax.stick ? (this.settings.touchSens || 1) : 1);
       p.x += ax.x * sp * dt; p.z += ax.y * sp * dt;
       const b = this.boss;
       const zMin = (b && b.alive && !b.dying) ? Math.max(v.zTop + 5, b.z + 7) : v.zTop + 5;
@@ -467,6 +568,7 @@ export class Game {
     p.bank = lerp(p.bank, clamp(vx / 12, -1, 1), Math.min(1, dt * 10));
     p.thrust = lerp(p.thrust, clamp(0.55 - vz / 20, 0.25, 1), Math.min(1, dt * 8));
     this.syncPlayerMesh(dt, false);
+    this.updateOptions(dt, false);
   }
   syncPlayerMesh(dt, attract) {
     const p = this.player, m = p.mesh, ud = m.userData;
@@ -478,6 +580,41 @@ export class Game {
     const blink = p.invuln > 0 && p.alive && !attract && Math.floor(this.time * 16) % 2 === 0;
     m.visible = p.alive && !blink;
     this.placeShadow(p.shadow, p.x, 0, p.z, 0, p.alive);
+  }
+  // Option drones trail the jet in a loose line abreast; holding slow tucks them in close
+  // (their streams then converge, see weapons.js). They vanish with the jet and fly out of it again.
+  updateOptions(dt, attract) {
+    const opts = this.options;
+    if (!opts.length) return;
+    const p = this.player, v = this.view;
+    if (!p.alive) {
+      if (this.optLive) for (const d of opts) { d.mesh.visible = false; if (d.shadow) d.shadow.visible = false; }
+      this.optLive = false;
+      return;
+    }
+    const want = attract || !p.slow ? 1 : 0;
+    this.optSpread += (want - this.optSpread) * Math.min(1, dt * 9);
+    const s = this.optSpread, snap = !this.optLive;
+    const k = 1 - Math.exp(-dt * 14);
+    this.optLive = true;
+    const vis = p.mesh.visible; // blinks with the jet
+    for (const d of opts) {
+      const tx = p.x + d.side * (0.66 + 0.94 * s + d.row * 0.9);
+      const tz = p.z + (-0.45 + 0.85 * s) + d.row * 0.6;
+      const px = d.x;
+      if (snap) { d.x = p.x; d.z = p.z + 0.2; d.bank = 0; }
+      else { d.x += (tx - d.x) * k; d.z += (tz - d.z) * k; }
+      const hw = v.hw(d.z) - 0.35;
+      d.x = clamp(d.x, -hw, hw);
+      if (!snap) d.bank = lerp(d.bank, clamp((d.x - px) / Math.max(dt, 1e-4) / 12, -1, 1), Math.min(1, dt * 10));
+      const m = d.mesh, ud = m.userData;
+      m.position.set(d.x, 0.15, d.z);
+      m.rotation.set(0, 0, -d.bank * 0.55);
+      if (ud.setThrust) ud.setThrust(attract ? 0.6 : p.thrust);
+      if (ud.update) ud.update(dt, this.time);
+      m.visible = vis;
+      this.placeShadow(d.shadow, d.x, 0, d.z, 0, true);
+    }
   }
   placeShadow(sh, x, y, z, yaw, vis) {
     if (!sh) return;
@@ -500,7 +637,9 @@ export class Game {
     p.mesh.visible = false;
     if (p.shadow) p.shadow.visible = false;
     this.stats.deaths++;
-    this.fx.explosion(p.x, 0.2, p.z, 2.4, { debris: 20, color: new THREE.Color(0.9, 0.15, 0.18) });
+    const col = p.mesh.userData.debrisColor || DEATH_DEBRIS;
+    this.fx.explosion(p.x, 0.2, p.z, 2.4, { debris: 20, color: col });
+    if (this.optLive) for (const d of this.options) this.fx.explosion(d.x, 0.2, d.z, 0.9, { debris: 4, color: col });
     this.fx.shockwave(p.x, 0.1, p.z, 9, [2.4, 1.2, 1.0, 1], 0.7);
     this.shake.add(0.75);
     this.ui.flash(0.55);
@@ -512,125 +651,31 @@ export class Game {
     if (p.sub) this.dropItem('S', p.x + 0.8, p.z, { sub: p.sub });
     p.level = Math.max(1, p.level - 2);
     if (p.sub) { p.subLevel = Math.max(0, p.subLevel - 1); if (p.subLevel === 0) p.sub = null; }
-    this.bombs = Math.max(this.bombs, 3);
+    this.bombs = Math.max(this.bombs, this.ac.bombs);
     this.lives -= 1;
     p.respawn = 1.4;
     this.medalChain = 0;
     if (this.lives < 0) { p.respawn = 999; this.onEvent('gameover'); }
     else this.onEvent('death');
   }
+  // Continue: the score restarts (earned CR stays in runMoney), the stage carries on where it was.
   continueRun() {
-    this.score = 0; this.credits += 1; this.lives = 2; this.bombs = 3;
+    this.score = 0; this.continues += 1; this.lives = 2; this.bombs = this.ac.bombs;
     this.extendIdx = 0;
     this.player.respawn = 0.3;
   }
 
-  // --- weapons ---------------------------------------------------------------------
-  fireWeapons(dt) {
-    const p = this.player;
-    if (!p.alive || p.entering > 0.3 || this.phase === 'bossdead' || this.phase === 'clear') return;
-    const ps = this.ps;
-    const add = (x, z, vx, vz, dmg, kind, r, w = 1) => {
-      if (ps.n >= ps.max) return -1;
-      const i = ps.n++;
-      ps.x[i] = x; ps.z[i] = z; ps.vx[i] = vx; ps.vz[i] = vz; ps.dmg[i] = dmg; ps.kind[i] = kind; ps.r[i] = r; ps.t[i] = 0; ps.w[i] = w;
-      ps.target[i] = null; ps.trail[i] = 0;
-      return i;
-    };
-    if (p.main === 'red') {
-      p.fireT -= dt;
-      if (p.fireT < -0.2) p.fireT = 0;
-      let fired = false;
-      while (p.fireT <= 0) {
-        const age = -p.fireT;
-        p.fireT += 0.075;
-        const pat = VULCAN[p.level];
-        const S = 36;
-        for (const [ox, ad] of pat) {
-          const a = ad * DEG, vx = Math.sin(a) * S, vz = -Math.cos(a) * S;
-          add(p.x + ox + vx * age, p.z - 0.9 + vz * age, vx, vz, 1.0, SK.VULCAN, 0.42);
-        }
-        fired = true;
-      }
-      if (fired) {
-        this.fx.muzzle(p.x, p.z - 1.0, 2.0, 1.0, 0.3, 0.5 + p.level * 0.04);
-        this.audio.play('shot');
-      }
-    } else {
-      p.laserT -= dt;
-      if (p.laserT < -0.2) p.laserT = 0;
-      while (p.laserT <= 0) {
-        const age = -p.laserT;
-        p.laserT += 0.034;
-        const lv = p.level;
-        const i = add(p.x, p.z - 1.0 - 44 * age, 0, -44, 0.8 + lv * 0.25, SK.LASER, 0.28 + lv * 0.075, 0.34 + lv * 0.11);
-        if (i >= 0) ps.t[i] = age;
-      }
-      this.audio.play('laser');
-    }
-    if (p.sub) {
-      p.subT -= dt;
-      if (p.subT <= 0) {
-        const lv = p.subLevel;
-        if (p.sub === 'H') {
-          p.subT = 0.62 - lv * 0.07;
-          const n = lv >= 3 ? 4 : 2;
-          for (let i = 0; i < n; i++) {
-            const side = i % 2 ? 1 : -1, outer = i >= 2 ? 1.6 : 1;
-            add(p.x + side * 0.5 * outer, p.z - 0.2, side * 7 * outer, 2, 2.6, SK.HOMING, 0.45);
-          }
-        } else {
-          p.subT = 0.56 - lv * 0.05;
-          const n = lv >= 3 ? 4 : 2;
-          for (let i = 0; i < n; i++) {
-            const side = i % 2 ? 1 : -1, outer = i >= 2 ? 1.9 : 1;
-            add(p.x + side * 0.55 * outer, p.z - 0.3, 0, -8, 3.0, SK.NUKE, 0.45);
-          }
-        }
-        this.audio.play('missile', { vol: 0.6 });
-      }
-    }
-  }
-  updateShots(dt) {
-    const ps = this.ps, v = this.view, p = this.player;
-    let i = 0;
-    while (i < ps.n) {
-      ps.t[i] += dt;
-      const k = ps.kind[i];
-      if (k === SK.LASER) {
-        // the beam whips after the jet: young segments follow its x
-        const f = Math.max(0, 1 - ps.t[i] * 2.4);
-        if (p.alive) ps.x[i] += (p.x - ps.x[i]) * Math.min(1, dt * 16) * f;
-      } else if (k === SK.HOMING) {
-        let tg = ps.target[i];
-        if (!tg || !tg.alive || tg.dying || (tg.part && tg.part.dead)) { tg = this.findTarget(ps.x[i], ps.z[i]); ps.target[i] = tg; }
-        const sp = Math.min(26, Math.hypot(ps.vx[i], ps.vz[i]) + 40 * dt);
-        let ang = Math.atan2(ps.vx[i], ps.vz[i]);
-        let want = Math.PI; // straight up
-        if (tg && ps.t[i] > 0.12) want = Math.atan2(tg.x - ps.x[i], tg.z - ps.z[i]);
-        let da = want - ang;
-        while (da > Math.PI) da -= Math.PI * 2;
-        while (da < -Math.PI) da += Math.PI * 2;
-        ang += clamp(da, -8 * dt, 8 * dt);
-        ps.vx[i] = Math.sin(ang) * sp; ps.vz[i] = Math.cos(ang) * sp;
-        ps.trail[i] -= dt;
-        if (ps.trail[i] <= 0) { ps.trail[i] = 0.022; this.fx.missileTrail(ps.x[i], ps.z[i], 0.6, 1.8, 0.5); }
-      } else if (k === SK.NUKE) {
-        ps.vz[i] = Math.max(-30, ps.vz[i] - 60 * dt);
-        ps.trail[i] -= dt;
-        if (ps.trail[i] <= 0) { ps.trail[i] = 0.022; this.fx.missileTrail(ps.x[i], ps.z[i] + 0.3, 1.4, 0.6, 2.2); }
-      }
-      ps.x[i] += ps.vx[i] * dt; ps.z[i] += ps.vz[i] * dt;
-      const life = k === SK.HOMING ? 2.6 : 1.4;
-      if (ps.t[i] > life || ps.z[i] < v.zTop - 3 || ps.z[i] > v.zBottom + 3 || Math.abs(ps.x[i]) > v.hw(ps.z[i]) + 3) { this.removeShot(i); continue; }
-      i++;
-    }
-  }
+  // --- weapons (weapons.js) ---------------------------------------------------------------
+  fireWeapons(dt) { WP.fireWeapons(this, dt); }
+  updateShots(dt) { WP.updateShots(this, dt); }
   removeShot(i) {
     const ps = this.ps, j = --ps.n;
     if (i === j) { ps.target[j] = null; return; }
     ps.x[i] = ps.x[j]; ps.z[i] = ps.z[j]; ps.vx[i] = ps.vx[j]; ps.vz[i] = ps.vz[j]; ps.dmg[i] = ps.dmg[j];
     ps.r[i] = ps.r[j]; ps.t[i] = ps.t[j]; ps.kind[i] = ps.kind[j]; ps.w[i] = ps.w[j]; ps.target[i] = ps.target[j]; ps.trail[i] = ps.trail[j];
+    ps.pierce[i] = ps.pierce[j]; ps.aux[i] = ps.aux[j];
+    const hi = i * 4, hj = j * 4;
+    ps.hits[hi] = ps.hits[hj]; ps.hits[hi + 1] = ps.hits[hj + 1]; ps.hits[hi + 2] = ps.hits[hj + 2]; ps.hits[hi + 3] = ps.hits[hj + 3];
     ps.target[j] = null;
   }
   findTarget(x, z) {
@@ -667,6 +712,7 @@ export class Game {
   }
   bombHit(amount) {
     const v = this.view;
+    amount *= this.ac.dmg;
     for (const e of this.enemies) {
       if (!e.alive || e.dying || !v.onScreen(e.x, e.z, 1)) continue;
       if (e.parts && e.parts.length) {
@@ -719,8 +765,7 @@ export class Game {
       e.vx = (e.x - px) / Math.max(dt, 1e-4); e.vz = (e.z - pz) / Math.max(dt, 1e-4);
       // despawn when well off-screen (after having entered, or if it is far outside)
       const off = e.z > v.zBottom + 4 || (e.entered && !v.onScreen(e.x, e.z, 5)) || e.z < v.zTop - 40 || Math.abs(e.x) > 40;
-      if (off && !e.def.boss && e.type !== 'crawler' && e.t > 1) {
-        if (e.type === 'carrier' && e.drops) { /* item escaped */ }
+      if (off && !e.def.boss && !e.def.midboss && e.t > 1) {
         e.alive = false; this.enemies.splice(i, 1); this.releaseEnemy(e); continue;
       }
       if (e.flash > 0) { e.flash = Math.max(0, e.flash - dt * 9); const ud = e.mesh.userData; if (ud.setFlash) ud.setFlash(e.flash); }
@@ -786,14 +831,14 @@ export class Game {
       const u = pt.obj.userData;
       if (u.setDestroyed) u.setDestroyed(true);
       if (u.setFlash) u.setFlash(0);
-      const big = pt.core ? 3 : pt.key.startsWith('wing') ? 2 : 1.3;
-      this.fx.explosion(pt.x, 0.4, pt.z, big, { debris: 10, color: e.mesh.userData.debrisColor || new THREE.Color(0.4, 0.4, 0.45) });
+      const big = pt.big;
+      this.fx.explosion(pt.x, 0.4, pt.z, big, { debris: 10, color: e.mesh.userData.debrisColor || PART_DEBRIS });
       this.shake.add(0.35);
       this.audio.play(big >= 2 ? 'explodeL' : 'explodeM');
-      const pts = pt.core ? 100000 : pt.key.startsWith('wing') ? 8000 : pt.key.startsWith('pod') ? 5000 : 3000;
+      const pts = pt.score;
       this.addScore(pts);
       this.popupAt(pt.x, pt.z, pts.toLocaleString('en-US'), 'big');
-      for (let i = 0; i < (pt.key.startsWith('wing') ? 3 : 1); i++) this.dropItem('medal', pt.x + rnd(-1, 1), pt.z + rnd(-1, 1));
+      for (let i = 0; i < pt.medals; i++) this.dropItem('medal', pt.x + rnd(-1, 1), pt.z + rnd(-1, 1));
       if (e.onPartDestroyed) e.onPartDestroyed(e, pt, this);
       if (pt.core) this.killEnemy(e, fromBomb);
     }
@@ -801,14 +846,14 @@ export class Game {
   killEnemy(e, fromBomb) {
     if (!e.alive || e.dying) return;
     const def = e.def;
-    if (def.boss || e.type === 'crawler') { e.dying = true; if (e.onDeath) e.onDeath(e, this); return; }
+    if (def.boss || def.midboss) { e.dying = true; if (e.onDeath) e.onDeath(e, this); return; } // the AI plays the death
     e.alive = false;
     if (!e.noCount) this.stats.killed++;
     const pts = def.score;
     this.addScore(pts);
     if (pts >= 1000) this.popupAt(e.x, e.z, pts.toLocaleString('en-US'), pts >= 5000 ? 'big' : '');
     const size = def.explode;
-    const col = e.mesh.userData.debrisColor || new THREE.Color(0.35, 0.36, 0.4);
+    const col = e.mesh.userData.debrisColor || ENEMY_DEBRIS;
     if (e.ground) {
       this.fx.explosion(e.gx, this.GROUND_Y + 0.4, e.gz, size, { ground: true, debris: def.debris, color: col });
       if (e.sinks) this.fx.splash(e.gx, this.GROUND_Y, e.gz, 2.4);
@@ -818,12 +863,12 @@ export class Game {
     this.shake.add(size >= 2 ? 0.45 : size >= 1.3 ? 0.18 : 0.06);
     this.audio.play(size >= 2 ? 'explodeL' : size >= 1.2 ? 'explodeM' : 'explodeS', { pan: clamp(e.x / 10, -1, 1) });
     // drops
-    if (e.drops) for (const d of e.drops) this.dropItem(d, e.x, e.z, { color: Math.random() < 0.5 ? 'red' : 'blue' });
+    if (e.drops) for (const d of e.drops) this.dropItem(d, e.x, e.z, { color: MAIN_ORDER[(Math.random() * MAIN_ORDER.length) | 0] });
     const medals = typeof def.medal === 'number' ? (def.medal >= 1 ? def.medal : (Math.random() < def.medal ? 1 : 0)) : 0;
     for (let i = 0; i < medals; i++) this.dropItem('medal', e.x + rnd(-0.6, 0.6), e.z + rnd(-0.4, 0.4));
     if (def.boss !== true && size >= 2) this.ui.flash(0.12);
     // loop 2+: destroyed enemies answer with a slow revenge shot
-    if (this.loop > 1 && !fromBomb && e.type !== 'carrier' && this.canFire(e)) {
+    if (this.diff.level >= 1 && !fromBomb && !def.noRevenge && this.canFire(e)) {
       const a = this.aim(e.x, e.z);
       if (e.ground) this.fan(e.x, e.z, a, 3, 0.5, 5.2); else this.shoot(e.x, e.z, a, 5.6);
     }
@@ -874,68 +919,49 @@ export class Game {
           pt.x = q.x; pt.z = q.z;
           if (n >= this.targets.length) break;
           const t = this.targets[n++];
-          t.x = q.x; t.z = q.z; t.r = pt.r * q.s; t.e = e; t.part = pt; t.armored = !!(pt.core && e.armored) || !!e.invuln;
+          t.x = q.x; t.z = q.z; t.r = pt.r * q.s; t.e = e; t.part = pt; t.armored = !!(pt.core && e.armored) || !!e.invuln; t.uid = pt.uid;
         }
         if (e.def.boss) continue; // boss hull itself isn't a target
       }
       if (n >= this.targets.length) break;
       const t = this.targets[n++];
-      t.x = e.x; t.z = e.z; t.r = e.r * (e.ground ? this.view.k : 1); t.e = e; t.part = null; t.armored = !!e.invuln;
+      t.x = e.x; t.z = e.z; t.r = e.r * (e.ground ? this.view.k : 1); t.e = e; t.part = null; t.armored = !!e.invuln; t.uid = e.uid;
     }
     this.nTargets = n;
+  }
+  // Armoured boss/mid-boss body box from def.hull (shots spark off it instead of passing through).
+  inHull(e, x, z) {
+    if (!e || !e.alive || e.dying || !e.def || !e.def.hull || e.s.mode === 'enter') return false;
+    const h = e.def.hull;
+    return Math.abs(x - e.x) < h.hw && z > e.z + h.z0 && z < e.z + h.z1;
   }
   collide() {
     this.buildTargets();
     const ps = this.ps, T = this.targets;
+    const hulls = this.boss || this.midboss; // most of the stage: no hull to test
     // player shots vs enemies
     let i = 0;
     while (i < ps.n) {
-      const x = ps.x[i], z = ps.z[i], r = ps.r[i];
+      const x = ps.x[i], z = ps.z[i], r = ps.r[i], pierce = ps.pierce[i];
       let hit = null;
       for (let k = 0; k < this.nTargets; k++) {
         const t = T[k];
         const rr = t.r + r;
         const dx = t.x - x, dz = t.z - z;
-        if (dx * dx + dz * dz < rr * rr) { hit = t; break; }
-      }
-      if (!hit && this.boss && this.boss.alive && !this.boss.dying && this.boss.s.mode !== 'enter') {
-        const bz = this.boss.z, bx = this.boss.x;
-        if (Math.abs(x - bx) < 6.3 && z < bz - 1.6 && z > bz - 3.8) hit = this.hullTarget;
-      }
-      if (hit) {
-        const kind = ps.kind[i];
-        if (hit.armored) {
-          this.fx.armorSpark(x, 0.1, z);
-          this.audio.play('hitArmor', { vol: 0.5 });
-        } else {
-          const dmg = ps.dmg[i];
-          if (hit.part) this.damagePart(hit.e, hit.part, dmg); else this.damageEnemy(hit.e, dmg);
-          if (kind === SK.NUKE) {
-            this.fx.explosion(x, 0.2, z, 0.7);
-            for (let k = 0; k < this.nTargets; k++) {
-              const t = T[k];
-              if (t === hit || t.armored) continue;
-              const dx = t.x - x, dz = t.z - z;
-              if (dx * dx + dz * dz < 2.6) { if (t.part) this.damagePart(t.e, t.part, 1.5); else this.damageEnemy(t.e, 1.5); }
-            }
-          } else if (kind === SK.LASER) {
-            this.fx.hitSpark(x, 0.1, z - 0.2, 0.4, 0.9, 1.0, 2);
-            const lv = this.player.level;
-            this.fx.p.emit(x, 0.12, z, 0, 0, 0, 0.06, 0.7 + 0.1 * lv, 1.1 + 0.12 * lv, [0.8, 2.0, 3.0, 1], [0.3, 0.8, 1.5, 0], F.FLARE, 0, { drag: 0 });
-          }
-          else this.fx.hitSpark(x, 0.1, z, 1.0, 0.75, 0.35, kind === SK.VULCAN ? 1 : 3);
-          this.audio.play('hit', { vol: 0.35 });
+        if (dx * dx + dz * dz < rr * rr) {
+          if (pierce && WP.wasHit(ps, i, t.uid)) continue; // a piercing shot hits each target once
+          hit = t; break;
         }
-        this.removeShot(i);
-        continue;
       }
+      if (!hit && hulls && (this.inHull(this.boss, x, z) || this.inHull(this.midboss, x, z))) hit = this.hullTarget;
+      if (hit && WP.shotHit(this, i, hit) !== 'keep') { this.removeShot(i); continue; }
       i++;
     }
     // enemy bullets vs player (+ graze)
     const p = this.player;
     if (!p.alive || p.entering > 0) return;
     const b = this.eb;
-    const hitR = 0.3, grazeR = 1.05;
+    const hitR = this.ac.hitR, grazeR = this.ac.grazeR;
     for (let j = 0; j < b.n; j++) {
       const dx = b.x[j] - p.x, dz = b.z[j] - p.z;
       const d2 = dx * dx + dz * dz;
@@ -986,11 +1012,11 @@ export class Game {
         if (it.t < 0.6) it.vz += 5 * dt;
       }
       it.x += it.vx * dt; it.z += it.vz * dt;
-      if (it.kind === 'P') {
-        const c = Math.floor(it.t / 2.2) % 2 === 0 ? it.color : (it.color === 'red' ? 'blue' : 'red');
+      if (it.kind === 'P') { // cycles through the main weapons (starting at its drop colour)
+        const c = MAIN_ORDER[(it.ci + Math.floor(it.t / 2.2)) % MAIN_ORDER.length];
         if (c !== it.cur) { it.cur = c; const ud = it.mesh.userData; if (ud.setColor) ud.setColor(c); }
-      } else if (it.kind === 'S') {
-        const c = Math.floor(it.t / 2.6) % 2 === 0 ? it.sub : (it.sub === 'H' ? 'N' : 'H');
+      } else if (it.kind === 'S') { // … and S through the sub-weapons
+        const c = SUB_ORDER[(it.si + Math.floor(it.t / 2.6)) % SUB_ORDER.length];
         if (c !== it.cur) { it.cur = c; const ud = it.mesh.userData; if (ud.setKind) ud.setKind(c); }
       }
       // magnet when close
@@ -1019,25 +1045,25 @@ export class Game {
     if (k === 'P') {
       const c = it.cur || it.color;
       if (c === p.main) {
-        if (p.level < 8) { p.level++; this.audio.play('powerup'); this.popupAt(it.x, it.z, p.level === 8 ? 'MAX POWER' : 'POWER UP', 'big'); }
+        if (p.level < MAX_LEVEL) { p.level++; this.audio.play('powerup'); this.popupAt(it.x, it.z, p.level === MAX_LEVEL ? 'MAX POWER' : 'POWER UP', 'big'); }
         else { this.addScore(5000); this.popupAt(it.x, it.z, '5,000', 'big'); this.audio.play('item'); }
       } else {
-        p.main = c; p.level = Math.min(8, p.level + 1); p.fireT = 0; p.laserT = 0;
+        p.main = c; p.level = Math.min(MAX_LEVEL, p.level + 1); p.fireT = 0; p.laserT = 0; // new weapon: fire at once
         this.audio.play('powerup');
-        this.popupAt(it.x, it.z, c === 'red' ? 'VULCAN' : 'LASER', 'big');
+        this.popupAt(it.x, it.z, MAIN_WEAPONS[c] ? MAIN_WEAPONS[c].name : 'POWER UP', 'big');
       }
     } else if (k === 'S') {
-      const c = it.cur || it.sub;
+      const c = it.cur || it.sub, name = SUB_WEAPONS[c] ? SUB_WEAPONS[c].name : 'MISSILE';
       if (c === p.sub) {
-        if (p.subLevel < 4) { p.subLevel++; this.audio.play('powerup'); this.popupAt(it.x, it.z, c === 'H' ? 'HOMING UP' : 'NUKE UP', 'big'); }
+        if (p.subLevel < MAX_SUB_LEVEL) { p.subLevel++; this.audio.play('powerup'); this.popupAt(it.x, it.z, name + ' UP', 'big'); }
         else { this.addScore(5000); this.popupAt(it.x, it.z, '5,000', 'big'); this.audio.play('item'); }
       } else {
-        p.sub = c; p.subLevel = Math.max(1, Math.min(4, p.subLevel + 1)); p.subT = 0;
+        p.sub = c; p.subLevel = Math.max(1, Math.min(MAX_SUB_LEVEL, p.subLevel + 1)); p.subT = 0;
         this.audio.play('powerup');
-        this.popupAt(it.x, it.z, c === 'H' ? 'HOMING' : 'NUKE', 'big');
+        this.popupAt(it.x, it.z, name, 'big');
       }
     } else if (k === 'B') {
-      if (this.bombs < 5) { this.bombs++; this.popupAt(it.x, it.z, 'BOMB', 'big'); }
+      if (this.bombs < this.ac.bombCap) { this.bombs++; this.popupAt(it.x, it.z, 'BOMB', 'big'); }
       else { this.addScore(5000); this.popupAt(it.x, it.z, '5,000', 'big'); }
       this.audio.play('item');
     } else if (k === 'medal') {
@@ -1058,7 +1084,8 @@ export class Game {
   }
 
   // --- scoring -------------------------------------------------------------------
-  addScore(n) { this.score += n; }
+  // Every point also earns CR (runMoney, banked by main.js); a continue zeroes the score, not the CR.
+  addScore(n) { this.score += n; this.runMoney += n * MONEY.perScore; }
   checkExtends() {
     if (this.extendIdx < EXTENDS.length && this.score >= EXTENDS[this.extendIdx]) {
       this.extendIdx++;
@@ -1078,31 +1105,9 @@ export class Game {
 
   // --- rendering of bullets/shots (called every frame after update) --------------------------
   draw(emit = true) {
-    const fx = this.fx, ps = this.ps, b = this.eb, t = this.time;
-    // player shots
-    for (let i = 0; i < ps.n; i++) {
-      const k = ps.kind[i], x = ps.x[i], z = ps.z[i];
-      if (k === SK.VULCAN) {
-        const rot = flatRot(ps.vx[i], ps.vz[i]);
-        fx.bullets.push(x, 0.1, z, 0.36, 1.25, rot, F.STREAK, 1, 2.8, 0.9, 0.2, 0.9, 0.3);
-      } else if (k === SK.LASER) {
-        const w = ps.w[i];
-        const fade = Math.min(1, ps.t[i] * 20);
-        fx.bullets.push(x, 0.1, z, w * 1.35, 1.9, 0, F.STREAK, 1, 0.35 * fade, 1.35 * fade, 3.0 * fade, 1);
-      } else if (k === SK.HOMING) {
-        fx.bullets.push(x, 0.1, z, 0.34, 0.9, flatRot(ps.vx[i], ps.vz[i]), F.STREAK, 1, 1.2, 3.0, 0.8, 1, 0.6);
-        fx.bullets.push(x, 0.1, z, 0.7, 0.7, 0, F.GLOW, 0, 0.5, 1.6, 0.4, 0.8);
-      } else {
-        fx.bullets.push(x, 0.1, z, 0.36, 1.0, 0, F.STREAK, 1, 1.8, 0.8, 2.6, 1, 0.6);
-        fx.bullets.push(x, 0.1, z, 0.6, 0.6, 0, F.GLOW, 0, 0.9, 0.35, 1.5, 0.45);
-      }
-    }
-    // laser root glow
-    const p = this.player;
-    if (p.alive && p.main === 'blue' && p.entering <= 0.3 && this.phase !== 'bossdead' && this.phase !== 'clear') {
-      const w = 0.9 + p.level * 0.14 + Math.sin(t * 40) * 0.1;
-      fx.bullets.push(p.x, 0.1, p.z - 1.05, w, w, t * 3, F.FLARE, 0, 0.5, 1.8, 3.2, 1);
-    }
+    const fx = this.fx, b = this.eb, t = this.time;
+    // player shots, then beam roots / muzzle glows
+    WP.drawWeapons(this, fx);
     // enemy bullets with a dark underlay so they read on any terrain
     for (let i = 0; i < b.n; i++) {
       const k = b.kind[i], x = b.x[i], z = b.z[i];
@@ -1118,14 +1123,24 @@ export class Game {
         fx.bullets.push(x, 0.1, z, s, s, 0, F.ORB, 0, c[0], c[1], c[2], 1, 0.45);
       }
     }
-    // hitbox core: always visible while alive
+    // hitbox core: always visible while alive (sized to the aircraft's hitbox)
+    const p = this.player;
     if (p.alive && this.phase !== 'clear') {
-      const pulse = 0.3 + Math.sin(t * 10) * 0.04;
+      const pulse = (0.3 + Math.sin(t * 10) * 0.04) * this.hitK;
       fx.bullets.push(p.x, 0.2, p.z, pulse, pulse, 0, F.ORB, 0, 1.8, 0.4, 0.9, p.invuln > 0 ? 0.5 : 0.85, 0.4);
     }
-    // engine trail
-    if (emit && p.alive && p.mesh.visible && Math.random() < 0.7) fx.trail(p.x + rnd(-0.18, 0.18), 0.05, p.z + 0.95, 2.6, 1.1, 0.35, 0.45, 0.22, 0.2);
+    // engine trail from one of the jet's exhaust points
+    if (emit && p.alive && p.mesh.visible && Math.random() < 0.7) {
+      const tr = this.trail, e = tr.length === 1 ? tr[0] : tr[(Math.random() * tr.length) | 0], j = this.trailJ;
+      fx.trail(p.x + e[0] + rnd(-j, j), 0.05, p.z + e[1], 2.6, 1.1, 0.35, 0.45, 0.22, 0.2);
+    }
+    if (emit && this.optLive) {
+      const c = this.optCol;
+      for (const d of this.options) {
+        if (d.mesh.visible && Math.random() < 0.5) fx.trail(d.x + d.trail[0] + rnd(-0.05, 0.05), 0.05, d.z + d.trail[1], c[0] * 2, c[1] * 2, c[2] * 2, 0.4, 0.14, 0.16);
+      }
+    }
   }
 }
 
-export { BK, SK };
+export { BK, SK, STAGES };

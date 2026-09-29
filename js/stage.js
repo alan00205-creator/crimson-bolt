@@ -1,23 +1,57 @@
-// stage.js — enemy table, behaviours (AI), the mid-boss, the boss and the stage-1 timeline.
+// stage.js — stage 1 (COASTAL FRONT) plus the shared toolkit every stage builds on: the base enemy
+// table, spawn helpers, the generic AI behaviours, the timeline builder and the mid-boss / boss
+// hand-offs. stage2.js / stage3.js import from here; stages.js assembles the three stages.
 // Timeline events fire on world distance (ground units travelled), so ground units line up
 // with the terrain world.js builds for each biome.
 import { LANES_X, CROSS_ROAD_PERIOD } from './world.js';
+import { STAGE_META } from './defs.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const ease = (t) => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
 const TAU = Math.PI * 2;
 
+// Enemy definitions, keyed by the type passed to g.spawn(type) (also the mesh-pool key).
+//   hp, score, radius, air (false = ground unit), explode (FX size, picks the explosion sound),
+//   debris (chunk count), medal (count, or a probability when < 1), water (sinks with a splash)
+//   boss       stage boss: HP lives in its parts, never counted, always fires, dies through
+//              e.onDeath (see bossDefeated), hull hit box below
+//   midboss    mid-boss: always fires, never despawns off-screen, dies through e.onDeath and its
+//              AI must set g.midbossDone = true (on death and on retreat)
+//   noRevenge  never answers with a revenge shot (loop 2+)
+//   noHpSeg    ignores the stage's hpSeg(d) multiplier (bosses and mid-bosses always do)
+//   model      model id: createBoss(model) for bosses (default 'arclight'), else createEnemy(model)
+//              (default: the key itself)
+//   parts      destructible parts, in hit-test order. key names an entry of mesh.userData.parts;
+//              list: true expands an array entry into key0..keyN. Per part:
+//              { key, hp, score = core ? 100000 : 3000, medals = 1, big = core ? 3 : 1.3 (FX size),
+//                core = false (killing it kills the unit; its setOpen(0) is called on spawn) }
+//              part HP is multiplied by g.diff.part
+//   hull       boss body hit box relative to the unit: |x - ex| < hw && ez + z0 < z < ez + z1,
+//              armoured (sparks, no damage); tested while s.mode !== 'enter'
+//   prewarm    meshes built at boot (default 4, bosses and mid-bosses 1)
 export const ENEMY = {
-  dart:    { hp: 2,   score: 200,  radius: 0.75, air: true,  explode: 0.8, debris: 5 },
-  hornet:  { hp: 20,  score: 700,  radius: 1.0,  air: true,  explode: 1.2, debris: 8 },
-  carrier: { hp: 14,  score: 300,  radius: 1.15, air: true,  explode: 1.3, debris: 8 },
-  bomber:  { hp: 320, score: 6000, radius: 2.3,  air: true,  explode: 2.6, debris: 24, medal: 3 },
-  tank:    { hp: 10,  score: 400,  radius: 0.9,  air: false, explode: 1.0, debris: 8, medal: 0.6 },
-  turret:  { hp: 22,  score: 600,  radius: 1.0,  air: false, explode: 1.1, debris: 8, medal: 1 },
-  gunboat: { hp: 40,  score: 1500, radius: 1.5,  air: false, explode: 1.6, debris: 12, medal: 2, water: true },
-  crawler: { hp: 340, score: 30000, radius: 2.4, air: false, explode: 3.2, debris: 30 },
-  boss:    { hp: 1,   score: 0,    radius: 3.5,  air: true,  explode: 4, debris: 40, boss: true },
+  dart:    { hp: 2,   score: 200,  radius: 0.75, air: true,  explode: 0.8, debris: 5, noHpSeg: true, prewarm: 14 },
+  hornet:  { hp: 20,  score: 700,  radius: 1.0,  air: true,  explode: 1.2, debris: 8, prewarm: 5 },
+  carrier: { hp: 14,  score: 300,  radius: 1.15, air: true,  explode: 1.3, debris: 8, noHpSeg: true, noRevenge: true, prewarm: 2 },
+  bomber:  { hp: 320, score: 6000, radius: 2.3,  air: true,  explode: 2.6, debris: 24, medal: 3, prewarm: 2 },
+  tank:    { hp: 10,  score: 400,  radius: 0.9,  air: false, explode: 1.0, debris: 8, medal: 0.6, prewarm: 10 },
+  turret:  { hp: 22,  score: 600,  radius: 1.0,  air: false, explode: 1.1, debris: 8, medal: 1, prewarm: 8 },
+  gunboat: { hp: 40,  score: 1500, radius: 1.5,  air: false, explode: 1.6, debris: 12, medal: 2, water: true, prewarm: 4 },
+  crawler: {
+    hp: 340, score: 30000, radius: 2.4, air: false, explode: 3.2, debris: 30, midboss: true, prewarm: 1,
+    parts: [{ key: 'gunL', hp: 45 }, { key: 'gunR', hp: 45 }],
+  },
+  boss: {
+    hp: 1, score: 0, radius: 3.5, air: true, explode: 4, debris: 40, boss: true, model: 'arclight', prewarm: 1,
+    parts: [
+      { key: 'wingL', hp: 170, score: 8000, medals: 3, big: 2 }, { key: 'wingR', hp: 170, score: 8000, medals: 3, big: 2 },
+      { key: 'podL', hp: 80, score: 5000 }, { key: 'podR', hp: 80, score: 5000 },
+      { key: 'turrets', list: true, hp: 36 },
+      { key: 'core', hp: 680, core: true },
+    ],
+    hull: { hw: 6.3, z0: -3.8, z1: -1.6 },
+  },
 };
 
 export const MIDBOSS_AT = 590;
@@ -26,23 +60,25 @@ export const STAGE_BOSS_AT = 1275;
 // --------------------------------------------------------------------------------
 // shared bits
 // --------------------------------------------------------------------------------
-function fireTimer(e, dt, g, interval, first = rnd(0.6, 1.4)) {
+export function fireTimer(e, dt, g, interval, first = rnd(0.6, 1.4)) {
   if (e.s.ft === undefined) e.s.ft = first / g.diff.fr;
   e.s.ft -= dt;
   if (e.s.ft <= 0) { e.s.ft += interval / g.diff.fr; return g.canFire(e); }
   return false;
 }
-function bez(a, b, c, d, t) {
+export function bez(a, b, c, d, t) {
   const u = 1 - t;
   return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d;
 }
-function faceYaw(e, x, z) { return Math.atan2(-(x - e.x), -(z - e.z)); }
+export function faceYaw(e, x, z) { return Math.atan2(-(x - e.x), -(z - e.z)); }
 
 // --------------------------------------------------------------------------------
 // air behaviours
 // --------------------------------------------------------------------------------
+// Each factory returns the per-frame behaviour (e, dt, g) => void. It is also called once with
+// dt = 0 inside g.spawn so the unit is placed before its first rendered frame.
 // Swoop: dive in from a top corner, curve across the screen and climb out the other side.
-function swoop(side, dur = 3.8) {
+export function swoop(side, dur = 3.8) {
   return (e, dt, g) => {
     const v = g.view, s = e.s;
     if (!s.P) {
@@ -58,7 +94,7 @@ function swoop(side, dur = 3.8) {
   };
 }
 // Dive: straight down fast, nudging toward where the player was.
-function dive(x0, speed = 12) {
+export function dive(x0, speed = 12) {
   return (e, dt, g) => {
     const s = e.s;
     if (s.tx === undefined) { s.tx = clamp(g.player.x, -6, 6); e.x = x0; e.z = g.view.zTop - 2; }
@@ -68,7 +104,7 @@ function dive(x0, speed = 12) {
   };
 }
 // Snake: weave down the screen.
-function snake(x0, amp = 2.6, speed = 6.2) {
+export function snake(x0, amp = 2.6, speed = 6.2) {
   return (e, dt, g) => {
     const s = e.s;
     if (s.z0 === undefined) s.z0 = g.view.zTop - 2;
@@ -78,7 +114,7 @@ function snake(x0, amp = 2.6, speed = 6.2) {
   };
 }
 // Rise: overtake the player from behind along a screen edge (fires once, from a fair distance).
-function rise(side) {
+export function rise(side) {
   return (e, dt, g) => {
     const s = e.s;
     if (s.z0 === undefined) { s.z0 = g.view.zBottom + 2; e.x = side * 9; }
@@ -88,7 +124,7 @@ function rise(side) {
   };
 }
 // Vee: descend in formation, then break outward.
-function vee(ox, oz) {
+export function vee(ox, oz) {
   return (e, dt, g) => {
     const s = e.s;
     if (s.z0 === undefined) s.z0 = g.view.zTop - 2 + oz;
@@ -98,7 +134,7 @@ function vee(ox, oz) {
   };
 }
 // Hornet gunship: fly in, hover and fire 3-way bursts, leave.
-function hover(tx, tzFrac, stay = 5.5) {
+export function hover(tx, tzFrac, stay = 5.5) {
   return (e, dt, g) => {
     const s = e.s, v = g.view;
     if (s.x0 === undefined) { s.x0 = tx; s.z0 = v.zTop - 3; s.tz = v.zTop + (v.zBottom - v.zTop) * tzFrac; s.fixedYaw = true; s.yaw = Math.PI; }
@@ -120,7 +156,7 @@ function hover(tx, tzFrac, stay = 5.5) {
   };
 }
 // Item carrier: slow zig-zag descent, never shoots.
-function carrierAI(x0) {
+export function carrierAI(x0) {
   return (e, dt, g) => {
     const s = e.s;
     if (s.z0 === undefined) { s.z0 = g.view.zTop - 2; s.fixedYaw = true; s.yaw = Math.PI; }
@@ -129,7 +165,7 @@ function carrierAI(x0) {
   };
 }
 // Heavy bomber: settles in the upper screen, spirals + aimed fans, then climbs away.
-function bomberAI(x0) {
+export function bomberAI(x0) {
   return (e, dt, g) => {
     const s = e.s, v = g.view;
     if (s.z0 === undefined) { s.z0 = v.zTop - 5; s.tz = v.zTop + 9; s.fixedYaw = true; s.yaw = Math.PI; s.a = 0; }
@@ -158,7 +194,7 @@ function bomberAI(x0) {
 // ground behaviours
 // --------------------------------------------------------------------------------
 // Tank rolling along a lane. dir +1 drives up-screen (into the distance), -1 comes toward us.
-function laneTank(speed = 1.6, dir = 1) {
+export function laneTank(speed = 1.6, dir = 1) {
   return (e, dt, g) => {
     e.gd += speed * dir * dt;
     e.yaw = dir > 0 ? 0 : Math.PI;
@@ -171,7 +207,7 @@ function laneTank(speed = 1.6, dir = 1) {
   };
 }
 // Tank crossing a road horizontally.
-function crossTank(dir, speed = 2.6) {
+export function crossTank(dir, speed = 2.6) {
   return (e, dt, g) => {
     e.gx += dir * speed * dt;
     e.yaw = dir > 0 ? -Math.PI / 2 : Math.PI / 2;
@@ -185,7 +221,7 @@ function crossTank(dir, speed = 2.6) {
   };
 }
 // Emplaced gun: 3-round aimed bursts.
-function turretAI() {
+export function turretAI() {
   return (e, dt, g) => {
     const ud = e.mesh.userData, s = e.s;
     g.aimTurret(e, ud.turret, dt, 4);
@@ -200,7 +236,7 @@ function turretAI() {
   };
 }
 // Patrol boat: sails forward, bobs, fires 5-way fans.
-function boatAI(speed = 1.4) {
+export function boatAI(speed = 1.4) {
   return (e, dt, g) => {
     e.gd += speed * dt;
     e.yaw = Math.sin(e.t * 0.7) * 0.08;
@@ -219,7 +255,7 @@ function boatAI(speed = 1.4) {
 // --------------------------------------------------------------------------------
 // mid-boss: CRAWLER siege tank
 // --------------------------------------------------------------------------------
-function crawlerAI() {
+export function crawlerAI() {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, P = ud.parts || {};
     const scroll = g.scrollSpeed;
@@ -240,8 +276,8 @@ function crawlerAI() {
         g.fx.shockwave(e.x, 0.1, e.z, 18, [2.4, 1.6, 1.0, 1], 0.8);
         g.shake.add(0.7); g.ui.flash(0.5);
         g.audio.play('explodeL');
-        g.addScore(ENEMY.crawler.score);
-        g.popupAt(e.x, e.z, '30,000', 'big');
+        g.addScore(e.def.score);
+        g.popupAt(e.x, e.z, e.def.score.toLocaleString('en-US'), 'big');
         g.stats.killed++;
         g.dropItem('P', e.x - 1, e.z, { color: g.player.main });
         g.dropItem('S', e.x + 1, e.z, { sub: g.player.sub || 'H' });
@@ -298,7 +334,8 @@ function crawlerAI() {
 // --------------------------------------------------------------------------------
 // boss: ARCLIGHT flying fortress
 // --------------------------------------------------------------------------------
-function bossAI() {
+// splash: it crashes into the sea (stage 1); off for arenas without water below.
+export function bossAI({ splash = true } = {}) {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, v = g.view;
     const core = g.partByKey(e, 'core');
@@ -336,7 +373,7 @@ function bossAI() {
         for (let i = 0; i < 16; i++) g.dropItem('medal', e.x + rnd(-5, 5), e.z + rnd(-3, 3));
       }
       if (s.dieT > 3.4) {
-        for (const dx of [-4, 0, 4]) g.fx.splash(v.pToGx(e.x + dx), g.GROUND_Y, v.pToGz(e.z + rnd(-1, 1)), 3.5);
+        if (splash) for (const dx of [-4, 0, 4]) g.fx.splash(v.pToGx(e.x + dx), g.GROUND_Y, v.pToGz(e.z + rnd(-1, 1)), 3.5);
         e.alive = false;
         g.ui.boss(false);
       }
@@ -380,7 +417,7 @@ function bossAI() {
     }
     // turrets: aimed needles
     for (let i = 0; i < 4; i++) {
-      const t = living('turret' + i);
+      const t = living('turrets' + i);
       if (!t) continue;
       const obj = t.obj;
       const want = Math.atan2(-(g.player.x - t.x), -(g.player.z - t.z)) - e.yaw;
@@ -397,7 +434,7 @@ function bossAI() {
     if (s.mode === 'p2' || s.mode === 'p3') {
       const cm = core ? g.muzzlePos(core.obj) : { x: e.x, z: e.z };
       s.st = (s.st || 0) - dt;
-      const hard = g.loop > 1;
+      const hard = g.diff.level >= 1;
       const arms = s.mode === 'p3' ? (hard ? 4 : 3) : 2;
       if (s.st <= 0) {
         s.st = (s.mode === 'p3' ? (hard ? 0.12 : 0.14) : 0.1) / fr;
@@ -415,9 +452,10 @@ function bossAI() {
 }
 
 // --------------------------------------------------------------------------------
-// spawn helpers
+// spawn helpers (air units spawn from z -60 and let their AI place them; ground units take a
+// lane or road and a stage distance just beyond the top edge)
 // --------------------------------------------------------------------------------
-const W = {
+export const W = {
   swoop(g, side, n = 5, gap = 0.28) { for (let i = 0; i < n; i++) g.later(i * gap, () => g.spawn('dart', { x: side * 8, z: -60, ai: swoop(side) })); },
   dive(g, xs, gap = 0.35) { xs.forEach((x, i) => g.later(i * gap, () => g.spawn('dart', { x, z: -60, ai: dive(x) }))); },
   snake(g, x0, n = 6, gap = 0.32) { for (let i = 0; i < n; i++) g.later(i * gap, () => g.spawn('dart', { x: x0, z: -60, ai: snake(x0) })); },
@@ -442,21 +480,51 @@ const W = {
   boats(g, xs, stagger = 3) { xs.forEach((gx, i) => g.spawn('gunboat', { gx, gd: g.topGd(2 + i * stagger), ai: boatAI() })); },
 };
 
+// --------------------------------------------------------------------------------
+// stage hand-offs shared by every stage
+// --------------------------------------------------------------------------------
+// Build a timeline: build(at) calls at(d, run) for each event; returns [{ d, run(g) }] sorted by d.
+export function makeTimeline(build) {
+  const T = [];
+  build((d, run) => T.push({ d, run }));
+  return T.sort((a, b) => a.d - b.d);
+}
+// Timeline event that starts a mid-boss fight: the timeline pauses and the ground slows until the
+// mid-boss sets g.midbossDone (on death and on retreat). spawnFn(g) returns the unit (kept as
+// g.midboss) or any handle for a formation that sets midbossDone itself.
+export function midbossEvent(g, spawnFn) {
+  g.phase = 'midboss'; g.scrollTarget = 1.0; g.onEvent('midboss');
+  let e = null;
+  try { e = spawnFn(g); } catch (err) { console.error('midboss spawn', err); }
+  if (!e) g.midbossDone = true; // nothing came: don't leave the stage waiting forever
+  g.midboss = e || null;
+  return e;
+}
+// Call from a boss's e.onDeath: slow motion, bullets cashed in, music stops, phase 'bossdead'.
+// The boss AI then plays its own death, sets e.alive = false and calls g.ui.boss(false).
+export function bossDefeated(g, e) {
+  g.slowT = 1.1;
+  g.cancelBullets(0, 0, 999, true);
+  g.phase = 'bossdead'; g.clearT = 0;
+  g.stats.bossTime = e.t;
+  g.audio.music(null);
+}
+
+// --------------------------------------------------------------------------------
+// stage 1 mid-boss and boss
+// --------------------------------------------------------------------------------
 export function spawnMidboss(g) {
   const e = g.spawn('crawler', { gx: 0, gd: g.topGd(5), ai: crawlerAI() });
   e.invuln = true;
   e.onDeath = () => { g.stats.midbossTime = e.s.life; };
   return e;
 }
-export function spawnBoss(g) {
-  const e = g.spawn('boss', { x: 0, z: g.view.zTop - 9, ai: bossAI() });
+// ARCLIGHT. opts.splash = false for arenas without sea below (the placeholder stages reuse it).
+export function spawnBoss(g, opts) {
+  const e = g.spawn('boss', { x: 0, z: g.view.zTop - 9, ai: bossAI(opts) });
   e.onDeath = () => {
     e.s.dieT = 0;
-    g.slowT = 1.1;
-    g.cancelBullets(0, 0, 999, true);
-    g.phase = 'bossdead'; g.clearT = 0;
-    g.stats.bossTime = e.t;
-    g.audio.music(null);
+    bossDefeated(g, e);
   };
   e.onPartDestroyed = (en, pt) => {
     if (pt.key.startsWith('wing')) g.dropItem('P', pt.x, pt.z, { color: g.player.main });
@@ -467,82 +535,88 @@ export function spawnBoss(g) {
 // --------------------------------------------------------------------------------
 // Stage 1 timeline (distance in ground units; ~7 units/s)
 // --------------------------------------------------------------------------------
-export const TIMELINE = [];
-const at = (d, run) => TIMELINE.push({ d, run });
+export const TIMELINE = makeTimeline((at) => {
+  // OCEAN ──────────────────────────────────────────────
+  at(26, (g) => W.swoop(g, -1));
+  at(46, (g) => W.swoop(g, 1));
+  at(66, (g) => W.carrier(g, 0, ['P']));
+  at(84, (g) => W.boats(g, [-5, 5.5]));
+  at(102, (g) => W.vee(g, 0));
+  at(120, (g) => { W.hornet(g, -5, 0.28); g.later(0.8, () => W.hornet(g, 5, 0.34)); });
+  at(146, (g) => W.snake(g, -3.5));
+  at(160, (g) => W.boats(g, [-7, 0, 7], 4));
+  at(178, (g) => { W.swoop(g, -1, 4); g.later(0.9, () => W.swoop(g, 1, 4)); });
+  at(196, (g) => W.dive(g, [-5, 3, -1, 5]));
+  at(212, (g) => W.carrier(g, 3, ['P', 'S']));
+  at(226, (g) => { W.hornet(g, -6, 0.26); W.hornet(g, 0, 0.2); W.hornet(g, 6, 0.26); });
+  at(250, (g) => { W.rise(g, -1); g.later(0.6, () => W.rise(g, 1)); });
+  at(264, (g) => { W.boats(g, [-4, 6], 5); W.swoop(g, -1, 4); });
+  at(286, (g) => W.vee(g, 2));
+  // COAST ─────────────────────────────────────────────
+  at(302, (g) => { W.lane(g, 0, 2); W.lane(g, 2, 2); });
+  at(318, (g) => W.turrets(g, [0, 2]));
+  at(334, (g) => W.swoop(g, 1));
+  at(348, (g) => W.carrier(g, -2, ['P']));
+  at(360, (g) => { W.hornet(g, -4, 0.3); W.hornet(g, 4, 0.3); });
+  at(372, (g) => W.cross(g, [1, 1]));
+  // COUNTRY ───────────────────────────────────────────
+  at(392, (g) => W.dive(g, [-6, -2, 2, 6, 0]));
+  at(404, (g) => W.lane(g, 1, 3, 3));
+  at(420, (g) => W.turrets(g, [0, 2]));
+  at(436, (g) => { W.hornet(g, -5, 0.3); W.cross(g, [-1, -1]); });
+  at(456, (g) => { W.snake(g, 3.5); g.later(1, () => W.snake(g, -3.5, 4)); });
+  at(470, (g) => W.carrier(g, 0, ['B']));
+  at(482, (g) => { W.lane(g, 0, 2); W.lane(g, 2, 2); W.turrets(g, [1], 3); });
+  at(500, (g) => { W.swoop(g, -1, 4); g.later(1, () => W.swoop(g, 1, 4)); });
+  at(516, (g) => { W.hornet(g, -6, 0.26); W.hornet(g, 6, 0.26); g.later(1.2, () => W.hornet(g, 0, 0.18)); });
+  at(530, (g) => W.cross(g, [1, -1, 1]));
+  at(546, (g) => { W.vee(g, -2); W.turrets(g, [0, 2]); });
+  at(560, (g) => W.carrier(g, 2, ['P']));
+  at(572, (g) => { W.rise(g, 1); g.later(0.5, () => W.rise(g, -1)); });
+  at(MIDBOSS_AT, (g) => midbossEvent(g, spawnMidboss));
+  // CITY ──────────────────────────────────────────────
+  at(644, (g) => W.cross(g, [1, 1]));
+  at(652, (g) => { W.swoop(g, -1); g.later(0.9, () => W.swoop(g, 1)); });
+  at(666, (g) => W.turrets(g, [0, 1, 2]));
+  at(682, (g) => { W.hornet(g, -5, 0.3); W.hornet(g, 5, 0.3); });
+  at(700, (g) => W.bomber(g, 0, ['P', 'B']));
+  at(734, (g) => { W.lane(g, 0, 2); W.lane(g, 2, 2, 3.2, -1, 1.2); });
+  at(746, (g) => W.dive(g, [-4, 4, 0]));
+  at(758, (g) => W.carrier(g, -3, ['P']));
+  at(772, (g) => { W.turrets(g, [0, 2]); W.cross(g, [-1]); });
+  at(790, (g) => { W.snake(g, -4); W.snake(g, 4); });
+  at(806, (g) => { W.hornet(g, -6, 0.26); W.hornet(g, 0, 0.2); W.hornet(g, 6, 0.26); });
+  at(826, (g) => { W.snake(g, 0, 10, 0.25); });
+  at(846, (g) => W.turrets(g, [0, 1, 2]));
+  at(862, (g) => { W.bomber(g, 0, ['S', 'B']); g.later(2, () => { W.hornet(g, -6, 0.42, 7); W.hornet(g, 6, 0.42, 7); }); });
+  at(896, (g) => W.cross(g, [1, -1]));
+  at(908, (g) => W.carrier(g, 3, ['P']));
+  at(922, (g) => { W.swoop(g, 1); g.later(1, () => W.swoop(g, -1)); });
+  at(942, (g) => { W.turrets(g, [0, 2]); W.lane(g, 1, 2); });
+  // BASE ──────────────────────────────────────────────
+  at(966, (g) => W.turrets(g, [0, 1, 2]));
+  at(982, (g) => { W.lane(g, 0, 3, 3); W.lane(g, 2, 3, 3); });
+  at(998, (g) => { W.rise(g, -1, 4); g.later(0.6, () => W.rise(g, 1, 4)); });
+  at(1012, (g) => { W.hornet(g, -6, 0.24); W.hornet(g, -2, 0.32); W.hornet(g, 2, 0.32); W.hornet(g, 6, 0.24); });
+  at(1032, (g) => { W.carrier(g, -3, ['P']); g.later(1.5, () => W.carrier(g, 3, ['B'])); });
+  at(1050, (g) => W.cross(g, [1, -1, 1, -1]));
+  at(1066, (g) => { W.vee(g, 0); g.later(1.2, () => W.swoop(g, -1, 4)); });
+  at(1086, (g) => { W.turrets(g, [0, 2]); W.lane(g, 1, 3, 3); });
+  at(1104, (g) => { W.bomber(g, -4, ['P']); g.later(1.5, () => W.bomber(g, 4, ['B'])); });
+  at(1142, (g) => W.dive(g, [-6, -3, 0, 3, 6, -1]));
+  at(1158, (g) => { W.hornet(g, -5, 0.3); W.hornet(g, 5, 0.3); });
+  at(1172, (g) => W.carrier(g, 0, ['1UP']));
+  at(1184, (g) => W.turrets(g, [0, 1, 2]));
+  at(1198, (g) => { W.swoop(g, -1); g.later(0.8, () => W.swoop(g, 1)); });
+  at(1216, (g) => W.carrier(g, 0, ['B']));
+});
 
-// OCEAN ──────────────────────────────────────────────
-at(26, (g) => W.swoop(g, -1));
-at(46, (g) => W.swoop(g, 1));
-at(66, (g) => W.carrier(g, 0, ['P']));
-at(84, (g) => W.boats(g, [-5, 5.5]));
-at(102, (g) => W.vee(g, 0));
-at(120, (g) => { W.hornet(g, -5, 0.28); g.later(0.8, () => W.hornet(g, 5, 0.34)); });
-at(146, (g) => W.snake(g, -3.5));
-at(160, (g) => W.boats(g, [-7, 0, 7], 4));
-at(178, (g) => { W.swoop(g, -1, 4); g.later(0.9, () => W.swoop(g, 1, 4)); });
-at(196, (g) => W.dive(g, [-5, 3, -1, 5]));
-at(212, (g) => W.carrier(g, 3, ['P', 'S']));
-at(226, (g) => { W.hornet(g, -6, 0.26); W.hornet(g, 0, 0.2); W.hornet(g, 6, 0.26); });
-at(250, (g) => { W.rise(g, -1); g.later(0.6, () => W.rise(g, 1)); });
-at(264, (g) => { W.boats(g, [-4, 6], 5); W.swoop(g, -1, 4); });
-at(286, (g) => W.vee(g, 2));
-// COAST ─────────────────────────────────────────────
-at(302, (g) => { W.lane(g, 0, 2); W.lane(g, 2, 2); });
-at(318, (g) => W.turrets(g, [0, 2]));
-at(334, (g) => W.swoop(g, 1));
-at(348, (g) => W.carrier(g, -2, ['P']));
-at(360, (g) => { W.hornet(g, -4, 0.3); W.hornet(g, 4, 0.3); });
-at(372, (g) => W.cross(g, [1, 1]));
-// COUNTRY ───────────────────────────────────────────
-at(392, (g) => W.dive(g, [-6, -2, 2, 6, 0]));
-at(404, (g) => W.lane(g, 1, 3, 3));
-at(420, (g) => W.turrets(g, [0, 2]));
-at(436, (g) => { W.hornet(g, -5, 0.3); W.cross(g, [-1, -1]); });
-at(456, (g) => { W.snake(g, 3.5); g.later(1, () => W.snake(g, -3.5, 4)); });
-at(470, (g) => W.carrier(g, 0, ['B']));
-at(482, (g) => { W.lane(g, 0, 2); W.lane(g, 2, 2); W.turrets(g, [1], 3); });
-at(500, (g) => { W.swoop(g, -1, 4); g.later(1, () => W.swoop(g, 1, 4)); });
-at(516, (g) => { W.hornet(g, -6, 0.26); W.hornet(g, 6, 0.26); g.later(1.2, () => W.hornet(g, 0, 0.18)); });
-at(530, (g) => W.cross(g, [1, -1, 1]));
-at(546, (g) => { W.vee(g, -2); W.turrets(g, [0, 2]); });
-at(560, (g) => W.carrier(g, 2, ['P']));
-at(572, (g) => { W.rise(g, 1); g.later(0.5, () => W.rise(g, -1)); });
-at(MIDBOSS_AT, (g) => { g.phase = 'midboss'; g.scrollTarget = 1.0; g.onEvent('midboss'); spawnMidboss(g); });
-// CITY ──────────────────────────────────────────────
-at(644, (g) => W.cross(g, [1, 1]));
-at(652, (g) => { W.swoop(g, -1); g.later(0.9, () => W.swoop(g, 1)); });
-at(666, (g) => W.turrets(g, [0, 1, 2]));
-at(682, (g) => { W.hornet(g, -5, 0.3); W.hornet(g, 5, 0.3); });
-at(700, (g) => W.bomber(g, 0, ['P', 'B']));
-at(734, (g) => { W.lane(g, 0, 2); W.lane(g, 2, 2, 3.2, -1, 1.2); });
-at(746, (g) => W.dive(g, [-4, 4, 0]));
-at(758, (g) => W.carrier(g, -3, ['P']));
-at(772, (g) => { W.turrets(g, [0, 2]); W.cross(g, [-1]); });
-at(790, (g) => { W.snake(g, -4); W.snake(g, 4); });
-at(806, (g) => { W.hornet(g, -6, 0.26); W.hornet(g, 0, 0.2); W.hornet(g, 6, 0.26); });
-at(826, (g) => { W.snake(g, 0, 10, 0.25); });
-at(846, (g) => W.turrets(g, [0, 1, 2]));
-at(862, (g) => { W.bomber(g, 0, ['S', 'B']); g.later(2, () => { W.hornet(g, -6, 0.42, 7); W.hornet(g, 6, 0.42, 7); }); });
-at(896, (g) => W.cross(g, [1, -1]));
-at(908, (g) => W.carrier(g, 3, ['P']));
-at(922, (g) => { W.swoop(g, 1); g.later(1, () => W.swoop(g, -1)); });
-at(942, (g) => { W.turrets(g, [0, 2]); W.lane(g, 1, 2); });
-// BASE ──────────────────────────────────────────────
-at(966, (g) => W.turrets(g, [0, 1, 2]));
-at(982, (g) => { W.lane(g, 0, 3, 3); W.lane(g, 2, 3, 3); });
-at(998, (g) => { W.rise(g, -1, 4); g.later(0.6, () => W.rise(g, 1, 4)); });
-at(1012, (g) => { W.hornet(g, -6, 0.24); W.hornet(g, -2, 0.32); W.hornet(g, 2, 0.32); W.hornet(g, 6, 0.24); });
-at(1032, (g) => { W.carrier(g, -3, ['P']); g.later(1.5, () => W.carrier(g, 3, ['B'])); });
-at(1050, (g) => W.cross(g, [1, -1, 1, -1]));
-at(1066, (g) => { W.vee(g, 0); g.later(1.2, () => W.swoop(g, -1, 4)); });
-at(1086, (g) => { W.turrets(g, [0, 2]); W.lane(g, 1, 3, 3); });
-at(1104, (g) => { W.bomber(g, -4, ['P']); g.later(1.5, () => W.bomber(g, 4, ['B'])); });
-at(1142, (g) => W.dive(g, [-6, -3, 0, 3, 6, -1]));
-at(1158, (g) => { W.hornet(g, -5, 0.3); W.hornet(g, 5, 0.3); });
-at(1172, (g) => W.carrier(g, 0, ['1UP']));
-at(1184, (g) => W.turrets(g, [0, 1, 2]));
-at(1198, (g) => { W.swoop(g, -1); g.later(0.8, () => W.swoop(g, 1)); });
-at(1216, (g) => W.carrier(g, 0, ['B']));
-TIMELINE.sort((a, b) => a.d - b.d);
-
-export const STAGE_INFO = { number: 1, name: 'COASTAL FRONT', nameZh: '沿岸前線', boss: 'ARCLIGHT' };
+export const STAGE = {
+  ...STAGE_META[0],
+  timeline: TIMELINE,
+  midbossAt: MIDBOSS_AT, bossAt: STAGE_BOSS_AT,
+  spawnBoss: (g) => spawnBoss(g),
+  // enemies toughen as the coast gives way to the country, the city and the base
+  hpSeg: (d) => (d < 380 ? 1 : d < 640 ? 1.15 : d < 960 ? 1.3 : 1.45),
+  scroll: 7, warnScroll: 3, bossScroll: 2.2,
+};

@@ -180,7 +180,7 @@ export class Game {
       pierce: new Uint8Array(PS), hits: new Int32Array(PS * 4), aux: new Float32Array(PS), // generic (see weapons.js)
     };
     this.player = {
-      x: 0, z: 5, alive: true, mesh: null, shadow: null, invuln: 0, respawn: 0, bank: 0, thrust: 0.5, slow: false,
+      x: 0, z: 5, alive: true, mesh: null, shadow: null, invuln: 0, respawn: 0, bank: 0, thrust: 0.5, slow: false, focus: false,
       main: 'red', level: 1, sub: null, subLevel: 0, fireT: 0, subT: 0, laserT: 0, optT: 0, entering: 0, lastX: 0, lastZ: 5,
     };
     this.scrollSpeed = 7; this.scrollTarget = 7;
@@ -287,12 +287,12 @@ export class Game {
     this.scrollSpeed = this.stage.scroll; this.scrollTarget = this.stage.scroll;
     const p = this.player;
     p.alive = true; p.x = 0; p.z = this.view.zBottom + 2; p.entering = 1.2; p.invuln = 2.2; p.respawn = 0;
-    p.fireT = 0; p.subT = 0; p.optT = 0; p.bank = 0; p.slow = false; p.mesh.visible = true;
+    p.fireT = 0; p.subT = 0; p.optT = 0; p.bank = 0; p.slow = false; p.focus = false; p.mesh.visible = true;
     this.optLive = false;
     // difficulty climbs by a third of a loop per stage: loop 1 stage 1 = 1/1/1, loop 2 stage 1 = 1.22/1.35/1.3
     const level = r9((loop - 1) + 0.35 * this.stageIdx);
     this.diff = { bs: r9(1 + 0.22 * level), fr: r9(1 + 0.35 * level), hp: r9(1 + 0.3 * level), level, part: r9(1 + 0.2 * level) };
-    if (this.world.setStage) this.world.setStage(this.stage.world);
+    this.world.setStage(this.stage.world);
     this.world.reset(0);
   }
   clearField() {
@@ -556,12 +556,16 @@ export class Game {
       p.z = lerp(p.z, tz, Math.min(1, dt * 4));
     } else if (this.phase !== 'clear' && !(this.phase === 'bossdead' && this.clearT > 5.5)) {
       const ax = input.axis(), ac = this.ac;
-      p.slow = !!ax.slow;
+      p.slow = !!ax.slow;                 // slow move (speed)
+      p.focus = !!(ax.slow || ax.focus);  // focus: tucks the option drones (touch / pad may focus without slowing)
       const sp = (ax.slow ? ac.slow : ac.speed) * (ax.stick ? (this.settings.touchSens || 1) : 1);
       p.x += ax.x * sp * dt; p.z += ax.y * sp * dt;
-      const b = this.boss;
-      const zMin = (b && b.alive && !b.dying) ? Math.max(v.zTop + 5, b.z + 7) : v.zTop + 5;
+      const b = this.boss, m = this.midboss;
+      let zMin = (b && b.alive && !b.dying) ? Math.max(v.zTop + 5, b.z + 7) : v.zTop + 5;
       const zMax = v.zPlayerMax ?? v.zBottom - 1.3;
+      // a mid-boss with def.keepOff holds the jet that far below it, so its guns can't be hugged into
+      // silence (shoot() never fires point-blank)
+      if (m && m.alive && !m.dying && m.def && m.def.keepOff) zMin = Math.max(zMin, Math.min(m.z + m.def.keepOff, zMax));
       p.z = clamp(p.z, zMin, zMax);
       const hw = v.hw(p.z) - 0.75;
       p.x = clamp(p.x, -hw, hw);
@@ -584,8 +588,9 @@ export class Game {
     m.visible = p.alive && !blink;
     this.placeShadow(p.shadow, p.x, 0, p.z, 0, p.alive);
   }
-  // Option drones trail the jet in a loose line abreast; holding slow tucks them in close
-  // (their streams then converge, see weapons.js). They vanish with the jet and fly out of it again.
+  // Option drones trail the jet in a loose line abreast; focus (slow, or a touch / pad focus input)
+  // tucks them in close (their streams then converge, see weapons.js). They vanish with the jet and
+  // fly out of it again.
   updateOptions(dt, attract) {
     const opts = this.options;
     if (!opts.length) return;
@@ -595,7 +600,7 @@ export class Game {
       this.optLive = false;
       return;
     }
-    const want = attract || !p.slow ? 1 : 0;
+    const want = attract || !p.focus ? 1 : 0;
     this.optSpread += (want - this.optSpread) * Math.min(1, dt * 9);
     const s = this.optSpread, snap = !this.optLive;
     const k = 1 - Math.exp(-dt * 14);
@@ -721,7 +726,7 @@ export class Game {
       if (e.parts && e.parts.length) {
         const mul = e.def.boss ? 0.45 : 1;
         for (const pt of e.parts) if (!pt.dead && !(pt.core && e.armored)) this.damagePart(e, pt, amount * mul, true);
-        if (!e.def.boss) this.damageEnemy(e, amount, true);
+        if (!e.def.boss && e.def.bodyTarget !== false) this.damageEnemy(e, amount, true);
       } else this.damageEnemy(e, amount, true);
     }
   }
@@ -924,7 +929,8 @@ export class Game {
           const t = this.targets[n++];
           t.x = q.x; t.z = q.z; t.r = pt.r * q.s; t.e = e; t.part = pt; t.armored = !!(pt.core && e.armored) || !!e.invuln; t.uid = pt.uid;
         }
-        if (e.def.boss) continue; // boss hull itself isn't a target
+        // a boss hull, or a holder body whose HP lives in its parts (def.bodyTarget: false), isn't a target
+        if (e.def.boss || e.def.bodyTarget === false) continue;
       }
       if (n >= this.targets.length) break;
       const t = this.targets[n++];

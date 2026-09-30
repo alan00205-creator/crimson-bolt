@@ -30,6 +30,9 @@ function setTouchUI(on) {
 window.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') setTouchUI(true); }, { capture: true, passive: true });
 window.addEventListener('keydown', (e) => {
   if (/^(Arrow|Key[WASDXKP]$|Space|Shift|Escape|Enter)/.test(e.code)) setTouchUI(false);
+  // A held Enter must not auto-repeat a focused button's click: its repeats would confirm a
+  // purchase (or QUIT / RESTART) that the first press only armed.
+  if (e.repeat && (e.code === 'Enter' || e.code === 'NumpadEnter') && e.target.closest && e.target.closest('button')) e.preventDefault();
 }, { capture: true });
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const landscapeLock = matchMedia('(orientation: landscape) and (max-height: 500px)');
@@ -393,7 +396,9 @@ function closePanel() {
   audio.play('select');
   ui.only(backTo);
   if (fromHangar) leaveHangar();
-  if (panelOpener && !panelOpener.hidden && panelOpener.closest('#' + backTo)) focusEl(panelOpener);
+  // The pause menu gets its SETTINGS button back; the title always refocuses START, so the
+  // blinking "PRESS ENTER ・ 按 Enter 出擊" stays true (Enter on HANGAR would reopen the hangar).
+  if (backTo === 'pause' && panelOpener && panelOpener.closest('#pause')) focusEl(panelOpener);
   else focusFirst(backTo);
   panelOpener = null;
 }
@@ -449,7 +454,7 @@ function startGame({ loop = 1, stage = 0, keepScore = false } = {}) {
   if (loop === 1 && game.stageIdx === 0 && !keepScore && !(hintFlags.moved && touchUI)) {
     setTimeout(() => { if (state === 'playing') { hintState.moveShown = true; input.dragTravel = 0; ui.hint(touchUI); } }, 1200);
   }
-  try { if (!history.state || !history.state.cb) history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ }
+  pushBackGuard();
   updateHud();
   requestWake();
   input.clearEdges();
@@ -476,6 +481,7 @@ function resume() {
   audio.setMusicDuck(1);
   audio.resume();
   input.clearEdges();
+  pushBackGuard(); // a Back on the pause screen used up the run's entry
 }
 function finishResume() {
   state = 'playing';
@@ -640,12 +646,24 @@ function onGameEvent(ev) {
 // UI wiring
 // ---------------------------------------------------------------------------------
 let backTo = 'title';
-let panelOpener = null; // the menu button that opened a panel gets the focus back
+let panelOpener = null; // the pause-menu button that opened a panel gets the focus back
+// A same-page history entry, so Android / browser Back closes a panel or pauses the run instead
+// of leaving the game. Called from taps and key presses (user activation keeps the entry).
+function pushBackGuard() {
+  try { if (!history.state || !history.state.cb) history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ }
+}
 // Destructive pause-menu actions (and purchases) need a second tap within ms (2 s). msg replaces
 // the text of el (default: the button's <span>) until then; cls is added to el meanwhile.
+// A second press sooner than CONFIRM_GAP after arming (a double-click, a double-tap) is ignored
+// and leaves the button armed, so the confirm step can't be skipped by accident.
+const CONFIRM_GAP = 400;
 function confirmTwice(btn, msg = '再按一次確認', el = btn.querySelector('span'), cls = '', ms = 2000) {
-  if (btn.dataset.armed === '1') { btn.dataset.armed = ''; restoreLabel(btn); return true; }
+  if (btn.dataset.armed === '1') {
+    if (performance.now() - btn._armAt < CONFIRM_GAP) return false;
+    btn.dataset.armed = ''; restoreLabel(btn); return true;
+  }
   btn.dataset.armed = '1';
+  btn._armAt = performance.now();
   btn._armEl = el; btn._armCls = cls;
   btn.dataset.label = el.textContent;
   el.textContent = msg;
@@ -665,12 +683,14 @@ function restoreLabel(btn) {
 function disarm(btn) { if (btn.dataset.armed === '1') { btn.dataset.armed = ''; restoreLabel(btn); } }
 function focusEl(el) { if (!touchUI && el) setTimeout(() => el.focus({ preventScroll: true }), 30); }
 function focusFirst(id) { focusEl(document.querySelector(`#${id} .btn`)); }
-function openPanel(id, opener = null) {
+// focus: the element to focus in the panel (default: its first button)
+function openPanel(id, opener = null, focus = null) {
   backTo = state === 'paused' ? 'pause' : 'title';
   panelOpener = opener;
   ui.only(id);
   audio.play('select');
-  focusFirst(id);
+  if (focus) focusEl(focus); else focusFirst(id);
+  pushBackGuard(); // before the first run there is no entry yet: Back would leave the page
 }
 
 // --- wallet display + hangar -------------------------------------------------------
@@ -682,10 +702,9 @@ let hangarSel = null; // the aircraft previewed on the title fly-by while the ha
 function openHangar(opener) {
   const w = readWallet();
   hangarSel = w.equipped;
-  openPanel('hangar', opener);
+  openPanel('hangar', opener, ui.ships[w.equipped] && ui.ships[w.equipped].b); // focus the equipped row: no preview swap
   $('ships').scrollTop = 0;
   ui.renderHangar(w, hangarSel);
-  focusEl(ui.ships[w.equipped] && ui.ships[w.equipped].b);
 }
 // Show a jet on the fly-by and highlight its row (focus, hover or tap).
 function previewShip(id) {
@@ -713,7 +732,7 @@ function activateShip(btn) {
     return;
   }
   if (w.money < ac.price) { refuse(id, ac.price - w.money); return; }
-  ui.hangarMsgClear(id);
+  if (btn.dataset.armed !== '1') ui.hangarMsgClear(id); // (armed: the confirm text stays up)
   if (!confirmTwice(btn, `再按一次確認購買（購買後剩 ${MONEY.label} ${fmt(w.money - ac.price)}）`, ui.ships[id].desc, 'msg', 3000)) return;
   const w2 = readWallet(); // storage may have changed meanwhile (another tab)
   if (w2.money < ac.price) { refuse(id, ac.price - w2.money); return; }
@@ -795,9 +814,11 @@ function bindUI() {
   $('set-sfx').addEventListener('input', (e) => { settings.sfx = e.target.value / 100; applySettings(); });
   $('set-sfx').addEventListener('change', () => audio.play('item'));
 
+  // Back: pauses a run, or closes a panel. Only a run keeps an entry after that (a panel over
+  // the pause menu); at the title the next Back leaves the page, as expected.
   window.addEventListener('popstate', () => {
-    if (state === 'playing' || state === 'resuming') { pause(); try { history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ } }
-    else if (panelOpen()) { closePanel(); try { history.pushState({ cb: 1 }, ''); } catch (_) { /* ignore */ } }
+    if (state === 'playing' || state === 'resuming') { pause(); pushBackGuard(); }
+    else if (panelOpen()) { const inRun = backTo === 'pause'; closePanel(); if (inRun) pushBackGuard(); }
   });
   window.addEventListener('pagehide', () => { bankMoney(); if (game.score > 0) saveHi(); });
   document.addEventListener('visibilitychange', () => {

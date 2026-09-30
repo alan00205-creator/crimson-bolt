@@ -38,7 +38,7 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 // Enemy definitions (see the field list at the top of stage.js).
 export const ENEMY = {
   // swarm drones come by the dozen (flocks, streams, broods): no revenge shots, no distance HP growth
-  s7_swarmer: { hp: 3, score: 250, radius: 0.7, air: true, explode: 0.8, debris: 4, medal: 0.15, noRevenge: true, noHpSeg: true, prewarm: 28 },
+  s7_swarmer: { hp: 3, score: 250, radius: 0.7, air: true, explode: 0.8, debris: 4, medal: 0.15, noRevenge: true, noHpSeg: true, prewarm: 32 },
   s7_stinger: { hp: 22, score: 1100, radius: 0.95, air: true, explode: 1.3, debris: 9, medal: 0.5, prewarm: 6 },
   s7_crystal: { hp: 150, score: 5000, radius: 1.6, air: true, explode: 2.3, debris: 16, medal: 2, prewarm: 3 },
   s7_gate: { hp: 110, score: 6000, radius: 1.9, air: true, explode: 2.4, debris: 18, medal: 2, noRevenge: true, prewarm: 3 },

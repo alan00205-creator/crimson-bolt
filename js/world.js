@@ -1526,7 +1526,41 @@ const SPACE_Y = GROUND_Y - 18;    // the backdrop plane itself: under the deep d
 const PLANET_N = 12;              // noise periods round the body
 const PLANET_SPIN = 0.0004;       // rad per stage unit: under the view the surface moves at ≈ 0.1× the scroll
 const STAR_DRIFT = 0.02, STAR_SPAN = 160, NEB_DRIFT = 0.012, NEB_SPAN = 64;
+// The kit's later parts (stages 6–8; each switched on by a #define, see World.spaceMat):
+//   SP_BODY 2  the solar system's bodies on one program (Mars, Jupiter, Saturn and its rings, the Sun),
+//              picked by uKit.x; the camera may sit to the side of the body (uKit.z: over the rings)
+//   SP_GAS     three layers of glowing gas at three depths (parallax: each drifts at its own rate), dust
+//              lanes over them, young stars with spikes;   SP_CLUS  star clusters;   SP_CORE  a galactic core
+//   SP_WEB     the cosmic web (two layers);   SP_GALS  old galaxies;   SP_WARP  point lenses bending the sky
+//              and a spacetime grid;   SP_HOLE  a black hole with its lensed accretion disk
+// The parallax layers drift at world-set rates (space.layers), wrapped at LAYER_SPAN: every lookup scale on
+// them is a whole multiple of 1/LAYER_SPAN, and cell hashes step 256/cells-per-span texels. Anything that
+// moves with time alone (Jupiter's jets, the Sun's granulation, the disk) flows through two crossfaded
+// copies reset half a FLOW_T apart, so the time wrap never shows.
+const LAYER_SPAN = 64, FLOW_T = 8;
+const SPACE_PARTS = ['gas', 'clus', 'core', 'web', 'gals', 'warp', 'hole'];   // space.<part> → #define SP_<PART>
+const wrapLayer = (v) => ((v % LAYER_SPAN) + LAYER_SPAN) % LAYER_SPAN;
+// SP_WARP's lenses: three drift down the screen with a layer far below (LENS_RATE of the scroll), one every
+// LENS_GAP units of it; each pass (LENS_PERIOD) has its own x and strength (k: the world's lensing), grows in
+// well above the top edge and fades out below the bottom — the shader's pull reaches 14 units, so a lens
+// never pops in or out on screen
+const LENS_RATE = 0.35, LENS_PERIOD = 96, LENS_GAP = 32;
+function placeLenses(out, d, k) {
+  for (let i = 0; i < 3; i++) {
+    const s = d * LENS_RATE + i * LENS_GAP, pass = Math.floor(s / LENS_PERIOD), f = s / LENS_PERIOD - pass;
+    const env = sstep(0, 0.12, f) * (1 - sstep(0.88, 1, f));
+    out[i].set((hash2(pass, i * 7 + 1) - 0.5) * 12, -52 + f * 90, (1.3 + 1.7 * hash2(pass, i * 7 + 3)) * env * k);
+  }
+}
+const JUP_GRS = [-0.13, 0.05, 0.075];     // Jupiter's Great Red Spot: latitude, longitude, radius (noise periods)
+const HOLE_RIN = 1.55, HOLE_ROUT = 4.8;   // the accretion disk, in shadow radii
+const DISK_N = 6, DISK_W = 0.3;           // its turbulence: noise periods round it, turn (rad/s) at the inner edge
 const SPACE_FRAG = /* glsl */`
+#ifdef SP_BODY
+#define SP_KIND SP_BODY
+#else
+#define SP_KIND 0
+#endif
 uniform sampler2D uNoise;
 uniform vec4 uScroll;             // (time, body longitude offset, star drift, nebula drift)
 uniform vec4 uPlanet;             // (nadir x, nadir z (virtual plane), focal length (world units), orbit height (radii))
@@ -1534,6 +1568,13 @@ uniform vec4 uLook;               // (cloud cover, nebula / band, stars, city li
 uniform float uAtmW;              // atmosphere thickness (radii)
 uniform vec3 uSun;                // toward the sun (planet frame: x right, y up, z down-screen)
 uniform vec3 uOcean, uLand, uLand2, uCloud, uAtmos, uGlow, uCity, uSpace, uNeb;
+uniform vec4 uScroll2;            // the parallax layers' drifts (layers 1–3, the lens field), each wrapped at LAYER_SPAN
+uniform vec4 uKit;                // SP_BODY 2: (which body, Saturn's rings, the camera's side offset (radii), surface turn)
+uniform vec4 uMix;                // layer strengths: gas / web layers 1–3; dust lanes (galaxy) or the spacetime grid (cosmos)
+uniform vec4 uMix2;               // (star clusters / old galaxies, the core / the black hole, young stars, 0)
+uniform vec4 uPos;                // the core / the black hole on the virtual plane: (x, z, radius, arm twist / disk tilt)
+uniform vec3 uLens[3];            // SP_WARP: point lenses on the virtual plane (x, z, Einstein radius)
+uniform vec3 uHot, uGas, uGas2, uDust;
 varying vec3 vW;
 // at most one star per cell: two texels "stride" apart (uncorrelated) pick presence, place, size, tint
 vec3 stars(vec2 q, float stride, float keep, float size, float aa) {
@@ -1545,9 +1586,164 @@ vec3 stars(vec2 q, float stride, float keep, float size, float aa) {
   float s = on * (1.0 - smoothstep(rad, rad + aa, length(cf - (0.2 + 0.6 * vec2(h.b, h2.r)))));
   return s * mix(vec3(0.72, 0.84, 1.3), vec3(1.3, 1.02, 0.72), smoothstep(0.35, 0.65, h2.g)) * (0.4 + 1.1 * h2.b);
 }
+#if SP_KIND == 2 || defined(SP_HOLE)
+// flow that never jumps at the time wrap: two copies of a drifting lookup reset half a cycle apart
+// (FLOW_T divides TIME_WRAP), each weighted out while it jumps: (copy a's time, copy b's time, b's weight)
+vec3 flowPh() { float a = fract(uScroll.x * ${(1 / FLOW_T).toFixed(8)}); return vec3(a * ${FLOW_T.toFixed(1)}, fract(a + 0.5) * ${FLOW_T.toFixed(1)}, abs(2.0 * a - 1.0)); }
+#endif
+#if SP_KIND == 2
+// one crater at most per cell (p in cells), kept inside it with its ejecta: (shade, light added). sl points
+// toward the sun in p's axes: the wall on the sun's side lies in shadow, the far wall and the outer lip
+// facing the sun catch the light, a faint ray of ejecta round it
+vec2 crater(vec2 p, vec2 sl, float keep, float aa) {
+  vec2 ci = floor(p), cf = fract(p);
+  vec4 h = textureLod(uNoise, (ci * 7.0 + 0.5) / 256.0, 0.0);
+  vec4 h2 = textureLod(uNoise, (ci * 7.0 + vec2(3.5, 2.5)) / 256.0, 0.0);
+  float R = 0.07 + 0.22 * h2.b * h2.b * h2.b;
+  vec2 rel = (cf - (1.6 * R + (1.0 - 3.2 * R) * vec2(h.b, h2.r))) / R;
+  float r = length(rel), e = aa / R + 0.05;
+  float wall = dot(rel, sl) / max(r, 1e-3);
+  float bowl = 1.0 - smoothstep(1.0 - e, 1.0 + e, r);
+  float lip = smoothstep(1.0 - e, 1.05 + e, r) * (1.0 - smoothstep(1.05, 1.4 + e, r));
+  float shade = 1.0 - bowl * (0.12 + 0.62 * smoothstep(0.15, 1.0, r) * max(wall, 0.0)) - lip * 0.22 * max(-wall, 0.0);
+  float add = bowl * 0.3 * max(-wall, 0.0) * smoothstep(0.25, 1.0, r) + lip * 0.26 * max(wall, 0.0) + (1.0 - smoothstep(1.05, 1.6, r)) * (1.0 - bowl) * 0.06;
+  float on = step(keep, h.r);
+  return vec2(mix(1.0, shade, on), add * on);
+}
+// the accretion-free bodies' thin air seen through, toward the limb (as the earth's)
+#endif
+#ifdef SP_GAS
+// one layer of glowing gas (p: the layer's lookup; its scales on the stage axis are whole multiples of
+// 1/LAYER_SPAN, so the layer's drift wraps seamlessly): billows, and bright fronts where they thin out
+vec3 gasLayer(vec2 p, vec2 gx, vec2 gy, vec3 c) {
+  vec4 a = textureGrad(uNoise, p, gx, gy);
+#ifndef LOW
+  vec4 e = textureGrad(uNoise, p * 2.0 + (a.rb - 0.5) * 0.25, gx * 2.0, gy * 2.0);
+  float v = a.g * 0.64 + e.g * 0.36, fine = e.b;
+#else
+  float v = a.g * 0.8 + a.b * 0.2, fine = a.b;
+#endif
+  float body = smoothstep(0.5, 0.86, v);
+  float front = 1.0 - smoothstep(0.0, 0.06, abs(v - 0.53));
+  return c * (body * body * (1.2 + 0.5 * fine) + front * 0.22 * (0.4 + fine) + smoothstep(0.3, 0.62, v) * 0.08);
+}
+// a young star at most per cell (p in cells of 8 units of the nearest layer; the texel stride keeps its
+// hash seamless over LAYER_SPAN): big and hot, with diffraction spikes short enough to stay inside the cell
+vec3 youngStar(vec2 p, float px) {
+  vec2 ci = floor(p), cf = fract(p);
+  vec4 h = textureLod(uNoise, (ci * 32.0 + vec2(7.5, 23.5)) / 256.0, 0.0);
+  if (h.r < 0.6) return vec3(0.0);
+  vec4 h2 = textureLod(uNoise, (ci * 32.0 + vec2(27.5, 13.5)) / 256.0, 0.0);
+  vec2 o = (cf - 0.5 - (vec2(h.b, h2.r) - 0.5) * 0.3) * 8.0;
+  float s = 0.6 + 0.8 * h2.b, w = 0.015 + px;
+  float core = exp(-dot(o, o) / (0.012 * s + px * px));
+  float spk = exp(-abs(o.y) / w) * exp(-abs(o.x) * 1.9 / s) + exp(-abs(o.x) / w) * exp(-abs(o.y) * 1.9 / s);
+  float halo = exp(-length(o) * 2.4 / s);
+  return mix(vec3(0.72, 0.88, 1.4), vec3(1.3, 1.12, 0.85), h2.g) * (core * 2.4 + spk * 0.8 + halo * 0.3) * s;
+}
+#endif
+#ifdef SP_CLUS
+// star clusters (one at most per 20-unit cell of the star layer, so they drift with their stars): globular
+// balls of old stars — a golden unresolved glow, and stars crowding in toward the centre
+vec3 cluster(vec2 q, float aa) {
+  vec2 p = q * 0.05, ci = floor(p), cf = fract(p);
+  vec4 h = textureLod(uNoise, (ci * 32.0 + vec2(9.5, 21.5)) / 256.0, 0.0);
+  if (h.r < 0.5) return vec3(0.0);
+  vec4 h2 = textureLod(uNoise, (ci * 32.0 + vec2(21.5, 5.5)) / 256.0, 0.0);
+  float R = 0.07 + 0.06 * h2.b;
+  vec2 o = (cf - 0.5 - (vec2(h.b, h2.r) - 0.5) * (1.0 - 4.4 * R)) / R;
+  float r2 = dot(o, o);
+  if (r2 > 4.4) return vec3(0.0);
+  vec3 tint = mix(uHot, vec3(0.8, 0.9, 1.25), h2.g * h2.g);
+  float dn = exp(-r2 * 1.2);
+  vec3 s = stars(q * 4.8 + 7.0, 5.0, mix(0.99, 0.62, dn), 0.12, aa * 4.8) + stars(q * 8.0 + 3.0, 7.0, mix(0.995, 0.55, dn), 0.12, aa * 8.0) * 0.8;
+  return tint * (exp(-r2 * 2.2) * 0.45 + exp(-r2 * 0.6) * 0.08) + s * (0.55 + 0.45 * tint) * 1.1;
+}
+#endif
+#ifdef SP_WEB
+// one layer of the cosmic web: filaments where the noise crosses its middle (ridges of two octaves),
+// knots where they cross (clusters of galaxies): (filaments, knots)
+vec2 webLayer(vec2 p, vec2 gx, vec2 gy) {
+  vec4 a = textureGrad(uNoise, p, gx, gy);
+  float r1 = 1.0 - abs(a.g * 2.0 - 1.0);
+#ifndef LOW
+  vec4 e = textureGrad(uNoise, p * 2.0 + (a.rb - 0.5) * 0.2, gx * 2.0, gy * 2.0);
+  float r2 = 1.0 - abs(e.g * 2.0 - 1.0), sp = e.b;
+#else
+  float r2 = 1.0 - abs(a.b * 2.0 - 1.0), sp = a.r;
+#endif
+  float f = (pow(r1, 10.0) * (0.25 + 0.75 * r2 * r2) + pow(r2, 14.0) * 0.2 * r1 * r1) * (0.5 + 1.0 * sp) + pow(r1, 4.0) * 0.07;
+  return vec2(f, pow(r1 * r2, 26.0));
+}
+#endif
+#ifdef SP_GALS
+// an old galaxy at most per cell (p in cells of 8 units of its layer; the texel stride keeps the hash
+// seamless over LAYER_SPAN), kept inside it: spirals (a bright old core, two arms wound in log spirals) and
+// smooth ellipticals, tilted and turned at random, yellowing toward the core
+vec3 oldGalaxy(vec2 p) {
+  vec2 ci = floor(p), cf = fract(p);
+  vec4 h = textureLod(uNoise, (ci * 32.0 + vec2(5.5, 11.5)) / 256.0, 0.0);
+  if (h.r < 0.55) return vec3(0.0);
+  vec4 h2 = textureLod(uNoise, (ci * 32.0 + vec2(19.5, 3.5)) / 256.0, 0.0);
+  float sz = 0.06 + 0.1 * h2.b;
+  vec2 o = cf - 0.5 - (vec2(h.b, h2.r) - 0.5) * (1.0 - 5.0 * sz);
+  float an = h2.g * 12.566, ca = cos(an), sa = sin(an);
+  o = vec2(ca * o.x - sa * o.y, sa * o.x + ca * o.y);
+  o.y /= 0.22 + 0.78 * fract(h.b * 7.0);
+  float r = length(o) / sz, a = atan(o.y, o.x);
+  float spiral = step(0.4, fract(h2.r * 5.0));
+  float core = exp(-r * r * 16.0) * 1.5 + exp(-r * 3.0) * (0.55 - 0.25 * spiral);
+  float arms = pow(0.5 + 0.5 * cos(2.0 * a - 6.0 * log(r + 0.08)), 3.0) * smoothstep(0.1, 0.4, r) * exp(-r * 1.7) * spiral;
+  float I = (core + arms) * (1.0 - smoothstep(1.5, 2.3, r));
+  return mix(uHot, uGas2, smoothstep(0.05, 0.8, r)) * I * (0.45 + 0.9 * h2.b);
+}
+#endif
+#ifdef SP_HOLE
+// the accretion disk's light at radius r (shadow radii) and azimuth ψ (from its direction v in the disk's
+// plane; gv0 / gv1: v's screen gradients, so ψ's gradient never sees atan's seam): hot at the inner edge
+// (uHot) to cool at the rim (uGas2), streaked by turbulence that turns faster inside (crossfaded copies:
+// the time wrap stays seamless), brighter on the side turning toward us
+vec3 diskLight(float r, vec2 v, vec2 gv0, vec2 gv1, float gr0, float gr1, vec3 fp, float tilt) {
+  float x = (r - ${HOLE_RIN.toFixed(2)}) * ${(1 / (HOLE_ROUT - HOLE_RIN)).toFixed(5)};
+  float prof = smoothstep(0.0, 0.03, x) * pow(max(1.0 - x, 0.0), 1.7) * (0.55 + 0.8 * exp(-x * 8.0));
+  if (prof <= 0.0) return vec3(0.0);
+  float v2 = max(dot(v, v), 1e-6);
+  float psi = atan(v.y, v.x) * ${(DISK_N / (2 * Math.PI)).toFixed(6)};
+  float gp0 = (v.x * gv0.y - v.y * gv0.x) / v2 * ${(DISK_N / (2 * Math.PI)).toFixed(6)}, gp1 = (v.x * gv1.y - v.y * gv1.x) / v2 * ${(DISK_N / (2 * Math.PI)).toFixed(6)};
+  float lr = log(max(r, 0.2)) * 3.0;
+  float w = ${DISK_W.toFixed(3)} * pow(max(r, 0.5) * ${(1 / HOLE_RIN).toFixed(4)}, -1.5);
+  vec2 ga = vec2(gp0, gr0 / max(r, 0.2) * 3.0), gb = vec2(gp1, gr1 / max(r, 0.2) * 3.0);
+#ifndef LOW
+  vec4 ta = textureGrad(uNoise, vec2(psi - w * fp.x, lr), ga, gb);
+  vec4 tb = textureGrad(uNoise, vec2(psi - w * fp.y + 0.5, lr + 0.31), ga, gb);
+  vec4 t = mix(ta, tb, fp.z);
+#else
+  vec4 t = textureGrad(uNoise, vec2(psi, lr), ga, gb);
+#endif
+  float streak = 0.45 + 1.1 * t.r * (0.6 + 0.8 * t.b);
+  float beam = 1.0 + 0.55 * sin(tilt) * (-v.x * inversesqrt(v2));
+  return mix(uHot, uGas2, smoothstep(0.0, 0.6, x)) * prof * streak * beam * beam;
+}
+#endif
 void main() {
   // this pixel's view ray on the virtual plane
   vec3 P = cameraPosition + (vW - cameraPosition) * ((${SPACE_VY.toFixed(3)} - cameraPosition.y) / (vW.y - cameraPosition.y));
+#if defined(SP_WARP) || defined(SP_HOLE)
+  // bent space: the sky is looked up where the lenses send this ray (P0 keeps the straight one). A point
+  // lens shows the sky at β = θ − θE²·θ/|θ|²: it bulges round the lens into arcs and an Einstein ring
+  vec2 P0 = P.xz;
+#endif
+#ifdef SP_WARP
+  for (int i = 0; i < 3; i++) {
+    vec2 lv = P0 - uLens[i].xy;
+    float l2 = dot(lv, lv);
+    P.xz -= lv * (uLens[i].z * uLens[i].z / (l2 + 0.08)) * (1.0 - smoothstep(64.0, 196.0, l2));   // fades out by 14 units
+  }
+#endif
+#ifdef SP_HOLE
+  { vec2 hv = P0 - uPos.xy; float r2 = dot(hv, hv), rs2 = uPos.z * uPos.z * uMix2.y;
+    P.xz -= hv * (2.4 * rs2 / max(r2, 0.9 * rs2 + 1e-4)); }
+#endif
   vec2 q = vec2(P.x, P.z - uScroll.z);
   float aa = fwidth(P.x) * 1.6;
   vec3 col = uSpace;
@@ -1556,7 +1752,7 @@ void main() {
   vec2 qn = vec2(P.x, P.z - uScroll.w) * ${(1 / NEB_SPAN).toFixed(8)};
   vec2 ngx = dFdx(P.xz) * ${(1 / NEB_SPAN).toFixed(8)}, ngy = dFdy(P.xz) * ${(1 / NEB_SPAN).toFixed(8)};
 #endif
-#ifdef SP_BODY
+#if SP_KIND == 1
   // the ray through this point, and where it meets the body (or how high it passes over the limb)
   float h = uPlanet.w, c2 = (1.0 + h) * (1.0 + h);
   vec3 dir = normalize(vec3((P.x - uPlanet.x) / uPlanet.z, -1.0, (P.z - uPlanet.y) / uPlanet.z));
@@ -1567,6 +1763,37 @@ void main() {
   onDisc = smoothstep(-1.0, 1.0, disc / max(fwidth(disc), 1e-7));        // ≈ 1 px of antialiasing at the limb
   vec2 uv = vec2(asin(clamp(n.x, -1.0, 1.0)), atan(n.z, max(n.y, 1e-3)) + uScroll.y) * ${(PLANET_N / (2 * Math.PI)).toFixed(8)};
   vec2 gx = dFdx(uv), gy = dFdy(uv);
+#elif SP_KIND == 2
+  // the solar system's bodies (uKit.x rounds to 0 Mars, 1 Jupiter, 2 Saturn, 3 the Sun): a sphere as for
+  // the earth, but the camera may sit uKit.z radii out to the side (over Saturn's rings, the globe off to
+  // the left) as well as 1 + h up; uKit.w turns the surface: Mars and the Sun about x like the earth,
+  // Jupiter sweeps its latitudes past (a polar pass: its bands cross the screen), Saturn about its pole y
+  // (the rings' axis). The body switches only while it is out of sight (see the solar TOD)
+  float kind = floor(uKit.x + 0.5);
+  float h = uPlanet.w;
+  vec3 C = vec3(uKit.z, 1.0 + h, 0.0);
+  vec3 dir = normalize(vec3((P.x - uPlanet.x) / uPlanet.z, -1.0, (P.z - uPlanet.y) / uPlanet.z));
+  float b = -dot(C, dir), c2 = dot(C, C);
+  float disc = b * b - (c2 - 1.0);
+  float tHit = b - sqrt(max(disc, 0.0));
+  vec3 n = C + tHit * dir;                                              // (a miss: the ray's closest point)
+  float alt = sqrt(max(c2 - b * b, 0.0)) - 1.0;
+  onDisc = smoothstep(-1.0, 1.0, disc / max(fwidth(disc), 1e-7)) * step(0.0, b);
+  vec3 nn = normalize(n);
+  float tc = cos(uKit.w), ts = sin(uKit.w);
+  vec3 nr = vec3(nn.x, tc * nn.y - ts * nn.z, ts * nn.y + tc * nn.z);
+  vec2 uv = kind == 1.0 ? vec2(asin(clamp(nr.z, -1.0, 1.0)), atan(nr.x, max(nr.y, 1e-3)))
+    : kind == 2.0 ? vec2(asin(clamp(nn.y, -1.0, 1.0)), atan(nn.z, nn.x) + uKit.w)
+    : vec2(asin(clamp(nr.x, -1.0, 1.0)), atan(nr.z, max(nr.y, 1e-3)));
+  uv *= ${(PLANET_N / (2 * Math.PI)).toFixed(8)};
+  vec2 gx = dFdx(uv), gy = dFdy(uv);
+  if (kind == 2.0) {
+    // Saturn is seen over its pole, where atan's seam shows: its longitude gradient from a copy with the
+    // seam turned round, whichever is smoother
+    float l2 = atan(-nn.z, -nn.x) * ${(PLANET_N / (2 * Math.PI)).toFixed(8)};
+    vec2 g2 = vec2(dFdx(l2), dFdy(l2));
+    if (abs(g2.x) + abs(g2.y) < abs(gx.y) + abs(gy.y)) { gx.y = g2.x; gy.y = g2.y; }
+  }
 #endif
   // deep space: gas, the galactic band, two layers of stars (they drift at a crawl)
   if (onDisc < 0.999) {
@@ -1598,8 +1825,73 @@ void main() {
     col += stars(q * 0.6 + 11.0, 8.0, 0.84, 0.06, aa * 0.6) * uLook.z * 0.9;
 #endif
     col += stars(q * 1.6, 7.0, 0.8, 0.07, aa * 1.6) * uLook.z * 0.55;
+#ifdef SP_CLUS
+    col += cluster(q, aa) * uMix2.x;
+#endif
+#ifdef SP_CORE
+    {
+      // the galactic core (uPos: where, how big, how tightly the arms wind; uMix2.y): a golden bulge, two
+      // spiral arms wound out of it (log spirals), behind the gas and its dust
+      vec2 cv = (P.xz - uPos.xy) / uPos.z;
+      float cr = length(cv), ca = atan(cv.y, cv.x);
+      float bulge = exp(-cr * cr * 2.4) * 1.5 + exp(-cr * 1.2) * 0.45;
+      float arm = pow(0.5 + 0.5 * cos(2.0 * ca - uPos.w * log(cr + 0.1)), 4.0) * smoothstep(0.2, 0.9, cr) * exp(-cr * 0.4);
+      col += (uHot * bulge + uGas * arm * 0.5) * uMix2.y;
+    }
+#endif
+#ifdef SP_GAS
+    {
+      // three layers of gas at three depths (far to near: uNeb, uGas, uGas2; strengths uMix.xyz), each
+      // drifting at its own rate (uScroll2.xyz), the nearest fastest; dark dust lanes (uMix.w) over
+      // everything behind them, their edges glowing uDust; young stars in front
+      vec2 gX = dFdx(P.xz) * ${(1 / LAYER_SPAN).toFixed(8)}, gY = dFdy(P.xz) * ${(1 / LAYER_SPAN).toFixed(8)};
+      vec2 l1 = vec2(P.x, P.z - uScroll2.x) * ${(1 / LAYER_SPAN).toFixed(8)}, l2 = vec2(P.x, P.z - uScroll2.y) * ${(1 / LAYER_SPAN).toFixed(8)}, l3 = vec2(P.x, P.z - uScroll2.z) * ${(1 / LAYER_SPAN).toFixed(8)};
+      col += gasLayer(l1 + vec2(0.13, 0.41), gX, gY, uNeb) * uMix.x;
+      col += gasLayer(l2 * 2.0 + vec2(0.57, 0.23), gX * 2.0, gY * 2.0, uGas) * uMix.y;
+#ifndef LOW
+      col += gasLayer(l3 * 2.0 + vec2(0.31, 0.77), gX * 2.0, gY * 2.0, uGas2) * uMix.z;
+#endif
+      vec4 dl = textureGrad(uNoise, l3 + vec2(0.71, 0.09), gX, gY);
+      float dv = dl.g * 0.85 + dl.b * 0.15;
+      float dust = smoothstep(0.52, 0.66, dv) * uMix.w;
+      col = col * (1.0 - 0.9 * dust) + uDust * (1.0 - smoothstep(0.0, 0.08, abs(dv - 0.51))) * uMix.w * 0.25;
+#ifndef LOW
+      col += youngStar(l3 * 8.0, aa) * uMix2.z;
+#endif
+    }
+#endif
+#ifdef SP_WEB
+    {
+      // the cosmic web: two layers (far uNeb, near uGas; uMix.xy) drifting at their own rates, their
+      // knots glowing uHot
+      vec2 gX = dFdx(P.xz) * ${(1 / LAYER_SPAN).toFixed(8)}, gY = dFdy(P.xz) * ${(1 / LAYER_SPAN).toFixed(8)};
+      vec2 w1 = webLayer(vec2(P.x, P.z - uScroll2.x) * ${(1 / LAYER_SPAN).toFixed(8)} + vec2(0.3, 0.6), gX, gY);
+      col += (uNeb * w1.x + uHot * w1.y * 0.7) * uMix.x;
+#ifndef LOW
+      vec2 w2 = webLayer(vec2(P.x, P.z - uScroll2.y) * ${(2 / LAYER_SPAN).toFixed(8)} + vec2(0.1, 0.2), gX * 2.0, gY * 2.0);
+      col += (uGas * w2.x + uHot * w2.y) * uMix.y;
+#endif
+    }
+#endif
+#ifdef SP_GALS
+    col += oldGalaxy(vec2(P.x, P.z - uScroll2.z) * 0.125) * uMix2.x;
+#endif
+#ifdef SP_WARP
+    {
+      // the spacetime grid, bent round the lenses (uMix.w): lines every 4 units on the lens field's layer,
+      // fading where they are stretched past a pixel; faint light round each Einstein radius
+      vec2 gq = vec2(P.x, P.z - uScroll2.w) * 0.25;
+      vec2 fw = fwidth(gq) * 1.3 + 1e-4;
+      vec2 ln = (1.0 - smoothstep(vec2(0.0), fw, abs(fract(gq + 0.5) - 0.5))) * (1.0 - smoothstep(vec2(0.07), vec2(0.3), fw));
+      col += uGas * max(ln.x, ln.y) * uMix.w * 0.22;
+      for (int i = 0; i < 3; i++) {
+        float lr = length(P0 - uLens[i].xy), e = uLens[i].z;
+        col += uGas2 * exp(-(lr - e) * (lr - e) / (0.02 + 0.05 * e * e)) * 0.16 * step(0.01, e);
+      }
+    }
+#endif
   }
-#ifdef SP_BODY
+#if SP_KIND == 1
   // the halo: sunlit air over the limb, and forward-scattered light where the sun is behind the body
   vec3 nn = normalize(n);
   float sunward = dot(normalize(vec3(n.x, 0.0, n.z) + 1e-5), vec3(uSun.x, 0.0, uSun.z));
@@ -1652,9 +1944,195 @@ void main() {
 #endif
     // the atmosphere seen through: a thin shell, thick only toward the limb
     float cv0 = max(dot(nn, -dir), 0.0);
-    pc = mix(pc, uAtmos * (0.1 + 0.6 * day), 0.16 * pow(1.0 - cv0, 4.0) * (0.3 + 0.7 * day));   // blue haze toward the limb
+    pc = mix(pc, uAtmos * (0.1 + 0.6 * day), 0.16 * pow(max(1.0 - cv0, 0.0), 4.0) * (0.3 + 0.7 * day));   // blue haze toward the limb
     pc = mix(pc, air * 0.9 + uGlow * fwd * exp(-cv0 / 0.035) * 1.2, clamp(exp(-cv0 / 0.07), 0.0, 0.92));
     col = mix(col, pc, onDisc);
+  }
+#elif SP_KIND == 2
+  if (kind == 3.0) {
+    // the Sun's corona: streamers combed out from the limb (noise round it; the angle's gradient from the
+    // closest point's, so atan's seam never shows) falling off with height, and the prominences: flames and
+    // loops of plasma standing on the limb, rising slowly
+    vec2 lq = (C + b * dir).xz;
+    float lr2 = max(dot(lq, lq), 1e-6);
+    vec2 dx = dFdx(lq), dy = dFdy(lq);
+    float ang = atan(lq.y, lq.x) * 1.9098593;                             // 12 noise periods round the limb
+    vec2 ga = vec2((lq.x * dx.y - lq.y * dx.x), (lq.x * dy.y - lq.y * dy.x)) / lr2 * 1.9098593;
+    float ah = max(alt, 0.0);             // (alt < 0 inside the disc: exp would overflow, and ∞ · 0 is NaN)
+    float st = textureGrad(uNoise, vec2(ang, ah * 0.8 + 0.3), vec2(ga.x, dFdx(ah) * 0.8), vec2(ga.y, dFdy(ah) * 0.8)).g;
+    vec4 pr = textureGrad(uNoise, vec2(ang * 1.5, ah * 24.0 - uScroll.x * 0.004), vec2(ga.x * 1.5, dFdx(ah) * 24.0), vec2(ga.y * 1.5, dFdy(ah) * 24.0));
+    float corona = (exp(-ah / uAtmW) * 0.85 + exp(-ah / (uAtmW * 3.5)) * 0.12) * (0.35 + 1.3 * st * st);
+    float prom = smoothstep(0.55, 0.75, pr.g * (0.45 + 0.9 * st) + pr.r * 0.2) * exp(-ah / 0.014) * (0.6 + 0.8 * pr.b);
+    col += (uAtmos * corona + uGlow * prom * 3.2) * (1.0 - onDisc);
+  } else {
+    // thin air over the limb, sunlit, and forward-scattered light where the sun is behind the body
+    float sunward = dot(normalize(vec3(n.x, 0.0, n.z) + 1e-5), vec3(uSun.x, 0.0, uSun.z));
+    float fwd = pow(max(dot(dir, uSun), 0.0), 4.0) * smoothstep(-0.2, 0.8, sunward);
+    vec3 air = uAtmos * (0.15 + 0.85 * smoothstep(-0.25, 0.45, dot(nn, uSun)));
+    float ah = max(alt, 0.0);             // (alt < 0 inside the disc: exp would overflow, and ∞ · 0 is NaN)
+    col += ((air + uGlow * fwd * 1.3) * exp(-ah / uAtmW) + uAtmos * 0.1 * exp(-ah / (uAtmW * 2.5))) * (1.0 - onDisc);
+  }
+  if (onDisc > 0.001) {
+    float ndl = dot(nn, uSun);
+    float lit = max(ndl, 0.0), day = smoothstep(-0.1, 0.18, ndl);
+    vec3 pc;
+    if (kind == 0.0) {
+      // Mars: rust dust and ochre uplands, dark basalt plains, craters in two sizes
+      vec4 m = textureGrad(uNoise, uv, gx, gy);
+#ifndef LOW
+      vec4 m2 = textureGrad(uNoise, uv * 4.0 + (m.rb - 0.5) * 0.05, gx * 4.0, gy * 4.0);
+#else
+      vec4 m2 = m;
+#endif
+      float lv = m.g * 0.78 + m2.b * 0.22;
+      vec3 surf = mix(uLand, uLand2, smoothstep(0.42, 0.68, m2.g * 0.55 + m.b * 0.45));
+      surf = mix(surf, uOcean, smoothstep(0.55, 0.63, lv) * 0.9);
+      surf *= 0.82 + 0.36 * m2.r;
+      vec2 sl = normalize(uSun.xz + 1e-4);
+      float fw = (abs(gx.x) + abs(gy.x) + abs(gx.y) + abs(gy.y)) * 0.5;
+      vec2 k1 = crater(uv * 20.0, sl, 0.62, fw * 20.0);
+#ifndef LOW
+      vec2 k2 = crater(uv * 64.0 + 0.37, sl, 0.35, fw * 64.0);
+#else
+      vec2 k2 = vec2(1.0, 0.0);
+#endif
+      surf = surf * k1.x * k2.x + uLand2 * (k1.y + k2.y * 0.8);
+      pc = surf * (0.04 + 0.96 * lit);
+    } else if (kind == 1.0) {
+      // Jupiter: zones and belts along the latitude (uv.x: down the screen), each with its jet — the cloud
+      // tops stream across the screen, left and right by turns — wavy edges with dark festoons and white
+      // ovals, and the Great Red Spot, the flow winding round inside it
+      vec4 pb = textureGrad(uNoise, vec2(0.37, uv.x * 0.9), vec2(0.0, gx.x * 0.9), vec2(0.0, gy.x * 0.9));
+      float jet = pb.b * 2.0 - 1.0;
+      vec2 gs = vec2((uv.y - ${JUP_GRS[1].toFixed(4)}) * 1.0, (uv.x - ${JUP_GRS[0].toFixed(4)}) * 1.9) * ${(1 / JUP_GRS[2]).toFixed(4)};
+      float gr = length(gs);
+      vec2 tq = vec2(uv.y * 1.5, uv.x * 5.0), tc0 = vec2(${JUP_GRS[1].toFixed(4)} * 1.5, ${JUP_GRS[0].toFixed(4)} * 5.0);
+      float sw = 4.0 * (1.0 - smoothstep(0.0, 1.2, gr)) * (1.0 - smoothstep(0.0, 1.2, gr));
+      vec2 rl = tq - tc0;
+      tq = tc0 + vec2(cos(sw) * rl.x - sin(sw) * rl.y, sin(sw) * rl.x + cos(sw) * rl.y);
+      vec2 gtx = vec2(gx.y * 1.5, gx.x * 5.0), gty = vec2(gy.y * 1.5, gy.x * 5.0);
+      vec2 fl = vec2(jet * 0.012, 0.0);
+#ifndef LOW
+      vec3 fp = flowPh();
+      vec4 tu = mix(textureGrad(uNoise, tq + fl * fp.x, gtx, gty), textureGrad(uNoise, tq + fl * fp.y + 0.5, gtx, gty), fp.z);
+      vec4 tu2 = mix(textureGrad(uNoise, tq * 3.0 + fl * 3.0 * fp.x + (tu.rb - 0.5) * 0.12, gtx * 3.0, gty * 3.0),
+        textureGrad(uNoise, tq * 3.0 + fl * 3.0 * fp.y + (tu.rb - 0.5) * 0.12 + 0.25, gtx * 3.0, gty * 3.0), fp.z);
+#else
+      vec4 tu = textureGrad(uNoise, tq, gtx, gty), tu2 = tu;
+#endif
+      float lat2 = uv.x + (tu.g - 0.5) * 0.06 + (tu2.r - 0.5) * 0.025;
+      vec4 pz = textureGrad(uNoise, vec2(0.37, lat2 * 0.9), vec2(0.0, gx.x * 0.9), vec2(0.0, gy.x * 0.9));
+      float zone = smoothstep(0.52, 0.6, pz.g + (pz.b - 0.5) * 0.4);
+      vec3 belt = mix(uLand, uLand2, smoothstep(0.3, 0.7, pz.b * 0.6 + tu.b * 0.4));
+      pc = mix(belt, uCloud * (0.86 + 0.2 * tu2.g), zone);
+      float edge = zone * (1.0 - zone) * 4.0;
+      pc = mix(pc, uOcean, edge * smoothstep(0.55, 0.75, tu2.b) * 0.75);
+      pc = mix(pc, uCloud * 1.08, smoothstep(0.76, 0.82, tu2.g) * (0.25 + 0.75 * edge));
+      float collar = smoothstep(0.75, 1.0, gr) * (1.0 - smoothstep(1.0, 1.4, gr));
+      pc = mix(pc, uCloud, collar * 0.55);
+      pc = mix(pc, uHot * (0.7 + 0.55 * tu.g), 1.0 - smoothstep(0.7, 1.0, gr));
+      pc *= 0.04 + 0.96 * lit;
+    } else if (kind == 2.0) {
+      // Saturn: soft bands of butterscotch and cream along its latitude, a faint turbulence, the hexagon
+      // round its north pole (seen on the way in, over the pole)
+      vec4 sb = textureGrad(uNoise, vec2(0.61, uv.x * 0.75), vec2(0.0, gx.x * 0.75), vec2(0.0, gy.x * 0.75));
+      vec4 st = textureGrad(uNoise, vec2(uv.y, uv.x * 6.0), vec2(gx.y, gx.x * 6.0), vec2(gy.y, gy.x * 6.0));
+      pc = mix(uLand, uCloud, smoothstep(0.3, 0.7, sb.g * 0.6 + sb.b * 0.4 + (st.r - 0.5) * 0.15)) * (0.9 + 0.2 * st.b);
+      float pole = acos(clamp(nn.y, -1.0, 1.0)), pa = atan(nn.z, nn.x) + uKit.w;
+      float hexR = 0.26 / cos(mod(pa + 0.3, 1.0471976) - 0.5235988);
+      pc = mix(pc, uLand2, (1.0 - smoothstep(hexR - 0.015, hexR + 0.015, pole)) * 0.6);
+      pc = mix(pc, uLand2 * 0.7, 1.0 - smoothstep(0.03, 0.06, pole));
+      pc *= 0.04 + 0.96 * lit;
+    } else {
+      // the Sun: its own light — granulation (bright cells in dark lanes, turning over), sunspots (umbra,
+      // penumbra), limb darkening, faculae toward the limb
+      float mu = max(dot(nn, -dir), 0.0);
+      vec2 gq = uv * 24.0;
+#ifndef LOW
+      vec3 fp = flowPh();
+      vec4 gr = mix(textureGrad(uNoise, gq + vec2(0.012, 0.007) * fp.x, gx * 24.0, gy * 24.0),
+        textureGrad(uNoise, gq + vec2(0.012, 0.007) * fp.y + 0.37, gx * 24.0, gy * 24.0), fp.z);
+#else
+      vec4 gr = textureGrad(uNoise, gq, gx * 24.0, gy * 24.0);
+#endif
+      float lane = pow(1.0 - abs(gr.r * 2.0 - 1.0), 5.0);
+      vec4 ms = textureGrad(uNoise, uv * 2.0, gx * 2.0, gy * 2.0);
+      float umbra = smoothstep(0.83, 0.845, ms.g), pen = smoothstep(0.79, 0.83, ms.g);
+      pc = uHot * 2.4 * (0.3 + 0.7 * pow(mu, 0.5)) * (1.0 - 0.38 * lane);
+      pc = mix(mix(pc, vec3(0.2, 0.09, 0.035), pen * 0.88), vec3(0.015, 0.007, 0.003), umbra);
+      pc += uGlow * (0.6 * pow(max(1.0 - mu, 0.0), 3.0) * smoothstep(0.55, 0.7, ms.b) + 2.0 * pow(max(1.0 - mu, 0.0), 10.0));   // faculae, the rim
+    }
+    if (kind != 3.0) {
+      // the air seen through, thick only toward the limb (as the earth's)
+      float cv0 = max(dot(nn, -dir), 0.0);
+      float sunward = dot(normalize(vec3(n.x, 0.0, n.z) + 1e-5), vec3(uSun.x, 0.0, uSun.z));
+      float fwd = pow(max(dot(dir, uSun), 0.0), 4.0) * smoothstep(-0.2, 0.8, sunward);
+      vec3 air = uAtmos * (0.15 + 0.85 * smoothstep(-0.25, 0.45, ndl));
+      pc = mix(pc, uAtmos * (0.1 + 0.6 * day), 0.16 * pow(max(1.0 - cv0, 0.0), 4.0) * (0.3 + 0.7 * day));
+      pc = mix(pc, air * 0.9 + uGlow * fwd * exp(-cv0 / 0.035) * 1.2, clamp(exp(-cv0 / 0.07), 0.0, 0.92));
+    }
+    col = mix(col, pc, onDisc);
+  }
+  if (kind == 2.0 && uKit.y > 0.001) {
+    // Saturn's rings (uKit.y) in the plane y = 0: the faint C ring, the bright B ring, the Cassini division,
+    // the A ring with the Encke gap, the thin F ring; ringlets from the noise along the radius; clumps and
+    // spokes turning with uKit.w; the globe's shadow across them. Translucent (the stars show through the
+    // gaps) and drawn over the globe only where they are nearer than it
+    float tR = C.y / max(-dir.y, 1e-4);
+    vec3 RP = C + tR * dir;
+    float rr = length(RP.xz);
+    float grx = dFdx(rr), gry = dFdy(rr), ew = abs(grx) + abs(gry) + 1e-4;
+    vec4 rl = textureGrad(uNoise, vec2(rr * 5.0, 0.83), vec2(grx * 5.0, 0.0), vec2(gry * 5.0, 0.0));
+    vec4 rl2 = textureGrad(uNoise, vec2(rr * 1.3, 0.21), vec2(grx * 1.3, 0.0), vec2(gry * 1.3, 0.0));
+    vec2 rq = RP.xz, rdx = dFdx(rq), rdy = dFdy(rq);
+    float rq2 = max(dot(rq, rq), 1e-6);
+    float az = (atan(rq.y, rq.x) - uKit.w) * 3.8197186;                    // 24 noise periods round
+    vec2 gaz = vec2(rq.x * rdx.y - rq.y * rdx.x, rq.x * rdy.y - rq.y * rdy.x) / rq2 * 3.8197186;
+    vec4 ck = textureGrad(uNoise, vec2(az, rr * 2.0), vec2(gaz.x, grx * 2.0), vec2(gaz.y, gry * 2.0));
+    float Cr = smoothstep(1.235 - ew, 1.25 + ew, rr) * (1.0 - smoothstep(1.51 - ew, 1.53 + ew, rr));
+    float Br = smoothstep(1.52 - ew, 1.54 + ew, rr) * (1.0 - smoothstep(1.935 - ew, 1.95 + ew, rr));
+    float Ar = smoothstep(2.02 - ew, 2.035 + ew, rr) * (1.0 - smoothstep(2.265 - ew, 2.275 + ew, rr));
+    float enc = smoothstep(0.0, 0.004 + ew, abs(rr - 2.214));
+    float Fr = exp(-(rr - 2.324) * (rr - 2.324) / ((0.004 + ew) * (0.004 + ew)));
+    float op = (0.22 * Cr + 0.9 * Br + 0.62 * Ar * enc) * (0.5 + 0.65 * rl.r) * (0.85 + 0.3 * ck.g) + 0.45 * Fr;
+    vec3 rc = mix(uGas, uGas2, smoothstep(0.3, 0.7, rl2.b * 0.7 + rl.b * 0.3)) * (0.8 + 0.4 * rl.g);
+    float bS = -dot(RP, uSun), cS = dot(RP, RP) - 1.0;
+    float shd = step(0.0, bS) * smoothstep(-0.05, 0.05, bS * bS - cS);
+    rc *= (0.3 + 0.85 * max(uSun.y, 0.0)) * (1.0 - 0.92 * shd);
+    float front = 1.0 - onDisc * step(tHit, tR);
+    col = mix(col, rc, clamp(op, 0.0, 1.0) * uKit.y * front);
+  }
+#endif
+#ifdef SP_HOLE
+  {
+    // the black hole (uPos: where, its shadow's radius, the disk's tilt from face-on; uMix2.y fades it in):
+    // the shadow; the disk seen directly — its far half behind the shadow, its near half across the front
+    // of it — and seen twice more, lensed: the far half arched over the shadow, a thin arc under it; the
+    // photon ring hugging the shadow. The sky round it was already bent (see P0)
+    vec2 hv = (P0 - uPos.xy) / uPos.z;
+    float hb = length(hv), up = -hv.y;
+    float si = sin(uPos.w), ci = cos(uPos.w);
+    vec2 dp = vec2(hv.x, up / max(ci, 0.08));
+    float rd = length(dp);
+    float band = max(hb - 1.03, 0.0);
+    float ra = ${HOLE_RIN.toFixed(2)} + band / (0.2 + 1.1 * si * si) * ${(HOLE_ROUT - HOLE_RIN).toFixed(2)};
+    float rb = ${HOLE_RIN.toFixed(2)} + band / (0.1 + 0.25 * si * si) * ${(HOLE_ROUT - HOLE_RIN).toFixed(2)};
+    float rl = up > 0.0 ? ra : rb;
+    vec2 av = vec2(hv.x, up);
+#ifndef LOW
+    vec3 fp = flowPh();
+#else
+    vec3 fp = vec3(0.0);
+#endif
+    vec3 direct = diskLight(rd, dp, dFdx(dp), dFdy(dp), dFdx(rd), dFdy(rd), fp, uPos.w);
+    vec3 arcs = diskLight(rl, av, dFdx(av), dFdy(av), dFdx(rl), dFdy(rl), fp, uPos.w) * (up > 0.0 ? 1.1 : 0.6)
+      * smoothstep(0.0, 0.3, abs(up) / max(hb, 1e-3));
+    float fwh = fwidth(hb);
+    float outside = smoothstep(1.0 - fwh, 1.0 + fwh, hb);
+    float ring = exp(-(hb - 1.025) * (hb - 1.025) / (0.0004 + fwh * fwh));
+    float near = 1.0 - step(0.0, up);
+    vec3 hc = col * outside + (direct * (outside + near * (1.0 - outside)) + arcs * outside) + uHot * ring * 1.4;
+    col = mix(col, hc, uMix2.y);
   }
 #endif
   gl_FragColor = vec4(col, 1.0);
@@ -1692,15 +2170,25 @@ const TOD_SRC = [
 // / atmosphere / sunrise-glow / city-light colours, the space and nebula (or band) colours; the view
 // (the nadir's x and z relative to the view centre, focal length, orbit height in radii), cloud cover,
 // atmosphere thickness (radii), nebula / band and star strength, city lights, and psun (toward the sun,
-// planet frame)
+// planet frame). The kit's later parts add: colours pHot (the hottest light: the Sun, a galaxy's core, the
+// disk's inner edge), pGas / pGas2 (more gas, web, ring or disk colours) and pDust (dust-lane edges);
+// pKind (which solar body: 0 Mars, 1 Jupiter, 2 Saturn, 3 the Sun), pRing (Saturn's rings), pSide (the
+// camera's side offset from the body, radii), pL1–pL3 (gas / web layer strengths, far to near), pDustI (dust
+// lanes, or the spacetime grid), pClus (clusters, or old galaxies), pGlowI (the core, or the black hole),
+// pSpark (young stars), and pCx / pCz / pCr / pTilt (the core's or the hole's place relative to the view
+// centre, its radius, the arms' twist or the disk's tilt)
 const TOD_COLS = ['sun', 'sky', 'gnd', 'fog', 'deep', 'shallow', 'wsky', 'foam', 'inland', 'glint', 'cLit', 'cShade', 'shadow',
-  'dLit', 'dShade', 'dAbyss', 'dRim', 'pOcean', 'pLand', 'pLand2', 'pCloud', 'pAtmos', 'pGlow', 'pCity', 'pSpace', 'pNeb'];
+  'dLit', 'dShade', 'dAbyss', 'dRim', 'pOcean', 'pLand', 'pLand2', 'pCloud', 'pAtmos', 'pGlow', 'pCity', 'pSpace', 'pNeb',
+  'pHot', 'pGas', 'pGas2', 'pDust'];
 const TOD_NUMS = ['sunI', 'hemiI', 'near', 'far', 'glintI', 'shA', 'shK', 'caps', 'cloud', 'relief', 'spark', 'sheen', 'cover', 'flash',
-  'pX', 'pZ', 'pF', 'pH', 'pCover', 'pAtmW', 'pNebI', 'pStar', 'pCityI'];
+  'pX', 'pZ', 'pF', 'pH', 'pCover', 'pAtmW', 'pNebI', 'pStar', 'pCityI',
+  'pKind', 'pRing', 'pSide', 'pL1', 'pL2', 'pL3', 'pDustI', 'pClus', 'pGlowI', 'pSpark', 'pCx', 'pCz', 'pCr', 'pTilt'];
 // indices into the interpolated numeric array (order of TOD_NUMS)
 const N_SUNI = 0, N_HEMII = 1, N_NEAR = 2, N_FAR = 3, N_GLINTI = 4, N_SHA = 5, N_CAPS = 7, N_CLOUD = 8,
   N_RELIEF = 9, N_SPARK = 10, N_SHEEN = 11, N_COVER = 12, N_FLASH = 13,
-  N_PX = 14, N_PZ = 15, N_PF = 16, N_PH = 17, N_PCOVER = 18, N_PATMW = 19, N_PNEB = 20, N_PSTAR = 21, N_PCITY = 22;
+  N_PX = 14, N_PZ = 15, N_PF = 16, N_PH = 17, N_PCOVER = 18, N_PATMW = 19, N_PNEB = 20, N_PSTAR = 21, N_PCITY = 22,
+  N_PKIND = 23, N_PRING = 24, N_PSIDE = 25, N_PL1 = 26, N_PL2 = 27, N_PL3 = 28, N_PDUST = 29, N_PCLUS = 30, N_PGLOW = 31,
+  N_PSPARK = 32, N_PCX = 33, N_PCZ = 34, N_PCR = 35, N_PTILT = 36;
 // fields a stage's keys may leave out (water on dry stages, the deck on non-sky stages, the backdrop
 // on worlds without space)
 const TOD_DEFAULTS = {
@@ -1709,6 +2197,8 @@ const TOD_DEFAULTS = {
   dLit: 0xf2f5fa, dShade: 0x9aabc6, dAbyss: 0x1d4274, dRim: 0xffffff, cover: 0.7, flash: 0,
   pOcean: 0x0c2a55, pLand: 0x3a5836, pLand2: 0x86744e, pCloud: 0xdce4ee, pAtmos: 0x4a9cff, pGlow: 0xff9a6a, pCity: 0xffc070,
   pSpace: 0x02040a, pNeb: 0x2a3a78, pX: 0, pZ: 26, pF: 17, pH: 0.07, pCover: 0.5, pAtmW: 0.007, pNebI: 0, pStar: 1, pCityI: 0, psun: [0.35, 0.85, 0.4],
+  pHot: 0xffd8a0, pGas: 0x2a8a9a, pGas2: 0x8a6a3a, pDust: 0x3a2014, pKind: 0, pRing: 0, pSide: 0, pL1: 0, pL2: 0, pL3: 0, pDustI: 0,
+  pClus: 0, pGlowI: 0, pSpark: 0, pCx: 0, pCz: -30, pCr: 10, pTilt: 0,
 };
 function makeTod(src) {
   return src.map((k0) => {
@@ -1918,6 +2408,10 @@ export class World {
       uNoise: { value: this.tex.noise }, uScroll: { value: new THREE.Vector4() }, uPlanet: { value: new THREE.Vector4(0, 20, 17, 0.07) },
       uLook: { value: new THREE.Vector4(0.5, 0, 1, 0) }, uAtmW: { value: 0.007 }, uSun: { value: new THREE.Vector3(0, 1, 0) },
       uOcean: C(), uLand: C(), uLand2: C(), uCloud: C(), uAtmos: C(), uGlow: C(), uCity: C(), uSpace: C(), uNeb: C(),
+      uScroll2: { value: new THREE.Vector4() }, uKit: { value: new THREE.Vector4() }, uMix: { value: new THREE.Vector4() },
+      uMix2: { value: new THREE.Vector4() }, uPos: { value: new THREE.Vector4(0, -30, 10, 0) },
+      uLens: { value: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()] },
+      uHot: C(), uGas: C(), uGas2: C(), uDust: C(),
     };
     this.spaceMats = {};
     this.spaceBlank = new THREE.MeshBasicMaterial({ color: 0x000000 });
@@ -1943,6 +2437,7 @@ export class World {
     if (sp.body) defines.SP_BODY = sp.body | 0;
     if (sp.nebula) defines.SP_NEB = '';
     if (sp.band) defines.SP_BAND = '';
+    for (const k of SPACE_PARTS) if (sp[k]) defines['SP_' + k.toUpperCase()] = '';
     if (this.quality === 'low') defines.LOW = '';
     m = new THREE.ShaderMaterial({ uniforms: this.spaceU, defines, vertexShader: WATER_VERT, fragmentShader: SPACE_FRAG, fog: false });
     m.name = 'world-space-' + st.id;
@@ -2455,8 +2950,14 @@ export class World {
   // PLANET_N noise periods round it, so the wrap is seamless), the stars and the nebula drift far slower
   // still (each offset wrapped at its own lookup period)
   _placeSpace(t, d) {
-    this.spaceU.uScroll.value.set(t, ((d * PLANET_SPIN) % TAU + TAU) % TAU, ((d * STAR_DRIFT) % STAR_SPAN + STAR_SPAN) % STAR_SPAN,
+    const u = this.spaceU;
+    u.uScroll.value.set(t, ((d * PLANET_SPIN) % TAU + TAU) % TAU, ((d * STAR_DRIFT) % STAR_SPAN + STAR_SPAN) % STAR_SPAN,
       ((d * NEB_DRIFT) % NEB_SPAN + NEB_SPAN) % NEB_SPAN);
+    // the later parts: the parallax layers' drifts (each at its own rate), the body's turn, the lenses
+    const sp = S.space, L = sp.layers;
+    if (L) u.uScroll2.value.set(wrapLayer(d * L[0]), wrapLayer(d * L[1]), wrapLayer(d * L[2]), wrapLayer(d * L[3]));
+    if (sp.turn) u.uKit.value.w = sp.turn(d, Math.round(this._todN[N_PKIND]));
+    if (sp.warp) placeLenses(u.uLens.value, d, this._todN[N_PSPARK]);
   }
 
   // Lay out the drift props of the built chunks (the space kit's instanced props: see DRIFT_TYPES and
@@ -2605,6 +3106,12 @@ export class World {
       pu.uOcean.value.copy(o.pOcean); pu.uLand.value.copy(o.pLand); pu.uLand2.value.copy(o.pLand2); pu.uCloud.value.copy(o.pCloud);
       pu.uAtmos.value.copy(o.pAtmos); pu.uGlow.value.copy(o.pGlow); pu.uCity.value.copy(o.pCity);
       pu.uSpace.value.copy(o.pSpace); pu.uNeb.value.copy(o.pNeb);
+      // the later parts (the surface turn, uKit.w, is set with the scroll: _placeSpace)
+      pu.uKit.value.x = N[N_PKIND]; pu.uKit.value.y = N[N_PRING]; pu.uKit.value.z = N[N_PSIDE];
+      pu.uMix.value.set(N[N_PL1], N[N_PL2], N[N_PL3], N[N_PDUST]);
+      pu.uMix2.value.set(N[N_PCLUS], N[N_PGLOW], N[N_PSPARK], 0);
+      pu.uPos.value.set(N[N_PCX], N[N_PCZ] - 6, N[N_PCR], N[N_PTILT]);
+      pu.uHot.value.copy(o.pHot); pu.uGas.value.copy(o.pGas); pu.uGas2.value.copy(o.pGas2); pu.uDust.value.copy(o.pDust);
     }
   }
 
@@ -7347,11 +7854,12 @@ const MOON_TOD_SRC = [
 const MOON_CLOUD = { highlands: 0, rilles: 0, crater: 0, base: 0, driver: 0, mare: 0 };
 
 // =============================================================================
-// SOLAR VOYAGE / GALACTIC STORM / EDGE OF INFINITY (stages 6–8): PLACEHOLDER worlds on the space kit,
-// so the eight-stage flow never falls back to the coast. Each is a backdrop configuration, lighting
-// bands and a sparse drift layer — nothing more; the world task for these stages replaces this section
-// (SPEC-8 'Worlds': Mars → asteroid belt → Jupiter → Saturn's rings → the Sun's corona; nebulae,
-// clusters, dust lanes, the galactic core; the cosmic web, warped space, a black hole).
+// SOLAR VOYAGE (stage 6): no ground — across the solar system, the kit's solar bodies below (SP_BODY 2,
+// one at a time: uKit.x switches only while the body is off the screen). Past Mars 0–320 (the red planet
+// under the play area) · the asteroid belt 320–700 (Mars falls behind, Jupiter rises far ahead) · Jupiter
+// 700–1000 (its cloud tops fill the view, the bands streaming past) · Saturn 1000–1240 (seen over its pole,
+// then its ring plane under us, the globe off to the left) · the Sun's corona 1240+ (the boss arena: its
+// limb across the top of the screen, the corona and its prominences below it). Air units only.
 // =============================================================================
 const SOLAR_LAYOUT = [
   { biome: 'mars',    from: 0,    to: 320 },
@@ -7360,21 +7868,131 @@ const SOLAR_LAYOUT = [
   { biome: 'saturn',  from: 1000, to: 1240 },
   { biome: 'corona',  from: 1240, to: Infinity },
 ];
+const SO_LANE = { d0: -Infinity, d1: 1234, x: 5 };
+const SO_ARENA = { d0: 1234, d1: Infinity, x: 7.5 };
+// the surface's turn (uKit.w) for the body on screen: Mars and the Sun at a crawl, Jupiter's latitudes sweep
+// down the screen (a polar pass), Saturn turns under us (its rings' clumps pass by)
+function solarTurn(d, kind) {
+  return kind === 0 ? -d * 0.0008 : kind === 1 ? -(d - 860) * 0.0014 : kind === 2 ? (d - 1100) * 0.01 : -(d - 1250) * 0.0005;
+}
+function genSolar(w, ch, k, d0) {
+  styleReset();
+  genSpaceDrift(w, ch, k, d0);
+  styleReset();
+}
+// light: a white sun, warmer toward the end; hemi from below is the body's light. The body's colours:
+// Mars pLand rust / pLand2 ochre / pOcean basalt, its haze pAtmos and blue limb glow pGlow; Jupiter pLand
+// belts / pLand2 tan / pCloud zones / pOcean festoons / pHot the Great Red Spot; Saturn pLand / pCloud bands,
+// pLand2 its pole, pGas / pGas2 the rings; the Sun pHot, its corona pAtmos, prominences pGlow
+const solarKey = (d, sunI, hemiI, o) => ({ d, sun: 0xfff2e4, sunI, sky: 0x1e1c24, gnd: 0x5a3a2a, hemiI, fog: 0x000000, near: 52, far: 130,
+  cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0, pSpace: 0x020203, pNeb: 0x2c2a3a, pNebI: 0.35, pStar: 0.9, pCityI: 0, ...o });
+const MARS = { pKind: 0, pOcean: 0x3a2622, pLand: 0x7e4630, pLand2: 0xa8784e, pCloud: 0xd8b8a0, pAtmos: 0xc88a6e, pGlow: 0x7aa0ff, pAtmW: 0.006, psun: [-0.45, 0.75, -0.5] };
+const JUPITER = { pKind: 1, pOcean: 0x3e4c5a, pLand: 0x5a301a, pLand2: 0x9a5e32, pCloud: 0xac9674, pHot: 0x9a3c26, pAtmos: 0xa8967c, pGlow: 0xffc890, pAtmW: 0.01, psun: [-0.45, 0.8, -0.4] };
+const SATURN = { pKind: 2, pRing: 1, pLand: 0x947648, pLand2: 0x6a6450, pCloud: 0xc8b890, pGas: 0xa89a7e, pGas2: 0x70685c, pAtmos: 0xc8b484, pGlow: 0xffd8a0, pAtmW: 0.01, psun: [0.2, 0.85, -0.5] };
+const SUN = { pKind: 3, pHot: 0xffa850, pAtmos: 0xff8a3c, pGlow: 0xff5a30, pAtmW: 0.03, pSpace: 0x070302, pStar: 0.25, pNebI: 0, psun: [0, 1, 0] };
+const SOLAR_TOD_SRC = [
+  // Mars under the play area, its haze and limb across the top
+  solarKey(-60, 2.4, 1.0, { ...MARS, pX: 0, pZ: 26, pF: 17, pH: 0.1 }),
+  solarKey(280, 2.4, 1.0, { ...MARS, pX: 3, pZ: 26, pF: 17, pH: 0.12 }),
+  // the belt: Mars falls behind to the lower left (off the screen before it turns into Jupiter, which comes
+  // in from beyond the top left and grows ahead)
+  solarKey(340, 2.3, 0.9, { ...MARS, pX: -2, pZ: 22, pF: 17, pH: 0.8, pNebI: 0.45 }),
+  solarKey(400, 2.3, 0.9, { ...MARS, pX: -8, pZ: 16, pF: 17, pH: 2.6, pNebI: 0.55 }),
+  solarKey(445, 2.3, 0.9, { ...MARS, pX: -18, pZ: 22, pF: 17, pH: 5, pNebI: 0.6 }),
+  solarKey(460, 2.3, 0.9, { ...MARS, pX: -34, pZ: 36, pF: 17, pH: 6, pNebI: 0.6 }),
+  solarKey(470, 2.3, 0.9, { ...JUPITER, pX: -40, pZ: -70, pF: 22, pH: 14, pNebI: 0.6 }),
+  solarKey(600, 2.3, 0.9, { ...JUPITER, pX: 3, pZ: -30, pF: 22, pH: 4, pNebI: 0.5 }),
+  solarKey(670, 2.3, 0.9, { ...JUPITER, pX: 1, pZ: -14, pF: 22, pH: 1.4, pNebI: 0.4 }),
+  // Jupiter's cloud tops fill the view, the limb across the top
+  solarKey(730, 2.2, 1.0, { ...JUPITER, pX: 0, pZ: 8, pF: 17, pH: 0.22, pNebI: 0.3 }),
+  solarKey(975, 2.2, 1.0, { ...JUPITER, pX: 0, pZ: 8, pF: 17, pH: 0.22, pNebI: 0.3 }),
+  solarKey(1025, 2.2, 1.0, { ...JUPITER, pX: 0, pZ: 46, pF: 17, pH: 2.5, pNebI: 0.3 }),
+  solarKey(1034, 2.2, 1.0, { ...JUPITER, pX: -44, pZ: 46, pF: 17, pH: 8, pNebI: 0.3 }),
+  // Saturn: far off over its pole, the rings round it; then over the rings themselves, the globe on the left
+  solarKey(1040, 2.3, 1.0, { ...SATURN, pX: -44, pZ: -70, pF: 17, pH: 14, pSide: 0 }),
+  solarKey(1100, 2.3, 1.0, { ...SATURN, pX: 2, pZ: -32, pF: 17, pH: 4, pSide: 0 }),
+  solarKey(1150, 2.3, 1.0, { ...SATURN, pX: -2.5, pZ: -2, pF: 9, pH: -0.38, pSide: 1.85 }),
+  solarKey(1222, 2.3, 1.0, { ...SATURN, pX: -2.5, pZ: -2, pF: 9, pH: -0.38, pSide: 1.85 }),
+  solarKey(1240, 2.4, 1.0, { ...SATURN, pX: -8, pZ: 40, pF: 9, pH: 2, pSide: 1.85 }),
+  solarKey(1247, 2.4, 1.0, { ...SATURN, pX: -60, pZ: 40, pF: 9, pH: 3, pSide: 1.85 }),
+  // the Sun: in from the left, its limb across the top of the screen, the corona and prominences below
+  solarKey(1252, 2.6, 1.2, { ...SUN, pX: -70, pZ: -110, pF: 40, pH: 0.35 }),
+  solarKey(1272, 2.7, 1.3, { ...SUN, pX: 0, pZ: -57, pF: 40, pH: 0.35 }),
+];
+const SOLAR_CLOUD = { mars: 0, belt: 0, jupiter: 0, saturn: 0, corona: 0 };
+
+// =============================================================================
+// GALACTIC STORM (stage 7): no ground — inside the galaxy. The backdrop is layered light (SP_GAS: three
+// sheets of glowing gas at three depths, each drifting at its own rate, dust lanes over them, young stars;
+// SP_CLUS: star clusters; SP_CORE: the galactic core), and alien structures drift between. Nebula 0–420
+// (teal, blue and gold gas, young stars) · clusters 420–800 (globular clusters, thinner gas) · dust 800–1240
+// (dense star clouds cut by dark rifts, the core's glow rising ahead) · the core 1240+ (the boss arena: the
+// golden bulge at the top of the screen, spiral arms, dust lanes across it). Air units only.
+// =============================================================================
 const GALAXY_LAYOUT = [
   { biome: 'nebula',   from: 0,    to: 420 },
   { biome: 'clusters', from: 420,  to: 800 },
   { biome: 'dust',     from: 800,  to: 1240 },
   { biome: 'core',     from: 1240, to: Infinity },
 ];
+const GA_LANE = { d0: -Infinity, d1: 1234, x: 5 };
+const GA_ARENA = { d0: 1234, d1: Infinity, x: 7.5 };
+function genGalaxy(w, ch, k, d0) {
+  styleReset();
+  genSpaceDrift(w, ch, k, d0);
+  styleReset();
+}
+const galaxyKey = (d, o) => ({ d, sun: 0xe8f0ff, sunI: 2.3, sky: 0x243048, gnd: 0x2a4a5a, hemiI: 1.1, fog: 0x000000, near: 52, far: 130,
+  cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0, pSpace: 0x030410, pStar: 1.0, ...o });
+const GALAXY_TOD_SRC = [
+  galaxyKey(-60, { pNeb: 0x203c8a, pGas: 0x1c8a8c, pGas2: 0x9a7a44, pDust: 0x5a3020, pL1: 1.0, pL2: 0.8, pL3: 0.55, pDustI: 0.55, pSpark: 0.9, pClus: 0 }),
+  galaxyKey(380, { pNeb: 0x203c8a, pGas: 0x1c8a8c, pGas2: 0x9a7a44, pDust: 0x5a3020, pL1: 1.0, pL2: 0.8, pL3: 0.55, pDustI: 0.55, pSpark: 0.9, pClus: 0 }),
+  galaxyKey(470, { sun: 0xf0f4ff, sky: 0x283448, pSpace: 0x02030a, pNeb: 0x1a2c6a, pGas: 0x1a6a7a, pGas2: 0x6a5a3a, pDust: 0x3a2418, pL1: 0.45, pL2: 0.3, pL3: 0.15, pDustI: 0.3, pSpark: 0.4, pClus: 1.0, pStar: 1.25, pHot: 0xffd8a0 }),
+  galaxyKey(760, { sun: 0xf0f4ff, sky: 0x283448, pSpace: 0x02030a, pNeb: 0x1a2c6a, pGas: 0x1a6a7a, pGas2: 0x6a5a3a, pDust: 0x3a2418, pL1: 0.45, pL2: 0.3, pL3: 0.15, pDustI: 0.3, pSpark: 0.4, pClus: 1.0, pStar: 1.25, pHot: 0xffd8a0 }),
+  galaxyKey(850, { sun: 0xfff0dc, sky: 0x3a3024, gnd: 0x4a3a2a, pSpace: 0x060403, pNeb: 0x5a4630, pGas: 0x2a6a6a, pGas2: 0x7a5a36, pDust: 0x4a2a18, pL1: 1.0, pL2: 0.35, pL3: 0.2, pDustI: 1.0, pSpark: 0.3, pClus: 0.3, pStar: 1.2,
+    pHot: 0xffcc88, pGlowI: 0.35, pCx: 0, pCz: -60, pCr: 16, pTilt: 3.5 }),
+  galaxyKey(1200, { sun: 0xfff0dc, sky: 0x3a3024, gnd: 0x4a3a2a, pSpace: 0x060403, pNeb: 0x5a4630, pGas: 0x2a6a6a, pGas2: 0x7a5a36, pDust: 0x4a2a18, pL1: 0.9, pL2: 0.35, pL3: 0.2, pDustI: 1.0, pSpark: 0.3, pClus: 0.3, pStar: 1.2,
+    pHot: 0xffcc88, pGlowI: 0.7, pCx: 0, pCz: -48, pCr: 16, pTilt: 3.5 }),
+  galaxyKey(1275, { sun: 0xffe8c8, sunI: 2.5, sky: 0x4a3620, gnd: 0x5a4028, hemiI: 1.2, pSpace: 0x070402, pNeb: 0x5a4630, pGas: 0x2a6a6a, pGas2: 0x7a5a36, pDust: 0x4a2a18, pL1: 0.6, pL2: 0.35, pL3: 0.25, pDustI: 0.8, pSpark: 0.3, pClus: 0.2, pStar: 1.1,
+    pHot: 0xffd49a, pGlowI: 1.0, pCx: 0, pCz: -32, pCr: 15, pTilt: 3.5 }),
+];
+const GALAXY_CLOUD = { nebula: 0, clusters: 0, dust: 0, core: 0 };
+
+// =============================================================================
+// EDGE OF INFINITY (stage 8): no ground — out past the galaxies. The void 0–420 (a few old galaxies far off,
+// sparse stars) · the cosmic web 420–800 (filaments of light in two layers, knots of galaxy clusters) · warped
+// space 800–1240 (unseen masses drift past and bend everything behind them into arcs; the spacetime grid)
+// · the event horizon 1240+ (the final arena: a black hole at the top of the screen, its accretion disk and
+// the disk's lensed image arched over the shadow). Air units only.
+// =============================================================================
 const COSMOS_LAYOUT = [
   { biome: 'void',    from: 0,    to: 420 },
   { biome: 'web',     from: 420,  to: 800 },
   { biome: 'warp',    from: 800,  to: 1240 },
   { biome: 'horizon', from: 1240, to: Infinity },
 ];
-const SPACE_LANE = { d0: -Infinity, d1: Infinity, x: 5 };
-// a sparse drift layer: a few tumblers beside the lanes and deeper down (types by stage: rocks in the
-// solar system, shards and wrecks further out)
+const CO_LANE = { d0: -Infinity, d1: 1234, x: 5 };
+const CO_ARENA = { d0: 1234, d1: Infinity, x: 7.5 };
+function genCosmos(w, ch, k, d0) {
+  styleReset();
+  genSpaceDrift(w, ch, k, d0);
+  styleReset();
+}
+const cosmosKey = (d, o) => ({ d, sun: 0xe0e8ff, sunI: 2.2, sky: 0x1a2038, gnd: 0x202a4a, hemiI: 1.0, fog: 0x000000, near: 52, far: 130,
+  cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0, pSpace: 0x010102, ...o });
+const COSMOS_TOD_SRC = [
+  cosmosKey(-60, { pStar: 0.4, pClus: 1.0, pHot: 0xffe2b0, pGas2: 0x6a8ad8, pNeb: 0x3a2a8a, pGas: 0x3a6ad0 }),
+  cosmosKey(380, { pStar: 0.45, pClus: 1.0, pHot: 0xffe2b0, pGas2: 0x6a8ad8, pNeb: 0x3a2a8a, pGas: 0x3a6ad0 }),
+  cosmosKey(470, { pStar: 0.5, pClus: 0.6, pL1: 0.75, pL2: 0.45, pHot: 0xd8e4ff, pGas2: 0x6a8ad8, pNeb: 0x3a2a8a, pGas: 0x3a5ab8, pSpace: 0x020106 }),
+  cosmosKey(760, { pStar: 0.5, pClus: 0.6, pL1: 0.75, pL2: 0.45, pHot: 0xd8e4ff, pGas2: 0x6a8ad8, pNeb: 0x3a2a8a, pGas: 0x3a5ab8, pSpace: 0x020106 }),
+  cosmosKey(850, { sky: 0x1a2a40, pStar: 0.7, pClus: 0.7, pL1: 0.55, pL2: 0.4, pDustI: 0.7, pSpark: 1.0, pHot: 0xd8e4ff, pGas2: 0x9ab4ff, pNeb: 0x3a2a8a, pGas: 0x2a9ac0, pSpace: 0x010208 }),
+  cosmosKey(1180, { sky: 0x1a2a40, pStar: 0.7, pClus: 0.6, pL1: 0.5, pL2: 0.35, pDustI: 0.6, pSpark: 1.0, pHot: 0xd8e4ff, pGas2: 0x9ab4ff, pNeb: 0x3a2a8a, pGas: 0x2a9ac0, pSpace: 0x010208,
+    pGlowI: 0.0, pCx: 0, pCz: -70, pCr: 1.0, pTilt: 1.36 }),
+  cosmosKey(1275, { sun: 0xd8ecff, sunI: 2.4, sky: 0x283a60, gnd: 0x3a3070, hemiI: 1.15, pStar: 0.8, pClus: 0.4, pL1: 0.35, pL2: 0.2, pDustI: 0.15, pSpark: 0.0, pHot: 0xa8dcff, pGas2: 0x5a36c0, pNeb: 0x3a2a8a, pGas: 0x2a9ac0, pSpace: 0x000000,
+    pGlowI: 1.0, pCx: 0, pCz: -14, pCr: 2.6, pTilt: 1.36 }),
+];
+const COSMOS_CLOUD = { void: 0, web: 0, warp: 0, horizon: 0 };
+// PLACEHOLDER drift layer (temporary)
 function genSpaceDrift(w, ch, k, d0) {
   const solar = S.id === 'solar', n = LOWQ ? 3 : 7, belt = solar && d0 + 20 > 320 && d0 + 20 < 700;
   for (let i = 0; i < (belt ? n * 2 : n); i++) {
@@ -7383,35 +8001,6 @@ function genSpaceDrift(w, ch, k, d0) {
     addDrift(ch, type, x, y, d, rr(0.12, 0.6), type === D_ROCK ? rr(0.4, belt ? 1.8 : 1.2) : rr(0.6, 1.1), rr(0.2, 0.8));
   }
 }
-const SPACE_CLOUD = { mars: 0, belt: 0, jupiter: 0, saturn: 0, corona: 0, nebula: 0, clusters: 0, dust: 0, core: 0, void: 0, web: 0, warp: 0, horizon: 0 };
-const spaceKey = (d, sun, sunI, sky, hemiI, o) => ({ d, sun, sunI, sky, gnd: 0x101218, hemiI, fog: 0x000000, near: 52, far: 130,
-  cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0, ...o });
-// the solar system: a red planet under the play area (the kit's earth body in Martian colours), then
-// tan and gold cloud-tops for the giants, then the Sun's glare
-const SOLAR_TOD_SRC = [
-  spaceKey(-60, 0xfff0e0, 2.4, 0x302420, 1.0, { pOcean: 0x5a2a1c, pLand: 0x9a4a2a, pLand2: 0xc07a48, pCloud: 0xd8b8a0, pAtmos: 0xd88a6a, pGlow: 0xffb080, pSpace: 0x030204, pNeb: 0x3a2a30, pX: 0, pZ: 26, pF: 17, pH: 0.09, pCover: 0.12, pAtmW: 0.004, pNebI: 0.5, pStar: 0.9, pCityI: 0, psun: [-0.4, 0.8, -0.4] }),
-  spaceKey(300, 0xfff0e0, 2.4, 0x302420, 1.0, { pOcean: 0x5a2a1c, pLand: 0x9a4a2a, pLand2: 0xc07a48, pCloud: 0xd8b8a0, pAtmos: 0xd88a6a, pGlow: 0xffb080, pSpace: 0x030204, pNeb: 0x3a2a30, pX: 6, pZ: 30, pF: 17, pH: 0.3, pCover: 0.12, pAtmW: 0.004, pNebI: 0.5, pStar: 0.9, pCityI: 0, psun: [-0.5, 0.5, -0.7] }),
-  spaceKey(420, 0xfff4e8, 2.3, 0x282430, 1.0, { pOcean: 0x5a2a1c, pLand: 0x9a4a2a, pLand2: 0xc07a48, pCloud: 0xd8b8a0, pAtmos: 0xd88a6a, pGlow: 0xffb080, pSpace: 0x030305, pNeb: 0x30303a, pX: 30, pZ: 40, pF: 17, pH: 3, pCover: 0.12, pAtmW: 0.004, pNebI: 0.7, pStar: 1.0, pCityI: 0, psun: [-0.5, 0.5, -0.7] }),
-  spaceKey(760, 0xfff4e8, 2.3, 0x2c2a26, 1.0, { pOcean: 0x6a5038, pLand: 0x8a7050, pLand2: 0xa08868, pCloud: 0x9a8a70, pAtmos: 0xd8b890, pGlow: 0xffc890, pSpace: 0x030305, pNeb: 0x30303a, pX: 0, pZ: 26, pF: 17, pH: 0.12, pCover: 0.75, pAtmW: 0.01, pNebI: 0.4, pStar: 0.8, pCityI: 0, psun: [-0.4, 0.8, -0.4] }),
-  spaceKey(1060, 0xfff0d8, 2.3, 0x2c2a22, 1.0, { pOcean: 0x7a6a44, pLand: 0x9a8858, pLand2: 0xb0a070, pCloud: 0xa89a78, pAtmos: 0xe0c890, pGlow: 0xffd890, pSpace: 0x040304, pNeb: 0x3a3428, pX: -4, pZ: 28, pF: 17, pH: 0.15, pCover: 0.8, pAtmW: 0.01, pNebI: 0.4, pStar: 0.8, pCityI: 0, psun: [-0.4, 0.8, -0.4] }),
-  spaceKey(1200, 0xfff0d8, 2.3, 0x2c2a22, 1.0, { pOcean: 0x7a6a44, pLand: 0x9a8858, pLand2: 0xb0a070, pCloud: 0xa89a78, pAtmos: 0xe0c890, pGlow: 0xffd890, pSpace: 0x040304, pNeb: 0x3a3428, pX: -8, pZ: 30, pF: 17, pH: 0.2, pCover: 0.8, pAtmW: 0.01, pNebI: 0.4, pStar: 0.8, pCityI: 0, psun: [-0.4, 0.8, -0.4] }),
-  spaceKey(1275, 0xffe0b0, 2.6, 0x3a2410, 1.2, { pOcean: 0xa08a5a, pLand: 0xc8b078, pLand2: 0xe0cc98, pCloud: 0xf0e2c0, pAtmos: 0xffb060, pGlow: 0xffa040, pSpace: 0x140804, pNeb: 0x6a3010, pX: -40, pZ: 50, pF: 17, pH: 6, pCover: 0.8, pAtmW: 0.01, pNebI: 1.2, pStar: 0.5, pCityI: 0, psun: [-0.4, 0.8, -0.4] }),
-];
-// the galaxy: nebula gas in three moods, then the core's golden glow
-const GALAXY_TOD_SRC = [
-  spaceKey(-60, 0xf0e8ff, 2.3, 0x2a1c3a, 1.1, { pSpace: 0x050210, pNeb: 0x7a2a8a, pNebI: 0.9, pStar: 1.0 }),
-  spaceKey(380, 0xf0e8ff, 2.3, 0x2a1c3a, 1.1, { pSpace: 0x050210, pNeb: 0x7a2a8a, pNebI: 0.9, pStar: 1.0 }),
-  spaceKey(460, 0xe8f4ff, 2.3, 0x1a2a3a, 1.1, { pSpace: 0x020610, pNeb: 0x1e6a8a, pNebI: 0.8, pStar: 1.2 }),
-  spaceKey(840, 0xfff0e0, 2.3, 0x2a2418, 1.1, { pSpace: 0x060402, pNeb: 0x6a4a2a, pNebI: 0.7, pStar: 0.9 }),
-  spaceKey(1275, 0xffe8c0, 2.5, 0x3a2a10, 1.2, { pSpace: 0x100804, pNeb: 0xa0702e, pNebI: 0.8, pStar: 1.1 }),
-];
-// the edge of the universe: almost nothing, then a cold violet warp, then the dark before the horizon
-const COSMOS_TOD_SRC = [
-  spaceKey(-60, 0xe8eeff, 2.2, 0x141a2a, 1.0, { pSpace: 0x010104, pNeb: 0x1a2440, pNebI: 0.5, pStar: 0.55 }),
-  spaceKey(460, 0xe8eeff, 2.2, 0x141a2a, 1.0, { pSpace: 0x010104, pNeb: 0x243a6a, pNebI: 0.8, pStar: 0.7 }),
-  spaceKey(840, 0xf0e8ff, 2.2, 0x201430, 1.0, { pSpace: 0x040108, pNeb: 0x4a2a7a, pNebI: 0.9, pStar: 0.6 }),
-  spaceKey(1275, 0xffe8f0, 2.3, 0x1a1020, 1.1, { pSpace: 0x000000, pNeb: 0x5a2040, pNebI: 0.7, pStar: 0.35 }),
-];
 
 // =============================================================================
 // stage table
@@ -7500,26 +8089,44 @@ export const WORLD_STAGES = {
     deck: false,
     space: { body: 1, band: true }, drift: true, noClouds: true, voidH: MN_SKIP, snap: moonSnap,
   },
-  solar: {   // PLACEHOLDER (see its section)
+  solar: {
     id: 'solar', layout: SOLAR_LAYOUT, salt: 1496000,
-    clear: { from: Infinity, to: -Infinity }, corridors: [SPACE_LANE],
-    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, OP.hullD), hasGround: () => false, gen: genSpaceDrift,
-    water: null, flatCheck: false, tod: makeTod(SOLAR_TOD_SRC), cloud: SPACE_CLOUD, cloudShadowK: () => 0, deck: false,
-    space: { body: 1, band: true, deep: true }, drift: true, noClouds: true,
+    clear: { from: Infinity, to: -Infinity }, corridors: [SO_LANE, SO_ARENA],   // air units only
+    arena: SO_ARENA,
+    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, OP.hullD),
+    hasGround: () => false,
+    gen: genSolar,
+    water: null, flatCheck: false,
+    tod: makeTod(SOLAR_TOD_SRC), cloud: SOLAR_CLOUD,
+    cloudShadowK: () => 0,
+    deck: false,
+    space: { body: 2, nebula: true, deep: true, turn: solarTurn }, drift: true, noClouds: true,
   },
-  galaxy: {  // PLACEHOLDER (see its section)
+  galaxy: {
     id: 'galaxy', layout: GALAXY_LAYOUT, salt: 2600000,
-    clear: { from: Infinity, to: -Infinity }, corridors: [SPACE_LANE],
-    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, OP.hullD), hasGround: () => false, gen: genSpaceDrift,
-    water: null, flatCheck: false, tod: makeTod(GALAXY_TOD_SRC), cloud: SPACE_CLOUD, cloudShadowK: () => 0, deck: false,
-    space: { nebula: true, band: true, deep: true }, drift: true, noClouds: true,
+    clear: { from: Infinity, to: -Infinity }, corridors: [GA_LANE, GA_ARENA],
+    arena: GA_ARENA,
+    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, OP.hullD),
+    hasGround: () => false,
+    gen: genGalaxy,
+    water: null, flatCheck: false,
+    tod: makeTod(GALAXY_TOD_SRC), cloud: GALAXY_CLOUD,
+    cloudShadowK: () => 0,
+    deck: false,
+    space: { gas: true, clus: true, core: true, deep: true, layers: [0.05, 0.12, 0.24, 0] }, drift: true, noClouds: true,
   },
-  cosmos: {  // PLACEHOLDER (see its section)
+  cosmos: {
     id: 'cosmos', layout: COSMOS_LAYOUT, salt: 1380000,
-    clear: { from: Infinity, to: -Infinity }, corridors: [SPACE_LANE],
-    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, OP.hullD), hasGround: () => false, gen: genSpaceDrift,
-    water: null, flatCheck: false, tod: makeTod(COSMOS_TOD_SRC), cloud: SPACE_CLOUD, cloudShadowK: () => 0, deck: false,
-    space: { nebula: true, band: true, deep: true }, drift: true, noClouds: true,
+    clear: { from: Infinity, to: -Infinity }, corridors: [CO_LANE, CO_ARENA],
+    arena: CO_ARENA,
+    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, OP.hullD),
+    hasGround: () => false,
+    gen: genCosmos,
+    water: null, flatCheck: false,
+    tod: makeTod(COSMOS_TOD_SRC), cloud: COSMOS_CLOUD,
+    cloudShadowK: () => 0,
+    deck: false,
+    space: { web: true, gals: true, warp: true, hole: true, deep: true, layers: [0.04, 0.1, 0.06, LENS_RATE * 90 / LENS_PERIOD] }, drift: true, noClouds: true,
   },
 };
 // an unknown biome name would turn the low-cloud alpha into NaN (→ full opacity): check the tables

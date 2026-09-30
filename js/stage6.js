@@ -673,7 +673,7 @@ function heliosAI() {
       s.focT -= dt;
       if (s.focCh < 0 && s.focT <= 0 && (wL || wR)) {
         s.focSide ^= 1; if (!live(s.wg[s.focSide])) s.focSide ^= 1;
-        s.focCh = 0; s.focT = (s.mode === 'p2' ? 2.0 : 3.4) / fr;
+        s.focCh = 0; s.focFired = false; s.focT = (s.mode === 'p2' ? 2.0 : 3.4) / fr;
         g.audio.play('lock', { vol: 0.35, pitch: 4 });
       }
       if (s.focCh >= 0) {
@@ -761,7 +761,12 @@ const NOVA_A = [3.0, 2.6, 1.8, 1], NOVA_B = [1.4, 0.5, 0.1, 0];
 const BURN_A = [2.4, 1.2, 0.35, 0.9], BURN_B = [0.9, 0.22, 0.04, 0], OPT_BURN = { drag: 0.6, vrot: 0 };
 function heliosDeath(e, dt, g) {
   const s = e.s, ud = e.mesh.userData;
-  if (!s.dieT) { for (const f of s.fl) if (f) f.obj.userData.setCharge(0); for (const w of s.wg) if (w) w.obj.userData.setCharge(0); }
+  if (!s.dieT) {
+    for (const f of s.fl) if (f) f.obj.userData.setCharge(0);
+    for (const w of s.wg) if (w) w.obj.userData.setCharge(0);
+    // flares still in the air fizzle out with their ship (no rings over the victory)
+    for (const f of g.enemies) if (f.type === 's6_flare' && f.alive) { g.fx.explosion(f.x, 0.2, f.z, 0.9, { debris: 0 }); f.alive = false; }
+  }
   s.dieT = (s.dieT || 0) + dt;
   const t = s.dieT;
   if (ud.setFlash && t < 2.2) ud.setFlash(Math.max(0, Math.sin(t * 23)) * 0.35);

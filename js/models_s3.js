@@ -20,7 +20,7 @@
 //                targeting beam (additive, userData.setCharge(0..1)) telegraphs its lane
 //   MINELAYER    manta flying wing with a revolving dorsal mine drum (userData.drop() turns it)
 //   VALKYRIE     mid-boss escort cruiser: parts batteryL / batteryR (twin-gun sponsons that
-//                aim) and core (cyan reactor under two shutters, setOpen)
+//                aim) and core (cyan reactor under two shutters, setOpen); reset() for the pool
 //   SERAPH       boss mothership, six-winged: fore wings with gun pods (pods[0..1]), main
 //                wings with batteries (battery[0..3]), spinal cannons that rise from wells
 //                (spineF with a telegraph beam, spineL, spineR — setRaise(0..1)), the citadel
@@ -613,6 +613,8 @@ function createValkyrie() {
   pivot.add(batteryL, batteryR, core);
   ud.parts = { batteryL, batteryR, core };
   ud.muzzles = [new THREE.Vector3(0, 0.3, -3.2)];
+  /** pooled instances come back posed: batteries facing forward (they aim during the fight) */
+  ud.reset = () => { batteryL.rotation.y = 0; batteryR.rotation.y = 0; };
   const flashAll = flashFn(allMats);
   ud.setFlash = (v) => flashAll(v * 0.4);   // armour hits on the body: a soft flash (the parts flash on their own)
   ud.update = (dt, t) => {

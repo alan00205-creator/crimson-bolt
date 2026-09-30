@@ -26,14 +26,16 @@ export const ENEMY = {
   frigate: { hp: 150, score: 4000, radius: 1.8, air: true, explode: 2.3, debris: 18, medal: 2, prewarm: 3 },
   lancer: { hp: 26, score: 1200, radius: 0.95, air: true, explode: 1.3, debris: 9, medal: 0.5, prewarm: 5 },
   minelayer: { hp: 70, score: 2500, radius: 1.4, air: true, explode: 1.8, debris: 12, medal: 1, prewarm: 3 },
-  // mid-boss: the kill is the core, which stays shut (armoured) until both batteries are gone or 16 s
-  // have passed. The hull is armour and never a target (see VALKYRIE_LIVE below), so shots and homing
-  // missiles go for the batteries and the core; hp is only a backstop. hull: armour behind the batteries.
+  // mid-boss: the kill is the core, which stays shut (armoured) until both batteries are gone or 12 s
+  // have passed. The body is armour, never a target (bodyTarget: false), so shots and homing missiles
+  // go for the batteries and the core; hp is only a backstop. hull: armour behind the batteries.
+  // Tuned so a mid-power jet keeping its distance still gets the kill (the core has 45 s of fight to
+  // open and die): VULCAN L2 with a sub-weapon, WAVE / PLASMA from L3.
   valkyrie: {
-    hp: 9999, score: 40000, radius: 2.2, air: true, explode: 3.2, debris: 30, midboss: true, noRevenge: true, prewarm: 1,
+    hp: 9999, score: 40000, radius: 2.2, air: true, explode: 3.2, debris: 30, midboss: true, noRevenge: true, bodyTarget: false, prewarm: 1,
     parts: [
       { key: 'batteryL', hp: 190, score: 6000, medals: 2, big: 1.8 }, { key: 'batteryR', hp: 190, score: 6000, medals: 2, big: 1.8 },
-      { key: 'core', hp: 880, core: true, score: 40000 },
+      { key: 'core', hp: 620, core: true, score: 40000 },
     ],
     hull: { hw: 3.7, z0: -2.5, z1: -1.05 },
   },
@@ -52,11 +54,6 @@ export const ENEMY = {
     hull: { hw: 2.3, z0: -8.4, z1: -1.4 },
   },
 };
-// The live VALKYRIE carries this def from its spawn on: flagged like a stage boss for the collision
-// pass, its hull stops being a hit target (shots spark off the shut core and the hull box instead of
-// soaking into a body that cannot die). Everything else keeps the mid-boss path (def.midboss); bombs
-// hit its parts at boss strength and ramming it is checked in its AI.
-const VALKYRIE_LIVE = { ...ENEMY.valkyrie, boss: true };
 
 const MIDBOSS_AT = 590;
 const BOSS_AT = 1275;
@@ -226,6 +223,9 @@ function minelayerAI(dir, zf = 0.24, speed = 2.9) {
 // mid-boss: VALKYRIE escort cruiser
 // --------------------------------------------------------------------------------
 const live = (pt) => (pt && !pt.dead ? pt : null);
+const VK_ROW = 9.5;    // station below the top edge
+const VK_OPEN = 12;    // fight time at which the core opens even with a battery left
+const VK_FIGHT = 45;   // fight time at which it gives up and climbs away
 // battery: 3 rounds of twin needles along its barrels
 function batteryBurst(g, e, pt, dt, interval, speed) {
   pt.fireT -= dt;
@@ -244,8 +244,9 @@ function valkyrieAI() {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (!s.init) {
       s.init = true; s.mode = 'enter'; s.life = 0; s.open = 0; s.a = 0; s.b = 0; s.fixedYaw = true; s.yaw = Math.PI;
-      e.x = 0; e.z = v.zTop - 6; s.tz = v.zTop + 9.5; e.invuln = true; e.armored = true;
+      e.x = 0; e.z = v.zTop - 6; s.tz = v.zTop + VK_ROW; e.invuln = true; e.armored = true;
       s.bl = g.partByKey(e, 'batteryL'); s.br = g.partByKey(e, 'batteryR'); s.core = g.partByKey(e, 'core');
+      if (ud.reset) ud.reset();
     }
     s.life += dt;
     // engine wash from the three stern nozzles (the model points them up-screen)
@@ -285,18 +286,18 @@ function valkyrieAI() {
       s.ft += dt;
       e.x = Math.sin(s.ft * 0.47) * 3.3;
       e.z = s.tz + Math.sin(s.ft * 0.83) * 0.6;
-      if (s.ft > 36) { s.mode = 'retreat'; s.rt = 0; }
+      if (s.ft > VK_FIGHT) { s.mode = 'retreat'; s.rt = 0; }
     } else {                                  // retreat: climb away, the stage goes on
       s.rt += dt;
       e.z -= (2 + s.rt * 10) * dt;
       if (e.z < v.zTop - 9) { e.alive = false; g.midbossDone = true; }
     }
-    // ramming: the hull (fuselage, then the swept wings) is solid
+    // ramming: the hull (fuselage, then the swept wings) is solid; the engine only checks the body circle
     const p = g.player, dx = Math.abs(p.x - e.x), dz = p.z - e.z;
     if (p.alive && ((dx < 0.95 && dz > -2.9 && dz < 2.7) || (dx < 3.5 && dz > -2.2 && dz < 1.45 - (dx - 1.1) * 0.8))) g.killPlayer();
     const bl = live(s.bl), br = live(s.br), core = s.core;
     // the core opens once both batteries are gone (or it is tired of waiting)
-    const wantOpen = s.mode === 'fight' && ((!bl && !br) || s.ft > 16) ? 1 : 0;
+    const wantOpen = s.mode === 'fight' && ((!bl && !br) || s.ft > VK_OPEN) ? 1 : 0;
     s.open += (wantOpen - s.open) * Math.min(1, dt * 2.2);
     if (core && core.obj.userData.setOpen) core.obj.userData.setOpen(s.open);
     e.armored = s.open < 0.85;
@@ -330,7 +331,6 @@ function valkyrieAI() {
 }
 function spawnValkyrie(g) {
   const e = g.spawn('valkyrie', { x: 0, z: g.view.zTop - 6, ai: valkyrieAI() });
-  e.def = VALKYRIE_LIVE;
   e.invuln = true;
   e.onDeath = () => { g.stats.midbossTime = e.s.life; };
   e.onPartDestroyed = (en, pt) => { if (pt.key.startsWith('battery')) g.dropItem('P', pt.x, pt.z, { color: g.player.main }); };
@@ -663,4 +663,5 @@ export const STAGE = {
   // enemies toughen through the storm band and the golden altitude
   hpSeg: (d) => (d < 420 ? 1 : d < 800 ? 1.15 : 1.3),
   scroll: 7, warnScroll: 3, bossScroll: 2.2,
+  bulletRim: 1,   // hard dark bullet rims: the stratosphere and golden bands are white / cream cloud
 };

@@ -7,7 +7,7 @@ export class Input {
     this.usingTouch = false;
     this.dragTravel = 0; // total joystick travel in px (used to retire the movement hint)
     this.touchFocus = false; // the on-screen 集中 button is held (tucks the option drones)
-    this.pad = { x: 0, y: 0, slow: false, bomb: false, pause: false, prevBomb: false, prevPause: false, prevStart: false, start: false };
+    this.pad = { x: 0, y: 0, slow: false, bomb: false, pause: false, prevBomb: false, prevPause: false, prevStart: false, start: false, prevLB: false, prevRB: false };
     this.enabled = true;
     this._bind();
   }
@@ -19,6 +19,7 @@ export class Input {
       KeyX: 'bomb', Space: 'bomb', KeyK: 'bomb',
       Escape: 'pause', KeyP: 'pause', Enter: 'confirm', NumpadEnter: 'confirm', KeyZ: 'confirm',
       KeyM: 'mute',
+      KeyQ: 'tabPrev', KeyE: 'tabNext', // menu tabs (the hangar)
     };
     window.addEventListener('keydown', (e) => {
       const a = map[e.code];
@@ -155,6 +156,11 @@ export class Input {
     this.pad.slow = slow;
     const bomb = b(1) || b(2) || b(5), start = b(9), confirm = b(0);
     if (bomb && !this.pad.prevBomb) { this.edges.add('bomb'); if (b(1)) this.edges.add('padBack'); }
+    // LB / RB presses also switch menu tabs (the hangar); in play they stay slow / bomb
+    const lb = b(4), rb = b(5);
+    if (lb && !this.pad.prevLB) this.edges.add('tabPrev');
+    if (rb && !this.pad.prevRB) this.edges.add('tabNext');
+    this.pad.prevLB = lb; this.pad.prevRB = rb;
     if (start && !this.pad.prevStart) this.edges.add('pause');
     if (confirm && !this.pad.prevPause) this.edges.add('padConfirm');
     const navY = y < -0.5 ? -1 : y > 0.5 ? 1 : 0, navX = x < -0.5 ? -1 : x > 0.5 ? 1 : 0;

@@ -1,12 +1,21 @@
 // =============================================================================
 // CRIMSON BOLT (赤電) — extension models: hangar aircraft + option drones
 // -----------------------------------------------------------------------------
-// models.js registers these tables: createPlayer(id) uses PLAYERS[id],
-// createOption(id) uses OPTIONS[id]. Each entry is a factory () => THREE.Group
-// that returns a NEW instance per call (pools build several).
+// models.js registers these tables: createPlayer(id, paint) uses PLAYERS[id],
+// createOption(id, paint) uses OPTIONS[id]. Each entry is a factory
+// (paint = 'std') => THREE.Group that returns a NEW instance per call (pools
+// build several); the registry only passes paints listed in PLAYER_PAINTS[id].
 //
 //   export const PLAYERS = { gale, titan, phantom };   // keys = AIRCRAFT ids in defs.js ('bolt' lives in models.js)
 //   export const OPTIONS = { phantom };                 // the option drone of that aircraft
+//   export const PLAYER_PAINTS = { gale: { dusk: { accent }, … }, … };   // paints besides 'std'
+//
+// Paints (hangar liveries, see modelkit "Paint schemes") are recolours of the std body
+// geometry, so they keep the budget, silhouette and shadow; 'std' never goes through them:
+//   GALE     黃昏 dusk (orange → violet gradient) · 幽靈 ghost (low-vis greys) · 黃金 gold
+//   TITAN    叢林 jungle (olive camouflage) · 鋼灰 steel (dark steel, red stripes) · 黃金 gold
+//   PHANTOM  血月 blood (black, blood-red edges) · 極光 aurora (white, teal/green glow drifting) · 黃金 gold
+//   the drone follows the PHANTOM paint
 //
 //   GALE 疾風     slim forward-swept interceptor: needle nose + pitot, canards, forward-swept
 //                 wing with glowing cyan tip lights, twin small nozzles, pearl white + cyan
@@ -44,7 +53,10 @@
 // game's engine-trail sprite that matches the aircraft's flame (the bolt's trail is orange).
 // =============================================================================
 import * as THREE from 'three';
-import { GB, GG, G, M, S, DEG, lit, lin, rgb, GL, EM, bodyMat, additiveMat, flashFn, buildFlame, FLAME_JET, assemblePlayer, enemyShell } from './modelkit.js';
+import {
+  GB, GG, G, M, S, DEG, lit, lin, rgb, GL, EM, mix3, bodyMat, additiveMat, flashFn, buildFlame, FLAME_JET, assemblePlayer, enemyShell,
+  paintedBody, GOLD, FLAME_GOLD, flameTint, flameRecolour, retint, noise2, lum,
+} from './modelkit.js';
 import { AIRCRAFT_BY_ID } from './defs.js';
 
 // =============================================================================
@@ -196,19 +208,69 @@ function buildGale() {
   b.mirrorX(f0);
   return b;
 }
-function createGale() {
-  const ac = acOf('gale');
+function createGale(paint = 'std') {
+  const ac = acOf('gale'), pt = paintOf(GALE_PAINTS, paint);
   const g = assemblePlayer({
-    name: 'player', body: GG('ext:ships:gale', buildGale), rough: 0.46, metal: 0.16,
-    flame: G('ext:ships:gale.flame', () => buildFlame(GALE_NOZZLES, FLAME_GALE)), flameZ: 0.83,
-    radius: ac.hitR, grazeRadius: ac.grazeR, debris: '#2cb4dc',
+    name: 'player', body: pt ? paintedBody('ext:ships:gale', buildGale, GALE_PAL, paint, pt) : GG('ext:ships:gale', buildGale),
+    rough: pt ? pt.rough : 0.46, metal: pt ? pt.metal : 0.16,
+    flame: pt && pt.flame ? G('ext:ships:gale.flame.' + paint, () => buildFlame(GALE_NOZZLES, pt.flame)) : G('ext:ships:gale.flame', () => buildFlame(GALE_NOZZLES, FLAME_GALE)),
+    flameZ: 0.83,
+    radius: ac.hitR, grazeRadius: ac.grazeR, debris: pt ? pt.debris : '#2cb4dc',
     muzzles: [[0, 0, -1.08], [-0.2, 0, -0.3], [0.2, 0, -0.3]], muzzleZ: -1.05,
     trail: [[-0.068, 0.88], [0.068, 0.88]],
     bankDeg: 40,                      // the light interceptor rolls a little further
   });
-  g.userData.trailColor = [0.7, 1.7, 2.8];
+  g.userData.trailColor = pt && pt.trail ? pt.trail : [0.7, 1.7, 2.8];
   return g;
 }
+// ---- GALE paints (recolours of 'ext:ships:gale'; roles = GA + the nozzle core)
+const GALE_PAL = { ...GA, hot: GL(GALE_HOT, 0.7) };
+const DUSK_A = lin('#ec7a26'), DUSK_B = lin('#5c2e8e'), duskStyles = new Map();
+/** 黃昏 gradient at centroid c (nose → tail, centre → tips), 9 steps, shade k */
+function dusk(c, k) {
+  const u = Math.round(Math.max(0, Math.min(1, (c[2] + 0.45) / 1.15 + Math.abs(c[0]) * 0.5)) * 8) / 8, key = u * 10 + k;
+  let s = duskStyles.get(key);
+  if (!s) { const m = mix3(DUSK_A, DUSK_B, u); s = S([m[0] * k, m[1] * k, m[2] * k]); duskStyles.set(key, s); }
+  return s;
+}
+const GALE_PAINTS = {
+  // 黃昏 DUSK — the white skin fades from sunset orange at the nose to dusk violet at the tail and wingtips;
+  // sunset orange where the gale is cyan, golden leading edges, amber tip lights, rose canopy
+  dusk: {
+    rough: 0.48, metal: 0.16, debris: '#f08a3a', accent: '#ff8a3d',
+    map: {
+      pearl: (st, c) => dusk(c, 1), pearlLt: (st, c) => dusk(c, 1.14), pearlDk: (st, c) => dusk(c, 0.62),
+      cyan: lit('#e2601c'), cyanLt: lit('#f8b03e'), cyanDk: lit('#9c2c1c'),
+      navy: lit('#26113a'), navyDk: lit('#180a26'), belly: lit('#3a2250'), bellyDk: lit('#281739'),
+      steel: lit('#b07a8a'), steelDk: lit('#4a2e4c'),
+      glass: S(lin('#4a1634'), rgb(0.12, 0.02, 0.07)), glassLt: S(lin('#e48a72'), rgb(0.3, 0.1, 0.07)),
+      glow: GL(rgb(1.0, 0.6, 0.2, 3.0), 0.45), hot: GL(rgb(1.0, 0.8, 0.6, 4.2), 0.7),
+    },
+    flame: flameRecolour(FLAME_GALE, [
+      { base: rgb(1.0, 0.42, 0.3, 1.7), tip: rgb(0.55, 0.05, 0.35, 0.0) },
+      { base: rgb(1.0, 0.85, 0.66, 2.7), tip: rgb(1.0, 0.42, 0.3, 0.2) }]),
+    trail: [2.8, 0.95, 0.8],
+  },
+  // 幽靈 GHOST — low-visibility two-tone greys (light top, darker grey where the gale is cyan), dim markings
+  ghost: {
+    rough: 0.8, metal: 0.1, debris: '#9aa2ab', accent: '#aab3bc',
+    map: {
+      pearl: lit('#a2a9b0'), pearlLt: lit('#adb3b9'), pearlDk: lit('#7b838c'),
+      cyan: lit('#5f666f'), cyanLt: lit('#737a83'), cyanDk: lit('#4a5058'),
+      navy: lit('#3d434a'), navyDk: lit('#2c3136'), belly: lit('#5a6068'), bellyDk: lit('#434850'),
+      glass: S(lin('#20262d'), rgb(0.01, 0.02, 0.03)), glassLt: S(lin('#7c8792'), rgb(0.03, 0.05, 0.07)),
+      glow: GL(rgb(0.85, 0.93, 1.0, 1.7), 0.4),
+    },
+    flame: flameTint(FLAME_GALE, ([r, g, b]) => { const m = (r + g + b) / 3; return [(r + m) * 0.42, (g + m) * 0.42, (b + m) * 0.45]; }),
+    trail: [1.1, 1.35, 1.7],
+  },
+  // 黃金 GOLD
+  gold: {
+    rough: GOLD.rough, metal: GOLD.metal, debris: GOLD.debris, accent: '#f0c75a',
+    map: { glass: GOLD.glass, glassLt: GOLD.glassLt, hot: GOLD.hot, '*': GOLD.face },
+    flame: flameRecolour(FLAME_GALE, FLAME_GOLD), trail: GOLD.trail,
+  },
+};
 
 // =============================================================================
 // TITAN 重鎚 — broad heavy attack jet, gunmetal + amber
@@ -336,19 +398,62 @@ function buildTitan() {
   b.mirrorX(f0);
   return b;
 }
-function createTitan() {
-  const ac = acOf('titan');
+function createTitan(paint = 'std') {
+  const ac = acOf('titan'), pt = paintOf(TITAN_PAINTS, paint);
   const g = assemblePlayer({
-    name: 'player', body: GG('ext:ships:titan', buildTitan), rough: 0.58, metal: 0.3,
-    flame: G('ext:ships:titan.flame', () => buildFlame(TITAN_NOZZLES, FLAME_JET)), flameZ: 0.88,
-    radius: ac.hitR, grazeRadius: ac.grazeR, debris: '#c8943a',
+    name: 'player', body: pt ? paintedBody('ext:ships:titan', buildTitan, TITAN_PAL, paint, pt) : GG('ext:ships:titan', buildTitan),
+    rough: pt ? pt.rough : 0.58, metal: pt ? pt.metal : 0.3,
+    flame: pt && pt.flame ? G('ext:ships:titan.flame.' + paint, () => buildFlame(TITAN_NOZZLES, pt.flame)) : G('ext:ships:titan.flame', () => buildFlame(TITAN_NOZZLES, FLAME_JET)),
+    flameZ: 0.88,
+    radius: ac.hitR, grazeRadius: ac.grazeR, debris: pt ? pt.debris : '#c8943a',
     muzzles: [[0, -0.03, -1.1], [-0.52, -0.1, -0.22], [0.52, -0.1, -0.22]], muzzleZ: -1.06,
     trail: [[-TI_NX, 0.93], [TI_NX, 0.93]],
     bankDeg: 30,                      // the heavy jet rolls less
   });
-  g.userData.trailColor = [2.6, 1.2, 0.32];
+  g.userData.trailColor = pt && pt.trail ? pt.trail : [2.6, 1.2, 0.32];
   return g;
 }
+// ---- TITAN paints (recolours of 'ext:ships:titan'; roles = TI + the nozzle cores)
+const TITAN_PAL = { ...TI, hot: GL(EM.engineHot, 0.7) };
+/** 叢林 camouflage: olive / forest green / earth brown blotches from 2D noise over the planform (asymmetric,
+ *  like a real scheme); the face's role picks the shade so the panel shading survives */
+const CAMO = [['#627038', '#737f45', '#4b562b', '#30371c'], ['#2f3c24', '#3a492d', '#26311d', '#192014'],
+  ['#5c432b', '#6d5235', '#473320', '#2e2115']].map((t) => t.map((h) => lit(h)));
+const CAMO_SHADE = { gunLt: 1, gun: 0, gunDk: 2, gunXDk: 3 };
+function camo(st, c, t, shade) {
+  const n = noise2(c[0] * 2.4 + 7.3, c[2] * 2.4 + 1.7, 4);
+  return CAMO[n < 0.42 ? 0 : n < 0.6 ? 1 : 2][shade];
+}
+const TITAN_PAINTS = {
+  // 叢林 JUNGLE — olive camouflage, sand-khaki markings where the titan is amber, dark green visor
+  jungle: {
+    rough: 0.82, metal: 0.1, debris: '#6d7a3c', accent: '#7f9a45',
+    map: {
+      gun: (st, c, t) => camo(st, c, t, 0), gunLt: (st, c, t) => camo(st, c, t, 1), gunDk: (st, c, t) => camo(st, c, t, 2),
+      belly: lit('#454b33'), bellyDk: lit('#32372a'), steel: lit('#7a7c68'),
+      amber: lit('#a89a62'), amberLt: lit('#bcae74'), amberDk: lit('#6e6440'),
+      ord: lit('#4b5530'), ordDk: lit('#343b22'),
+      glass: S(lin('#16240f'), rgb(0.01, 0.04, 0.01)), glassLt: S(lin('#6f8a4a'), rgb(0.06, 0.1, 0.03)),
+    },
+  },
+  // 鋼灰 STEEL — dark blue-grey steel with red stripes where the titan is amber, smoked canopy
+  steel: {
+    rough: 0.42, metal: 0.42, debris: '#c0262e', accent: '#e0303a',
+    map: {
+      gun: lit('#353b43'), gunLt: lit('#474f59'), gunDk: lit('#262b32'), gunXDk: lit('#14171b'),
+      belly: lit('#262b31'), bellyDk: lit('#1a1e22'), steel: lit('#7c8692'),
+      amber: lit('#b3141e'), amberLt: lit('#cf2630'), amberDk: lit('#720a12'),
+      ord: lit('#4d555f'), ordDk: lit('#2a3037'),
+      glass: S(lin('#18222c'), rgb(0.01, 0.03, 0.05)), glassLt: S(lin('#7a94ad'), rgb(0.05, 0.1, 0.16)),
+    },
+  },
+  // 黃金 GOLD
+  gold: {
+    rough: GOLD.rough, metal: GOLD.metal, debris: GOLD.debris, accent: '#f0c75a',
+    map: { glass: GOLD.glass, glassLt: GOLD.glassLt, hot: GOLD.hot, '*': GOLD.face },
+    flame: FLAME_GOLD, trail: GOLD.trail,
+  },
+};
 
 // =============================================================================
 // PHANTOM 幻影 — stealth cranked-kite flying wing, black-violet with glowing edges
@@ -443,22 +548,71 @@ function buildPhantom() {
   });
   return b;
 }
-function createPhantom() {
-  const ac = acOf('phantom');
+function createPhantom(paint = 'std') {
+  const ac = acOf('phantom'), pt = paintOf(PHANTOM_PAINTS, paint);
   const g = assemblePlayer({
-    name: 'player', body: GG('ext:ships:phantom', buildPhantom), rough: 0.4, metal: 0.34,
-    flame: G('ext:ships:phantom.flame', () => buildBladeFlame(FLAME_BLADE, PH_Y_EXH)), flameZ: PH_Z_EXH,
-    radius: ac.hitR, grazeRadius: ac.grazeR, debris: '#9466f0',
+    name: 'player', body: pt ? paintedBody('ext:ships:phantom', buildPhantom, PH, paint, pt) : GG('ext:ships:phantom', buildPhantom),
+    rough: pt ? pt.rough : 0.4, metal: pt ? pt.metal : 0.34,
+    flame: pt ? G('ext:ships:phantom.flame.' + paint, () => buildBladeFlame(pt.blade, PH_Y_EXH)) : G('ext:ships:phantom.flame', () => buildBladeFlame(FLAME_BLADE, PH_Y_EXH)),
+    flameZ: PH_Z_EXH,
+    radius: ac.hitR, grazeRadius: ac.grazeR, debris: pt ? pt.debris : '#9466f0',
     muzzles: [[0, 0, -0.98], [-0.3, 0, -0.3], [0.3, 0, -0.3]], muzzleZ: -0.98,
     trail: [[-0.1, 0.56], [0, 0.56], [0.1, 0.56]],
     bankDeg: 35,
   });
-  g.userData.trailColor = [1.5, 0.6, 2.8];
+  g.userData.trailColor = pt ? pt.trail : [1.5, 0.6, 2.8];
   // slow "breathing" of the violet edges on top of the standard engine flicker
   const ud = g.userData, mat = g.getObjectByName('body').material, base = ud.update;
   ud.update = (dt, t) => { base(dt, t); mat.uEmitScale.value *= 0.88 + Math.sin(t * 2.4) * 0.12; };
+  if (pt && pt.flow) flowGlow(ud, mat, pt.flow);
   return g;
 }
+/** 極光 流轉: the glow drifts between teal and green (per-instance emission tint, no allocation) */
+function flowGlow(ud, mat, k) {
+  const tint = mat.uEmitTint.value, up = ud.update;
+  ud.update = (dt, t) => { up(dt, t); const s = Math.sin(t * 0.8) * k; tint.setRGB(1 + s, 1, 1 - s); };
+}
+
+// ---- PHANTOM paints (recolours of 'ext:ships:phantom'; roles = PH). The slit exhaust takes the paint's
+// glow: FLAME_BLADE layers with new base / tip colours.
+const bladeTint = (base0, tip0, base1, tip1) => FLAME_BLADE.map((l, i) => [l[0], l[1], l[2], l[3], i ? base1 : base0, i ? tip1 : tip0]);
+const BLOOD_EDGE = rgb(1.0, 0.05, 0.06), AURORA_A = rgb(0.1, 0.95, 1.0), AURORA_B = rgb(0.3, 1.0, 0.45);
+const PHANTOM_PAINTS = {
+  // 血月 BLOOD — red-black skin, blood-red glowing edges and slit, dark red canopy
+  blood: {
+    rough: 0.4, metal: 0.34, debris: '#d0202a', accent: '#ff2436',
+    map: {
+      skin: lit('#2e1719'), skinLt: lit('#43201f'), skinMd: lit('#381b1c'), skinDk: lit('#211011'),
+      belly: lit('#180b0c'), bellyDk: lit('#0f0708'), trim: lit('#86202a'), intake: lit('#070304'),
+      glass: S(lin('#3c0a0e'), rgb(0.13, 0.0, 0.01)), glassLt: S(lin('#c0303a'), rgb(0.34, 0.03, 0.04)),
+      edge: (st) => retint(st, BLOOD_EDGE, 0.5, 0.7), edgeHot: (st) => retint(st, rgb(1.0, 0.3, 0.26), 0.5, 0.8),
+    },
+    blade: bladeTint(rgb(1.0, 0.12, 0.1, 0.85), rgb(0.6, 0.0, 0.02, 0.0), rgb(1.0, 0.62, 0.55, 1.3), rgb(1.0, 0.15, 0.1, 0.1)),
+    trail: [2.8, 0.34, 0.3],
+  },
+  // 極光 AURORA — pearl-white skin, edges glowing teal at the centre fading to aurora green at the tips,
+  // teal trim and canopy
+  aurora: {
+    rough: 0.36, metal: 0.2, debris: '#5fe8c8', accent: '#3ff0c8',
+    map: {
+      skin: lit('#b4c4cb'), skinLt: lit('#d8e1e5'), skinMd: lit('#c6d2d7'), skinDk: lit('#8aa3ad'),
+      belly: lit('#5a6974'), bellyDk: lit('#43505a'), trim: lit('#1e9c8c'),
+      glass: S(lin('#0b3438'), rgb(0.01, 0.1, 0.1)), glassLt: S(lin('#62d8c8'), rgb(0.06, 0.26, 0.24)),
+      edge: (st, c) => retint(st, mix3(AURORA_A, AURORA_B, Math.min(1, Math.abs(c[0]) / 0.85)), 0.45),
+      edgeHot: (st) => retint(st, rgb(0.55, 1.0, 0.95), 0.5),
+    },
+    blade: bladeTint(rgb(0.15, 1.0, 0.8, 0.85), rgb(0.0, 0.4, 0.5, 0.0), rgb(0.7, 1.0, 0.95, 1.3), rgb(0.2, 1.0, 0.8, 0.1)),
+    trail: [0.5, 2.5, 2.1],
+    flow: 0.3,                          // 流轉: the edge glow drifts teal ↔ green (flowGlow)
+  },
+  // 黃金 GOLD
+  gold: {
+    rough: GOLD.rough, metal: GOLD.metal, debris: GOLD.debris, accent: '#f0c75a',
+    map: { glass: GOLD.glass, glassLt: GOLD.glassLt, '*': GOLD.face },
+    blade: bladeTint(rgb(1.0, 0.62, 0.2, 0.85), rgb(0.55, 0.25, 0.0, 0.0), rgb(1.0, 0.92, 0.7, 1.3), rgb(1.0, 0.6, 0.18, 0.1)),
+    trail: GOLD.trail,
+  },
+};
 
 // =============================================================================
 // PHANTOM option drone — glowing violet core orb in an armoured collar with four
@@ -496,20 +650,22 @@ function buildDrone() {
   for (let k = 1; k < 4; k++) b.dup(f0, f1, M(0, 0, 0, 0, (k * Math.PI) / 2, 0));
   return b;
 }
-function createPhantomDrone() {
-  const { g, pivot, ud } = enemyShell('option', 0.3, '#9466f0');
+function createPhantomDrone(paint = 'std') {
+  const pt = paintOf(DRONE_PAINTS, paint);
+  const { g, pivot, ud } = enemyShell('option', 0.3, pt ? pt.debris : '#9466f0');
   g.name = 'option';
-  const mat = bodyMat(0.42, 0.3);
-  const body = new THREE.Mesh(GG('ext:ships:phantom.drone', buildDrone), mat); body.name = 'body';
+  const mat = pt ? bodyMat(pt.rough, pt.metal) : bodyMat(0.42, 0.3);
+  const body = new THREE.Mesh(pt ? paintedBody('ext:ships:phantom.drone', buildDrone, DR, paint, pt) : GG('ext:ships:phantom.drone', buildDrone), mat); body.name = 'body';
   pivot.add(body);
   const flameMat = additiveMat();
-  const flame = new THREE.Mesh(G('ext:ships:phantom.drone.flame', () => buildFlame([[0, 0, 1]], FLAME_DRONE)), flameMat); flame.name = 'flame';
+  const flame = new THREE.Mesh(pt ? G('ext:ships:phantom.drone.flame.' + paint, () => buildFlame([[0, 0, 1]], pt.flame))
+    : G('ext:ships:phantom.drone.flame', () => buildFlame([[0, 0, 1]], FLAME_DRONE)), flameMat); flame.name = 'flame';
   flame.position.set(0, 0, 0.11); flame.userData.noShadow = true; flame.renderOrder = 2;
   pivot.add(flame);
   ud.muzzles = [new THREE.Vector3(0, 0, -0.16)];
   ud.muzzleZ = -0.16;
   ud.trail = [[0, 0.22]];
-  ud.trailColor = [1.5, 0.6, 2.8];
+  ud.trailColor = pt ? pt.trail : [1.5, 0.6, 2.8];
   let thrust = 0.5;
   ud.setThrust = (t) => { thrust = Math.max(0, Math.min(1, t)); };
   ud.setFlash = flashFn([mat]);
@@ -520,10 +676,50 @@ function createPhantomDrone() {
     flameMat.color.setScalar(0.8 + thrust * 0.3);
     mat.uEmitScale.value = 0.85 + Math.sin(t * 5.5) * 0.18;
   };
+  if (pt && pt.flow) flowGlow(ud, mat, pt.flow);
   ud.dispose = () => { mat.dispose(); flameMat.dispose(); };
   ud.update(0, 0);
   return g;
 }
 
+// ---- drone paints (match the PHANTOM paints; recolours of 'ext:ships:phantom.drone', roles = DR; the
+// energy-core bands are inline glows, re-tinted by the '*' entry)
+const droneFlame = (b0, t0, b1, t1) => FLAME_DRONE.map((c, i) => ({ ...c, base: i ? b1 : b0, tip: i ? t1 : t0 }));
+const DRONE_PAINTS = {
+  blood: {
+    rough: 0.42, metal: 0.3, debris: '#d0202a',
+    map: {
+      collar: lit('#3a1a1c'), collarLt: lit('#522426'), collarDk: lit('#1f0e0f'), fin: lit('#331719'), finLt: lit('#4a2022'), finDk: lit('#1a0c0d'),
+      tip: (st) => retint(st, BLOOD_EDGE, 0.5, 0.7), '*': (st) => retint(st, rgb(1.0, 0.08, 0.06), 0.45, 0.62),
+    },
+    flame: droneFlame(rgb(1.0, 0.12, 0.1, 1.4), rgb(0.6, 0.0, 0.02, 0.0), rgb(1.0, 0.6, 0.5, 2.2), rgb(1.0, 0.15, 0.1, 0.1)),
+    trail: [2.8, 0.34, 0.3],
+  },
+  aurora: {
+    rough: 0.36, metal: 0.2, debris: '#5fe8c8',
+    map: {
+      collar: lit('#b6c3ca'), collarLt: lit('#ccd7dc'), collarDk: lit('#8394a0'), fin: lit('#aebcc4'), finLt: lit('#c6d1d6'), finDk: lit('#6f808c'),
+      tip: (st) => retint(st, AURORA_B, 0.42), '*': (st) => retint(st, AURORA_A, 0.4),
+    },
+    flame: droneFlame(rgb(0.15, 1.0, 0.8, 1.4), rgb(0.0, 0.4, 0.5, 0.0), rgb(0.7, 1.0, 0.95, 2.2), rgb(0.2, 1.0, 0.8, 0.1)),
+    trail: [0.5, 2.5, 2.1],
+    flow: 0.3,
+  },
+  gold: {
+    rough: GOLD.rough, metal: GOLD.metal, debris: GOLD.debris,
+    map: { '*': GOLD.face },
+    flame: flameRecolour(FLAME_DRONE, FLAME_GOLD), trail: GOLD.trail,
+  },
+};
+
+/** a paint table's entry for `paint`, or null for 'std' / an unknown paint (the registry already warned) */
+function paintOf(table, paint) { return paint !== 'std' && Object.prototype.hasOwnProperty.call(table, paint) ? table[paint] : null; }
+
 export const PLAYERS = { gale: createGale, titan: createTitan, phantom: createPhantom };
 export const OPTIONS = { phantom: createPhantomDrone };
+/** the paints each aircraft here supports (besides 'std'), with the accent colour that identifies them */
+export const PLAYER_PAINTS = {
+  gale: Object.fromEntries(Object.entries(GALE_PAINTS).map(([k, p]) => [k, { accent: p.accent }])),
+  titan: Object.fromEntries(Object.entries(TITAN_PAINTS).map(([k, p]) => [k, { accent: p.accent }])),
+  phantom: Object.fromEntries(Object.entries(PHANTOM_PAINTS).map(([k, p]) => [k, { accent: p.accent }])),
+};

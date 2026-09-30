@@ -41,6 +41,61 @@ export const AIRCRAFT = [
 export const AIRCRAFT_BY_ID = Object.fromEntries(AIRCRAFT.map((a) => [a.id, a]));
 export const DEFAULT_AIRCRAFT = 'bolt';
 
+// --- hangar shop: paints -----------------------------------------------------------------
+// Per aircraft; index 0 ('std') is the free factory scheme. The models build every scheme
+// (createPlayer(id, paint)); game.setAircraft(id, paint) swaps it in. UI swatch: `swatch` is
+// [body, trim] (CSS, for a two-tone chip); `col` / `hex` is the scheme's accent (its glow; the same
+// as the models' paint accent, and for 'std' the aircraft's own colour), which also tints the
+// option drones' exhaust.
+export const PAINTS = {
+  bolt: [
+    { id: 'std', zh: '赤電', price: 0, desc: '出廠塗裝。赤紅機身，白色閃電塗紋。', swatch: ['#c81f2a', '#e3e7ec'], col: '#ff4a55', hex: 0xff4a55 },
+    { id: 'raven', zh: '夜鴉', price: 4000, desc: '消光黑機身，赤紅發光線條。', swatch: ['#1d1e23', '#ff2a3c'], col: '#ff2a3c', hex: 0xff2a3c },
+    { id: 'egret', zh: '白鷺', price: 4000, desc: '純白機身，金色飾線。', swatch: ['#e2e2de', '#c9962f'], col: '#f1ead8', hex: 0xf1ead8 },
+    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#d9a53a', '#fff0b8'], col: '#f0c75a', hex: 0xf0c75a },
+  ],
+  gale: [
+    { id: 'std', zh: '冰藍', price: 0, desc: '出廠塗裝。珍珠白機身配冰藍飾色。', swatch: ['#eef4f8', '#2fb6de'], col: '#46e0ff', hex: 0x46e0ff },
+    { id: 'dusk', zh: '黃昏', price: 5000, desc: '機首夕陽橘，漸層到機尾暮紫。', swatch: ['#e2601c', '#5a2f78'], col: '#ff8a3d', hex: 0xff8a3d },
+    { id: 'ghost', zh: '幽靈', price: 5000, desc: '低可視度的深淺灰。', swatch: ['#a2a9b0', '#5f666f'], col: '#aab3bc', hex: 0xaab3bc },
+    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#d9a53a', '#fff0b8'], col: '#f0c75a', hex: 0xf0c75a },
+  ],
+  titan: [
+    { id: 'std', zh: '沙金', price: 0, desc: '出廠塗裝。槍灰機身配琥珀飾條。', swatch: ['#565d67', '#e8b24a'], col: '#e8b24a', hex: 0xe8b24a },
+    { id: 'jungle', zh: '叢林', price: 6000, desc: '橄欖綠迷彩，卡其色標誌。', swatch: ['#5f6b3a', '#a89a62'], col: '#7f9a45', hex: 0x7f9a45 },
+    { id: 'steel', zh: '鋼灰', price: 6000, desc: '深鋼灰機身，紅色條紋。', swatch: ['#353b43', '#cf2630'], col: '#e0303a', hex: 0xe0303a },
+    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#d9a53a', '#fff0b8'], col: '#f0c75a', hex: 0xf0c75a },
+  ],
+  phantom: [
+    { id: 'std', zh: '紫晶', price: 0, desc: '出廠塗裝。黑色機身，紫晶光邊。', swatch: ['#1d1728', '#b98cff'], col: '#b98cff', hex: 0xb98cff },
+    { id: 'blood', zh: '血月', price: 8000, desc: '紅黑機身，血紅光邊。', swatch: ['#2e1719', '#ff2436'], col: '#ff2436', hex: 0xff2436 },
+    { id: 'aurora', zh: '極光', price: 8000, desc: '珍珠白機身，青綠極光光邊。', swatch: ['#d8e1e5', '#3ff0c8'], col: '#3ff0c8', hex: 0x3ff0c8 },
+    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#d9a53a', '#fff0b8'], col: '#f0c75a', hex: 0xf0c75a },
+  ],
+};
+export const DEFAULT_PAINT = 'std';
+// The PAINTS entry of aircraft `ac` named `id`, or null (own-property safe: unknown ids → null).
+export function paintOf(ac, id) {
+  const list = Object.prototype.hasOwnProperty.call(PAINTS, ac) ? PAINTS[ac] : null;
+  if (!list) return null;
+  for (const p of list) if (p.id === id) return p;
+  return null;
+}
+
+// --- hangar shop: permanent upgrades -------------------------------------------------------
+// Shared by every aircraft. prices[i] = cost of level i+1, so the max level is prices.length.
+// game.setUpgrades({ id: level }) applies them from the next stage start / continue; `step` is the
+// per-level factor game.js uses (magnet radius, CR multiplier).
+export const UPGRADES = [
+  { id: 'bombs', zh: '起始炸彈', desc: '開局多帶 1 顆炸彈', prices: [6000, 14000] },
+  { id: 'power', zh: '起始火力', desc: '開局主武器 +1 級', prices: [8000, 18000] },
+  { id: 'life', zh: '預備機', desc: '開局與接關多 1 條命', prices: [20000] },
+  { id: 'magnet', zh: '道具磁吸', desc: '撿道具與勳章的範圍變大', prices: [4000, 9000], step: 0.35 },
+  { id: 'shield', zh: '能量護盾', desc: '每一關可抵擋一次中彈', prices: [30000], col: '#8fe6ff' },
+  { id: 'bonus', zh: '收益加成', desc: 'CR 收入 +10%／+20%／+30%', prices: [5000, 12000, 25000], step: 0.1 },
+];
+export const UPGRADE_BY_ID = Object.fromEntries(UPGRADES.map((u) => [u.id, u]));
+
 // --- weapons ------------------------------------------------------------------------------
 // Main weapons come from P items, which cycle through MAIN_ORDER; sub-weapons from S items (SUB_ORDER).
 export const MAIN_WEAPONS = {

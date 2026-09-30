@@ -7,7 +7,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FX, Shake } from './fx.js';
 import { Input } from './input.js';
 import { UI, fmt } from './ui.js';
-import { AIRCRAFT_BY_ID, DEFAULT_AIRCRAFT, MONEY } from './defs.js';
+import { AIRCRAFT, AIRCRAFT_BY_ID, DEFAULT_AIRCRAFT, DEFAULT_PAINT, MONEY, PAINTS, paintOf, UPGRADES, UPGRADE_BY_ID, STAGE_COUNT } from './defs.js';
 
 window.__cbBooted = true;
 clearTimeout(window.__cbBootTimer);
@@ -29,10 +29,14 @@ function setTouchUI(on) {
 }
 window.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') setTouchUI(true); }, { capture: true, passive: true });
 window.addEventListener('keydown', (e) => {
-  if (/^(Arrow|Key[WASDXKP]$|Space|Shift|Escape|Enter)/.test(e.code)) setTouchUI(false);
+  // (typing a name for the board is not a switch to the keyboard layout: soft keyboards send keys too)
+  const typing = e.target && e.target.tagName === 'INPUT' && e.target.type === 'text';
+  if (!typing && /^(Arrow|Key[WASDXKPQE]$|Space|Shift|Escape|Enter)/.test(e.code)) setTouchUI(false);
   // A held Enter must not auto-repeat a focused button's click: its repeats would confirm a
   // purchase (or QUIT / RESTART) that the first press only armed.
-  if (e.repeat && (e.code === 'Enter' || e.code === 'NumpadEnter') && e.target.closest && e.target.closest('button')) e.preventDefault();
+  // Nor submit a name box for the board: NO on CONTINUE (or QUIT) focuses one under the held key,
+  // and a repeat there would confirm the prefilled name before anything could be typed.
+  if (e.repeat && (e.code === 'Enter' || e.code === 'NumpadEnter') && e.target.closest && e.target.closest('button, form.entry')) e.preventDefault();
 }, { capture: true });
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const landscapeLock = matchMedia('(orientation: landscape) and (max-height: 500px)');
@@ -50,22 +54,41 @@ const store = {
 };
 const settings = Object.assign({ music: 0.7, sfx: 0.8, muted: false, quality: 'auto', shake: !reducedMotion, haptics: true, touchSens: 1 }, store.get('settings', {}));
 if (![0.85, 1, 1.2].includes(settings.touchSens)) settings.touchSens = 1; // old drag-sensitivity values
-let hiScore = Number(store.get('hi', 0)) || 0;
+let hiScore = 0; // HI-SCORE shown (syncHi sets it at boot)
 
-// Wallet + hangar: store 'hangar' → { money, owned: [aircraft ids], equipped }. Always sanitised
-// (bolt always owned, equipped must be owned, money a finite whole number ≥ 0). Like saveHi(),
-// every change re-reads storage first so two tabs can't overwrite each other's CR. If storage
-// is unavailable (or a write fails) the wallet keeps working in memory for this session.
+// Wallet + hangar: store 'hangar' → { money, owned: [aircraft ids], equipped, paints: { <aircraft>:
+// [paint ids owned] }, paint: { <aircraft>: paint equipped }, upgrades: { <upgrade>: level } }.
+// Always sanitised (bolt always owned, equipped must be owned, money a finite whole number ≥ 0,
+// 'std' always owned and the fallback paint, levels 0..prices.length, unknown ids dropped), so a
+// wallet saved before paints / upgrades existed loads with the defaults. Like the board, every
+// change re-reads storage first so two tabs can't overwrite each other's CR. If storage is
+// unavailable (or a write fails) the wallet keeps working in memory for this session.
 const MONEY_MAX = 999999999;
-// Own-property lookup, so a hand-edited save naming 'constructor' or 'toString' is not an aircraft.
-const shipDef = (id) => (Object.prototype.hasOwnProperty.call(AIRCRAFT_BY_ID, id) ? AIRCRAFT_BY_ID[id] : null);
+// Own-property lookups, so a hand-edited save naming 'constructor' or 'toString' is not an aircraft
+// (or an upgrade, or a key of a paint table).
+const own = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
+const shipDef = (id) => (own(AIRCRAFT_BY_ID, id) ? AIRCRAFT_BY_ID[id] : null);
+const upDef = (id) => (own(UPGRADE_BY_ID, id) ? UPGRADE_BY_ID[id] : null);
 function cleanWallet(w) {
-  const out = { money: 0, owned: [DEFAULT_AIRCRAFT], equipped: DEFAULT_AIRCRAFT };
-  if (!w || typeof w !== 'object') return out;
+  const out = { money: 0, owned: [DEFAULT_AIRCRAFT], equipped: DEFAULT_AIRCRAFT, paints: {}, paint: {}, upgrades: {} };
+  if (!w || typeof w !== 'object') w = {};
   const m = Math.floor(Number(w.money));
   if (Number.isFinite(m) && m > 0) out.money = Math.min(m, MONEY_MAX);
   if (Array.isArray(w.owned)) for (const id of w.owned) if (shipDef(id) && !out.owned.includes(id)) out.owned.push(id);
   if (out.owned.includes(w.equipped)) out.equipped = w.equipped;
+  for (const ac of AIRCRAFT) {
+    // owned paints in PAINTS order ('std' always); the equipped one must be owned
+    const had = own(w.paints, ac.id) && Array.isArray(w.paints[ac.id]) ? w.paints[ac.id] : [];
+    const all = own(PAINTS, ac.id) ? PAINTS[ac.id].map((p) => p.id) : [DEFAULT_PAINT];
+    const list = all.filter((id) => id === DEFAULT_PAINT || had.includes(id));
+    out.paints[ac.id] = list;
+    const eq = own(w.paint, ac.id) ? w.paint[ac.id] : DEFAULT_PAINT;
+    out.paint[ac.id] = list.includes(eq) ? eq : DEFAULT_PAINT;
+  }
+  for (const u of UPGRADES) {
+    const v = own(w.upgrades, u.id) ? Math.floor(Number(w.upgrades[u.id])) : 0;
+    out.upgrades[u.id] = v > 0 ? Math.min(v, u.prices.length) : 0; // NaN → 0
+  }
   return out;
 }
 let walletMem = cleanWallet(store.get('hangar', null));
@@ -97,6 +120,102 @@ function bankMoney() {
 }
 // A new run starts from zero CR: bank what is left of the old one first.
 function endRunMoney() { bankMoney(); runBanked = 0; }
+// The aircraft (and its paint) to fly, and the upgrades to fly with: the wallet's loadout.
+function applyLoadout() {
+  const w = readWallet();
+  game.setUpgrades(w.upgrades);
+  game.setAircraft(w.equipped, w.paint[w.equipped]);
+}
+
+// Local leaderboard (this device only): store 'ranking' → up to RANK_MAX runs, best first:
+// { score, name, ac, paint, stage (1-3 reached), loop, clear (stage 3 cleared in the run), cont
+// (continues used), date ('yyyy-mm-dd'), t (ms when recorded; the newest row is highlighted) }.
+// Sanitised on every read like the wallet (malformed rows dropped, names trimmed to NAME_MAX);
+// works in memory when storage fails. Names are player text: the UI shows them with textContent.
+const RANK_MAX = 10, NAME_MAX = 10, NAME_DEFAULT = 'PLAYER';
+const int = (v, min) => { const n = Math.floor(Number(v)); return Number.isFinite(n) && n >= min && n <= Number.MAX_SAFE_INTEGER ? n : null; };
+// Control and bidi-override characters out, surrounding blanks trimmed, at most NAME_MAX characters.
+function cleanName(s) {
+  if (typeof s !== 'string') return '';
+  const t = s.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, '').trim();
+  return Array.from(t).slice(0, NAME_MAX).join('').trim();
+}
+function cleanRanking(list) {
+  const out = [];
+  if (!Array.isArray(list)) return out;
+  for (const r of list) {
+    if (!r || typeof r !== 'object') continue;
+    const score = int(r.score, 0), stage = int(r.stage, 1), loop = int(r.loop, 1), ac = shipDef(r.ac);
+    if (score === null || stage === null || stage > STAGE_COUNT || loop === null || !ac) continue;
+    out.push({
+      score, name: cleanName(r.name) || NAME_DEFAULT, ac: ac.id,
+      paint: paintOf(ac.id, r.paint) ? r.paint : DEFAULT_PAINT,
+      stage, loop, clear: r.clear === true, cont: int(r.cont, 0) || 0,
+      date: typeof r.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : '',
+      t: int(r.t, 0) || 0,
+    });
+  }
+  out.sort((a, b) => b.score - a.score); // stable: an equal score keeps its older row first
+  out.length = Math.min(out.length, RANK_MAX);
+  return out;
+}
+let rankMem = cleanRanking(store.get('ranking', []));
+let rankStored = true;
+function readRanking() {
+  if (rankStored) { const v = store.get('ranking', null); if (v) rankMem = cleanRanking(v); }
+  return rankMem;
+}
+function writeRanking(list) {
+  rankMem = cleanRanking(list);
+  rankStored = store.set('ranking', rankMem) && rankStored;
+  return rankMem;
+}
+function lastName() { return cleanName(store.get('rankName', '')) || NAME_DEFAULT; }
+// HI-SCORE is the top of the board, or the old 'hi' key when that is higher (an existing player's
+// record from before the board). Only a run offered to the board raises it on disk (syncHi below;
+// clearRecords zeroes it), so a tab closed on a results or CONTINUE screen can't leave behind a HI
+// that the board lacks. During a run the HUD shows a higher score as HI; the title reverts to this.
+function storedHi() { const v = Math.floor(Number(store.get('hi', 0))); return Number.isFinite(v) && v > 0 ? v : 0; }
+// The HI in force for NEW RECORD: the key or the board top (which, when storage writes fail, only
+// the in-memory board holds).
+function bestHi() { return Math.max(storedHi(), readRanking().length ? rankMem[0].score : 0); }
+function syncHi() {
+  const top = readRanking().length ? rankMem[0].score : 0;
+  const best = storedHi();
+  if (top > best) store.set('hi', top);
+  hiScore = Math.max(best, top);
+  ui.setHi(hiScore);
+}
+const today = () => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+
+// The run in progress, for the board: its best score (a continue zeroes the score), whether stage 3
+// was cleared, and whether it has been offered. A run ends — and is offered once — at GAME OVER,
+// at QUIT / RESTART from the pause menu and at TITLE from the results; NEXT STAGE / NEXT LOOP and
+// hiding the page keep it going.
+let run = null; // { best, clear, offered, mark (the score at its last results / continue, for NEW RECORD) }
+function trackBest() { if (run && game.score > run.best) run.best = game.score; }
+// Record the run that just ended. Returns { rank, t, isNew } when it made the top RANK_MAX (the row
+// is saved at once under the last used name; the name entry only renames it), else null. isNew: it
+// beat the HI in force before it joined the board (rank 1 is not a record below an old 'hi' key).
+function offerRun() {
+  if (!run || run.offered) return null;
+  trackBest();
+  run.offered = true;
+  const score = Math.floor(run.best);
+  if (!(score > 0)) return null;
+  const wasHi = bestHi();
+  const list = readRanking().slice();
+  let i = list.findIndex((r) => r.score < score);
+  if (i < 0) i = list.length;
+  if (i >= RANK_MAX) return null;
+  const t = Math.max(Date.now(), ...list.map((r) => r.t + 1)); // unique, and the newest
+  list.splice(i, 0, { score, name: lastName(), ac: game.ac.id, paint: game.paint, stage: game.stage.n, loop: game.loop,
+    clear: run.clear, cont: game.continues, date: today(), t });
+  writeRanking(list);
+  syncHi();
+  const rank = rankMem.findIndex((r) => r.t === t) + 1;
+  return rank > 0 ? { rank, t, isNew: score > wasHi } : null;
+}
 
 // ---------------------------------------------------------------------------------
 // boot
@@ -158,7 +277,7 @@ async function boot() {
 
   resize();
   game.initPools();
-  game.setAircraft(readWallet().equipped);
+  applyLoadout();
   game.resetRun();
   ui.buildLegends();
   ui.setRoute(gameMod.STAGES);
@@ -168,7 +287,7 @@ async function boot() {
   await precompile();
   bindUI();
   applySettings();
-  ui.setHi(hiScore);
+  syncHi();
   showWallet();
   toTitle(true);
   requestAnimationFrame(frame);
@@ -256,8 +375,13 @@ function applyQualityLevel() {
 }
 
 const wideMQ = matchMedia('(min-width: 900px)'); // the side panels' CSS breakpoint (.side)
+let lastIW = 0;
 function resize() {
   const iw = window.innerWidth, ih = window.innerHeight;
+  // a soft keyboard opening over a name box (in browsers that still shrink the page for it) keeps
+  // the layout: the view would otherwise narrow to 0.64 × the space left above the keyboard
+  if (document.body.classList.contains('typing') && iw === lastIW && renderer) return;
+  lastIW = iw;
   const maxAspect = 0.64;
   const w = Math.min(iw, Math.round(ih * maxAspect));
   viewEl.style.width = w + 'px';
@@ -337,6 +461,9 @@ function frame(now) {
     world.update(rawDt, 3);
     fx.update(rawDt, game.GROUND_Y, 3);
     if (state === 'results' && $('res-menu').classList.contains('reserve') && (input.take('confirm') || input.take('tap') || input.take('padConfirm'))) { speedTally = true; }
+    if (entry && input.take('pause')) commitEntry(true); // Esc away from the name box keeps the prefilled name
+  } else if (state === 'record') {
+    if (entry && input.take('pause')) commitEntry(true);
   } else if (state === 'paused') {
     if (input.take('pause')) { if (panelOpen()) closePanel(); else resume(); }
   } else if (state === 'resuming') {
@@ -350,28 +477,40 @@ function frame(now) {
 
   shake.update(rawDt);
   camera.position.set(view.C.x + shake.x, view.C.y + shake.y, view.C.z + shake.z);
+  const frozen = state === 'paused' || state === 'record';
   if (state === 'playing' || state === 'title' || state === 'results' || state === 'continue' || state === 'gameover') game.draw();
-  else if (state === 'resuming' || (state === 'paused' && needsRender)) game.draw(false); // frozen frame keeps its bullets
+  else if (state === 'resuming' || (frozen && needsRender)) game.draw(false); // frozen frame keeps its bullets
   fx.end();
   ui.updatePopups(rawDt);
   ui.updateFlash(rawDt, reducedMotion);
-  // while paused the scene is frozen: draw it once, then save the GPU/battery
-  if (state !== 'paused' || needsRender) { render(); needsRender = false; }
+  // while paused (or entering a name for the board) the scene is frozen: draw it once, then save the GPU/battery
+  if (!frozen || needsRender) { render(); needsRender = false; }
 }
 let needsRender = true;
 let resumeT = 0, resumeShown = 0;
 
 // Keyboard / gamepad menu navigation: up/down (arrows, W/S, D-pad/stick) move the focus, left/right
 // change the focused settings switch or slider, A activates, B goes back. A panel whose only focus
-// stop is its OK button (HOW TO PLAY) scrolls instead, so the text under OK can be read.
+// stop is its OK button (HOW TO PLAY) scrolls instead, so the text under OK can be read. In the
+// hangar, left/right (and Q/E, LB/RB) switch its tabs. In a name entry for the board, A confirms
+// the name in the box and B keeps the prefilled one.
 function menuNav() {
   const up = input.take('navUp') || input.take('up'), down = input.take('navDown') || input.take('down');
   const left = input.take('navLeft') || input.take('left'), right = input.take('navRight') || input.take('right');
   const ok = input.take('padConfirm'), back = input.take('padBack');
-  if (!up && !down && !left && !right && !ok && !back) return;
-  // focus stops: buttons, each switch group once (at its selected option) and sliders
+  const tabPrev = input.take('tabPrev'), tabNext = input.take('tabNext');
+  if (!up && !down && !left && !right && !ok && !back && !tabPrev && !tabNext) return;
+  if (entry && (back || (ok && document.activeElement === entry.input))) {
+    if (back || !(performance.now() - entry.focusAt < ENTRY_GAP)) commitEntry(back);
+    return;
+  }
+  if ((left || right || tabPrev || tabNext) && !$('hangar').hidden) {
+    stepHangarTab(left || tabPrev ? -1 : 1);
+    if (!up && !down && !ok && !back) return;
+  }
+  // focus stops: buttons, each switch group once (at its selected option), sliders and name boxes
   const stops = [];
-  for (const el of document.querySelectorAll('.screen:not([hidden]) :is(.btn, .seg, input[type=range])')) {
+  for (const el of document.querySelectorAll('.screen:not([hidden]) :is(.btn, .seg, input[type=range], input[type=text])')) {
     if (el.offsetParent === null) continue;
     stops.push(el.classList.contains('seg') ? el.querySelector('[aria-pressed="true"]') || el.querySelector('button') : el);
   }
@@ -406,7 +545,9 @@ function updateHud() {
   const g = game, p = g.player;
   ui.setScore(g.score);
   if (g.score > hiScore) { hiScore = g.score; ui.setHi(hiScore); }
+  if (run && g.score > run.best) run.best = g.score;
   ui.setLives(Math.max(0, g.lives));
+  ui.setShield(g.up.shield > 0 ? (g.shield ? 1 : 0) : -1); // the shield upgrade's charge: ready / used / none
   ui.setBombs(g.bombs);
   ui.setWeapon(p.main, p.level, p.sub, p.subLevel);
   ui.setChain(g.medalChain, gameMod.MEDAL_VALUES[Math.min(g.medalChain, gameMod.MEDAL_VALUES.length - 1)]);
@@ -424,12 +565,13 @@ function updateHints() {
     ui.bombHint(touchUI);
   }
 }
-function panelOpen() { return !$('howto').hidden || !$('settings').hidden || !$('hangar').hidden; }
+function panelOpen() { return !$('howto').hidden || !$('settings').hidden || !$('hangar').hidden || !$('ranking').hidden; }
 function closePanel() {
-  const fromHangar = !$('hangar').hidden;
+  const fromHangar = !$('hangar').hidden, fromRanking = !$('ranking').hidden;
   audio.play('select');
   ui.only(backTo);
   if (fromHangar) leaveHangar();
+  if (fromRanking) disarm($('btn-rclear'));
   // The pause menu gets its SETTINGS button back; the title always refocuses START, so the
   // blinking "PRESS ENTER ・ 按 Enter 出擊" stays true (Enter on HANGAR would reopen the hangar).
   if (backTo === 'pause' && panelOpener && panelOpener.closest('#pause')) focusEl(panelOpener);
@@ -442,11 +584,13 @@ function toTitle(first = false) {
   audio.setMusicDuck(1);
   pendingContinue = -1;
   endRunMoney();
+  commitEntry(false, false); // (a name box still open: keep what is in it)
+  run = null;
   game.clearField();
-  game.setAircraft(readWallet().equipped); // the title fly-by shows the equipped jet
+  applyLoadout(); // the title fly-by shows the equipped jet in its paint (and the shield bubble)
   game.resetRun();
   game.player.mesh.visible = true;
-  ui.setShip(game.ac);
+  showShip();
   ui.setMission(gameMod.STAGES, 0);
   ui.hud(false);
   ui.hideHint();
@@ -455,7 +599,7 @@ function toTitle(first = false) {
   ui.boss(false);
   ui.danger(false);
   ui.only('title');
-  ui.setHi(hiScore);
+  syncHi();
   audio.music('title');
   releaseWake();
   if (!first) ui.flash(0.3);
@@ -468,7 +612,8 @@ function startGame({ loop = 1, stage = 0, keepScore = false } = {}) {
   audio.init();
   audio.setMusicDuck(1);
   pendingContinue = -1;
-  if (!keepScore) { endRunMoney(); game.setAircraft(readWallet().equipped); }
+  commitEntry(false, false);
+  if (!keepScore) { endRunMoney(); applyLoadout(); run = { best: 0, clear: false, offered: false, mark: 0 }; }
   game.resetRun({ keepScore, loop, stage });
   const st = game.stage;
   state = 'playing';
@@ -478,7 +623,7 @@ function startGame({ loop = 1, stage = 0, keepScore = false } = {}) {
   ui.danger(false);
   ui.clearPopups();
   ui.flash(0.45);
-  ui.setShip(game.ac);
+  showShip();
   ui.setMission(gameMod.STAGES, game.stageIdx, loop);
   const k = loop <= 1 ? `STAGE ${st.n}` : game.stageIdx === 0 ? `LOOP ${loop} · 難度提升` : `STAGE ${st.n} · LOOP ${loop}`;
   ui.banner(`<div class="k">${k}</div><div class="h">${st.name}</div><div class="s">${st.zh}</div>`, '', 2800);
@@ -496,6 +641,7 @@ function startGame({ loop = 1, stage = 0, keepScore = false } = {}) {
 function pause() {
   if (state !== 'playing' && state !== 'resuming') return;
   ui.clearBanner();
+  ui.hideHint(); // a first-run hint must not show through the pause menu
   state = 'paused';
   input.releaseStick();
   input.clearEdges(); // movement presses from play must not move the menu focus
@@ -530,12 +676,14 @@ function showContinue() {
   state = 'continue';
   contT = 10; contShown = -1;
   ui.only('continue');
+  ui.hideHint(); // (a first-run move / bomb hint must not sit over the countdown)
   audio.music(null);
   focusFirst('continue');
 }
 function continueYes() {
   if (state !== 'continue') return;
   saveHi();
+  trackBest(); // (the board records the run's best score, not the one after the continue)
   // the score restarts at 0: keep this stage's points so far for the results screen
   const stats = game.stats;
   stats.stageCarry = (stats.stageCarry || 0) + Math.max(0, game.score - stats.stageScoreStart);
@@ -560,8 +708,10 @@ function gameOver() {
   $('go-hi').textContent = fmt(hiScore);
   // this stage's CR, like the results screen: CR from earlier stages was shown (and banked) there
   $('go-cr').textContent = '+' + fmt(Math.max(0, Math.floor(game.runMoney) - Math.floor(game.stats.moneyStart)));
+  ui.setBonus($('go-bonus'), game.bonusPct);
   $('go-wallet').textContent = `${MONEY.label} ${fmt(readWallet().money)}`;
   $('go-new').hidden = !isNew;
+  const rec = offerRun(); // the run ends here (a continue would have kept it going)
   ui.only('gameover');
   ui.hud(false);
   ui.boss(false);
@@ -569,16 +719,20 @@ function gameOver() {
   ui.clearBanner();
   audio.music('gameover');
   releaseWake();
-  focusFirst('gameover');
+  if (rec) showEntry($('go-entry'), rec, () => focusFirst('gameover'));
+  else { $('go-entry').hidden = true; focusFirst('gameover'); }
 }
-// Persist the best score seen (including runs that were continued, which reset the score).
-// Returns true when this run's current score is a new record.
+// The HI on the results / GAME OVER screen and their NEW RECORD test, at a save point of the run
+// (a stage's results, a continue, the game over). Memory only: the run's score reaches the stored
+// HI through the board when the run ends (offerRun → syncHi). Returns true when the score beats
+// the HI in force and this run's earlier save points (a continue zeroes the score in between). At
+// GAME OVER it runs before offerRun, so the run is never measured against its own board row.
 function saveHi() {
-  const best = Number(store.get('hi', 0)) || 0;
-  const cand = Math.floor(Math.max(hiScore, game.score));
-  const isNew = game.score > best;
-  if (cand > best) store.set('hi', cand);
-  hiScore = Math.max(cand, best);
+  const best = Math.max(bestHi(), run ? run.mark : 0);
+  const score = Math.floor(game.score);
+  const isNew = score > best;
+  if (run) run.mark = Math.max(run.mark, score);
+  hiScore = Math.max(hiScore, best, score);
   ui.setHi(hiScore); // updateHud only shows a HI that the score passes during play
   return isNew;
 }
@@ -602,6 +756,8 @@ async function showResults() {
   const pts = pct * 100 + (st.deaths === 0 ? 30 : Math.max(0, 18 - st.deaths * 8)) + Math.min(20, g.medalMaxChain * 1.2);
   const rank = pts >= 128 ? 'S' : pts >= 108 ? 'A' : pts >= 88 ? 'B' : 'C';
   const isNew = saveHi();
+  trackBest();
+  if (last && run) run.clear = true;
   const earned = Math.floor(g.runMoney) - Math.floor(st.moneyStart); // this stage's CR (incl. the clear reward)
   bankMoney();
   updateHud();
@@ -640,13 +796,72 @@ async function showResults() {
     else if (kind === 'coinEnd') audio.play('coin', { vol: 0.7, pitch: 12 });
     else if (kind === 'rank') audio.play('powerup');
     else if (kind === 'record') audio.play('oneup', ext ? { pitch: 5 } : undefined); // pitched up after an EXTEND row's own 1UP
-  }, { earned, wallet: readWallet().money });
+  }, { earned, wallet: readWallet().money, bonus: g.bonusPct });
   if (state === 'results') focusFirst('results');
 }
 // Results → the next stage, or after the last stage the next loop from stage 1 (harder).
 function nextStage() {
   const last = game.stageIdx >= gameMod.STAGES.length - 1;
   startGame(last ? { loop: game.loop + 1, stage: 0, keepScore: true } : { loop: game.loop, stage: game.stageIdx + 1, keepScore: true });
+}
+
+// --- leaderboard: run end, name entry, record screen -----------------------------------
+// End the run in progress (QUIT / RESTART from the pause menu, TITLE from the results): offer it
+// to the board — with the record screen first when it made the top RANK_MAX — then go on (next).
+function endRun(next) {
+  const rec = state === 'paused' || state === 'results' ? offerRun() : null;
+  if (rec) showRecord(rec, next); else next();
+}
+// The record screen (a run that made the board ended without a GAME OVER): NEW RECORD (HIGH SCORE
+// when it didn't beat the HI) / 第 n 名, the score and a name entry; confirming it goes on to the
+// title or the new run.
+function showRecord(rec, next) {
+  state = 'record';
+  needsRender = true;
+  input.releaseStick();
+  input.clearEdges();
+  ui.hud(false);
+  ui.boss(false);
+  ui.danger(false);
+  ui.clearBanner();
+  ui.clearPopups();
+  ui.hideHint();
+  ui.recordScreen(rec.rank, rankMem[rec.rank - 1], rec.isNew);
+  ui.only('record');
+  releaseWake();
+  showEntry($('rec-entry'), rec, next);
+}
+// A run that made the board gets a name entry (inside the GAME OVER screen, or on the record
+// screen). Its row is already saved under the prefilled name (the last one used), so leaving the
+// page here loses nothing; confirming only renames it. Enter / OK confirms the box, Esc / B keeps
+// the prefilled name, and RETRY / TITLE with a name typed but not confirmed keep what is typed.
+let entry = null; // { form, input, t, rank, prefill, done, focusAt }
+// A submit this soon after the box took the focus is the tail of the press that opened it (Enter
+// pressed twice on CONTINUE › NO), not a name being confirmed.
+const ENTRY_GAP = 250;
+function showEntry(form, rec, done) {
+  const box = form.querySelector('.entry-name');
+  entry = { form, input: box, t: rec.t, rank: rec.rank, prefill: lastName(), done, focusAt: -Infinity };
+  box.value = entry.prefill;
+  ui.showEntry(form, rec.rank);
+  // keyboard / gamepad: the box has the focus (typing replaces the name, A confirms it); touch:
+  // tapping the box brings up the soft keyboard
+  if (!touchUI) setTimeout(() => { if (entry && entry.input === box) { box.focus({ preventScroll: true }); box.select(); entry.focusAt = performance.now(); } }, 30);
+}
+// keep: the prefilled name, not the box; then: go on (focus RETRY, the title, the new run).
+function commitEntry(keep = false, then = true) {
+  const e = entry;
+  if (!e) return;
+  entry = null;
+  const name = (!keep && cleanName(e.input.value)) || e.prefill;
+  const list = readRanking().slice(), row = list.find((r) => r.t === e.t);
+  if (row) { list[list.indexOf(row)] = { ...row, name }; writeRanking(list); }
+  store.set('rankName', name);
+  if (document.activeElement === e.input) e.input.blur();
+  ui.entryDone(e.form, e.rank, name);
+  if (!then) return;
+  audio.play('confirm');
+  if (e.done) e.done();
 }
 
 function onGameEvent(ev) {
@@ -724,7 +939,7 @@ function restoreLabel(btn) {
 }
 function disarm(btn) { if (btn.dataset.armed === '1') { btn.dataset.armed = ''; restoreLabel(btn); } }
 function focusEl(el) { if (!touchUI && el) setTimeout(() => el.focus({ preventScroll: true }), 30); }
-function focusFirst(id) { focusEl(document.querySelector(`#${id} .btn`)); }
+function focusFirst(id) { focusEl([...document.querySelectorAll(`#${id} .btn`)].find((b) => b.offsetParent !== null)); }
 // focus: the element to focus in the panel (default: its first button)
 function openPanel(id, opener = null, focus = null) {
   backTo = state === 'paused' ? 'pause' : 'title';
@@ -736,69 +951,200 @@ function openPanel(id, opener = null, focus = null) {
 }
 
 // --- wallet display + hangar -------------------------------------------------------
+// Three tabs: 機體 (aircraft: buy / equip), 塗裝 (paints of the aircraft picked in 機體; only an
+// owned aircraft can buy them) and 強化 (permanent upgrades, shared by every aircraft). The title
+// fly-by is the preview: the picked aircraft (hangar.sel) in the paint being browsed (hangar.paint,
+// which outside 塗裝 is that aircraft's own equipped paint).
+const HANGAR_TABS = ['ship', 'paint', 'up'];
+const hangar = { sel: null, tab: 'ship', paint: DEFAULT_PAINT, up: null }; // (tab: remembered for the session)
 function showWallet() {
   ui.setWallet(walletMem.money);
-  if (!$('hangar').hidden) ui.renderHangar(walletMem, hangarSel);
+  if (!$('hangar').hidden) ui.renderHangar(walletMem, hangar);
 }
-let hangarSel = null; // the aircraft previewed on the title fly-by while the hangar is open
+// The flown aircraft's name and paint colour (title label, side panel, lives icons, 集中 button).
+function showShip(ac = game.ac, paint = game.paint) { ui.setShip(ac, paintOf(ac.id, paint)); }
+function showEquipped() { const w = walletMem; showShip(shipDef(w.equipped), w.paint[w.equipped]); }
 function openHangar(opener) {
   const w = readWallet();
-  hangarSel = w.equipped;
-  openPanel('hangar', opener, ui.ships[w.equipped] && ui.ships[w.equipped].b); // focus the equipped row: no preview swap
-  $('ships').scrollTop = 0;
-  ui.renderHangar(w, hangarSel);
+  hangar.sel = w.equipped; hangar.paint = w.paint[w.equipped]; hangar.up = null; // (= the fly-by already)
+  ui.renderHangar(w, hangar);
+  openPanel('hangar', opener, hangarRow()); // focus the tab's current row: no preview swap
+  $('hangar').scrollTop = 0; $('hangar').querySelector('.panel').scrollTop = 0;
+}
+// The row to focus in the current tab: the picked aircraft, the paint shown, the last upgrade.
+function hangarRow() {
+  if (hangar.tab === 'ship') return ui.hrow('ship:' + hangar.sel).b;
+  if (hangar.tab === 'paint') { const r = ui.paintRow(hangar.paint); return r ? r.b : null; }
+  return ui.hrow('up:' + (hangar.up || UPGRADES[0].id)).b;
+}
+function setHangarTab(tab, sound = false) {
+  if (!HANGAR_TABS.includes(tab) || hangar.sel === null) return;
+  const w = readWallet();
+  disarmHangar();
+  hangar.tab = tab;
+  if (tab !== 'paint') hangar.paint = w.paint[hangar.sel]; // leaving 塗裝: the jet wears its own paint again
+  game.setAircraft(hangar.sel, hangar.paint);
+  ui.renderHangar(w, hangar);
+  if (sound) audio.play('select', { vol: 0.4 });
+  focusEl(hangarRow());
+}
+// ←→ / Q E / LB RB: the previous / next tab (wrapping round).
+function stepHangarTab(d) { setHangarTab(HANGAR_TABS[(HANGAR_TABS.indexOf(hangar.tab) + d + HANGAR_TABS.length) % HANGAR_TABS.length], true); }
+// Disarm every pending purchase (and clear row messages), or only the rows of one kind but `keep`.
+function disarmHangar(kind = null, keep = null) {
+  ui.eachHangarRow((r, key) => {
+    if ((kind && r.kind !== kind) || (keep !== null && r.id === keep)) return;
+    disarm(r.b);
+    if (!kind) ui.hangarMsgClear(key);
+  });
 }
 // Show a jet on the fly-by and highlight its row (focus, hover or tap).
 function previewShip(id) {
-  if (!shipDef(id) || $('hangar').hidden || state !== 'title') return;
-  if (id === hangarSel) return;
-  for (const k in ui.ships) if (k !== id) disarm(ui.ships[k].b);
-  hangarSel = id;
-  game.setAircraft(id);
-  ui.renderHangar(readWallet(), id);
+  if (!shipDef(id) || $('hangar').hidden || state !== 'title' || hangar.tab !== 'ship') return;
+  if (id === hangar.sel) return;
+  const w = readWallet();
+  disarmHangar('ship', id);
+  hangar.sel = id; hangar.paint = w.paint[id];
+  game.setAircraft(id, hangar.paint);
+  ui.renderHangar(w, hangar);
+  audio.play('select', { vol: 0.35 });
+}
+// The same for a paint of the picked aircraft.
+function previewPaint(pid) {
+  if ($('hangar').hidden || state !== 'title' || hangar.tab !== 'paint' || !paintOf(hangar.sel, pid)) return;
+  if (pid === hangar.paint) return;
+  disarmHangar('paint', pid);
+  hangar.paint = pid;
+  game.setAircraft(hangar.sel, pid);
+  ui.renderHangar(readWallet(), hangar);
+  audio.play('select', { vol: 0.35 });
+}
+// An upgrade row only gets highlighted (upgrades have nothing to preview).
+function pickUpgrade(id) {
+  if (!upDef(id) || $('hangar').hidden || hangar.tab !== 'up' || id === hangar.up) return;
+  disarmHangar('up', id);
+  hangar.up = id;
+  ui.renderHangar(readWallet(), hangar);
   audio.play('select', { vol: 0.35 });
 }
 // Enter / click / tap on a row: owned → equip; affordable → confirm, then buy; else refuse.
 function activateShip(btn) {
-  const id = btn.dataset.ship, ac = shipDef(id);
+  const id = btn.dataset.ship, ac = shipDef(id), key = 'ship:' + id;
   if (!ac) return;
   previewShip(id);
   const w = readWallet();
   if (w.owned.includes(id)) {
-    if (w.equipped === id) { audio.play('select'); ui.hangarMsg(id, '這架已是出擊機', 'good', 1200); return; }
+    if (w.equipped === id) { audio.play('select'); ui.hangarMsg(key, '這架已是出擊機', 'good', 1200); return; }
     w.equipped = id;
     writeWallet(w);
     audio.play('equip');
-    ui.setShip(ac);
-    ui.hangarMsg(id, '已設為出擊機', 'good', 1400);
+    showEquipped();
+    ui.hangarMsg(key, '已設為出擊機', 'good', 1400);
     return;
   }
-  if (w.money < ac.price) { refuse(id, ac.price - w.money); return; }
-  if (btn.dataset.armed !== '1') ui.hangarMsgClear(id); // (armed: the confirm text stays up)
-  if (!confirmTwice(btn, `再按一次確認購買（購買後剩 ${MONEY.label} ${fmt(w.money - ac.price)}）`, ui.ships[id].desc, 'msg', 3000)) return;
+  if (w.money < ac.price) { refuse(key, ac.price - w.money); return; }
+  if (btn.dataset.armed !== '1') ui.hangarMsgClear(key); // (armed: the confirm text stays up)
+  if (!confirmTwice(btn, `再按一次確認購買（購買後剩 ${MONEY.label} ${fmt(w.money - ac.price)}）`, ui.hrow(key).desc, 'msg', 3000)) return;
   const w2 = readWallet(); // storage may have changed meanwhile (another tab)
-  if (w2.money < ac.price) { refuse(id, ac.price - w2.money); return; }
-  w2.money -= ac.price;
-  if (!w2.owned.includes(id)) w2.owned.push(id);
+  if (w2.money < ac.price) { refuse(key, ac.price - w2.money); return; }
+  if (!w2.owned.includes(id)) { w2.money -= ac.price; w2.owned.push(id); }
   w2.equipped = id;
   writeWallet(w2);
   audio.play('buy');
   ui.flash(0.2);
   ui.walletBump();
-  ui.setShip(ac);
-  ui.hangarMsg(id, `購買完成！已設為出擊機`, 'good', 2200);
+  showEquipped();
+  ui.hangarMsg(key, '購買完成！已設為出擊機', 'good', 2200);
 }
-function refuse(id, short) {
+// A paint row: owned → wear it; affordable → confirm, then buy and wear it; else refuse. A paint is
+// worn by its own aircraft whenever that one flies (the sortie aircraft is picked in 機體).
+function activatePaint(btn) {
+  const ac = shipDef(hangar.sel), pid = btn.dataset.paint, pt = ac && paintOf(ac.id, pid), key = 'paint:' + btn.dataset.slot;
+  if (!pt) return;
+  previewPaint(pid);
+  const w = readWallet();
+  if (!w.owned.includes(ac.id)) { refuse(key, 0, `先在「機體」買下${ac.zh}才能換塗裝`); return; }
+  if (w.paints[ac.id].includes(pid)) {
+    if (w.paint[ac.id] === pid) { audio.play('select'); ui.hangarMsg(key, '這個塗裝使用中', 'good', 1200); return; }
+    w.paint[ac.id] = pid;
+    writeWallet(w);
+    audio.play('equip');
+    showEquipped();
+    ui.hangarMsg(key, '已換上這個塗裝', 'good', 1400);
+    return;
+  }
+  if (w.money < pt.price) { refuse(key, pt.price - w.money); return; }
+  if (btn.dataset.armed !== '1') ui.hangarMsgClear(key);
+  if (!confirmTwice(btn, `再按一次確認購買（購買後剩 ${MONEY.label} ${fmt(w.money - pt.price)}）`, ui.hrow(key).desc, 'msg', 3000)) return;
+  const w2 = readWallet();
+  if (w2.money < pt.price && !w2.paints[ac.id].includes(pid)) { refuse(key, pt.price - w2.money); return; }
+  if (!w2.paints[ac.id].includes(pid)) { w2.money -= pt.price; w2.paints[ac.id].push(pid); }
+  w2.paint[ac.id] = pid;
+  writeWallet(w2);
+  audio.play('buy');
+  ui.flash(0.2);
+  ui.walletBump();
+  showEquipped();
+  ui.hangarMsg(key, '購買完成！已換上塗裝', 'good', 2200);
+}
+// An upgrade row: the next level, after a confirm; refused when short of CR, nothing past MAX.
+// Upgrades count from the next run (game.setUpgrades); on the title the shield bubble shows at once.
+function activateUpgrade(btn) {
+  const u = upDef(btn.dataset.up), key = 'up:' + btn.dataset.up;
+  if (!u) return;
+  pickUpgrade(u.id);
+  const w = readWallet(), lv = w.upgrades[u.id], max = u.prices.length;
+  if (lv >= max) { audio.play('select'); ui.hangarMsg(key, '已達最高等級', 'good', 1200); return; }
+  const price = u.prices[lv];
+  if (w.money < price) { refuse(key, price - w.money); return; }
+  if (btn.dataset.armed !== '1') ui.hangarMsgClear(key);
+  if (!confirmTwice(btn, `再按一次確認（購買後剩 ${MONEY.label} ${fmt(w.money - price)}）`, ui.hrow(key).desc, 'msg', 3000)) return;
+  const w2 = readWallet();
+  if (w2.upgrades[u.id] !== lv) { ui.renderHangar(w2, hangar); ui.hangarMsg(key, '等級已變動，請再按一次', 'msg', 1600); return; } // (another tab bought it)
+  if (w2.money < price) { refuse(key, price - w2.money); return; }
+  w2.money -= price;
+  w2.upgrades[u.id] = lv + 1;
+  writeWallet(w2);
+  game.setUpgrades(w2.upgrades);
+  if (state === 'title') game.applyUpgrades(); // (the shield bubble on the fly-by)
+  audio.play('buy');
+  ui.flash(0.2);
+  ui.walletBump();
+  ui.hangarMsg(key, lv + 1 >= max ? '強化完成！已達最高等級' : `強化完成！Lv${lv + 1}・下一局生效`, 'good', 2200);
+}
+// text: the refusal (default: the CR still missing).
+function refuse(key, short, text = '') {
   audio.play('deny');
-  ui.hangarShake(id);
-  ui.hangarMsg(id, `還差 ${MONEY.label} ${fmt(short)}`, 'bad', 1600);
+  ui.hangarShake(key);
+  ui.hangarMsg(key, text || `還差 ${MONEY.label} ${fmt(short)}`, 'bad', 1600);
 }
-// Closing the hangar puts the equipped jet back on the fly-by.
+// Closing the hangar puts the equipped jet (in its paint) back on the fly-by.
 function leaveHangar() {
-  for (const k in ui.ships) { disarm(ui.ships[k].b); ui.hangarMsgClear(k); }
-  hangarSel = null;
-  if (state === 'title') game.setAircraft(readWallet().equipped);
-  ui.setShip(game.ac);
+  disarmHangar();
+  hangar.sel = null; hangar.up = null;
+  if (state === 'title') applyLoadout();
+  showEquipped();
+}
+
+// --- ranking panel ------------------------------------------------------------------
+function openRanking(opener) {
+  ui.renderRanking(readRanking());
+  ui.rankNote();
+  openPanel('ranking', opener, $('rank-ok')); // (not CLEAR: Enter must not arm it)
+  $('ranking').querySelector('.panel').scrollTop = 0;
+}
+// Clears the board and the HI-SCORE, after a second press.
+function clearRecords(btn) {
+  if (!readRanking().length && !(hiScore > 0)) { audio.play('deny'); ui.rankNote('目前沒有紀錄', 'bad', 1400); return; }
+  if (btn.dataset.armed !== '1') ui.rankNote();
+  if (!confirmTwice(btn, '再按一次「清除」：刪除全部紀錄與最高分', $('rank-note'), 'arm', 3000)) return;
+  writeRanking([]);
+  store.set('hi', 0);
+  hiScore = 0;
+  ui.setHi(0);
+  ui.renderRanking(rankMem);
+  audio.play('confirm');
+  ui.rankNote('已清除全部紀錄', 'good', 1800);
 }
 function bindUI() {
   // first gesture unlocks audio
@@ -816,11 +1162,21 @@ function bindUI() {
       case 'howto': openPanel('howto', b); break;
       case 'settings': openPanel('settings', b); break;
       case 'hangar': if (state === 'title') openHangar(b); break;
+      case 'ranking': if (state === 'title') openRanking(b); break;
+      case 'htab': if (state === 'title' && !$('hangar').hidden) setHangarTab(b.dataset.tab, true); break;
       case 'ship': if (state === 'title' && !$('hangar').hidden) activateShip(b); break;
+      case 'paint': if (state === 'title' && !$('hangar').hidden) activatePaint(b); break;
+      case 'up': if (state === 'title' && !$('hangar').hidden) activateUpgrade(b); break;
+      case 'rank-clear': if (state === 'title' && !$('ranking').hidden) clearRecords(b); break;
       case 'back': closePanel(); break;
       case 'resume': resume(); break;
-      case 'restart': if (!confirmTwice(b)) break; audio.play('confirm'); if (game.score > 0) saveHi(); startGame(); break; // (banks the run's CR)
-      case 'quit': if (state === 'paused' && !confirmTwice(b)) break; audio.play('select'); if (game.score > 0) saveHi(); toTitle(); break;
+      // (both bank the run's CR and offer the run to the board, which keeps HI-SCORE)
+      case 'restart': if (!confirmTwice(b)) break; audio.play('confirm'); endRun(() => startGame()); break;
+      case 'quit':
+        if (state === 'paused' && !confirmTwice(b)) break;
+        audio.play('select');
+        endRun(() => toTitle());
+        break;
       case 'retry': audio.play('confirm'); startGame(); break;
       case 'cont-yes': continueYes(); break;
       case 'cont-no': gameOver(); break;
@@ -829,11 +1185,17 @@ function bindUI() {
     }
   });
   // hangar: moving the focus (arrows, gamepad), hovering with the mouse or tapping previews a jet
-  const ships = $('ships');
-  ships.addEventListener('focusin', (e) => { const b = e.target.closest('.ship'); if (b) previewShip(b.dataset.ship); });
-  ships.addEventListener('pointerover', (e) => {
+  // or a paint (and highlights an upgrade)
+  const hrow = (b) => {
+    if (b.dataset.act === 'ship') previewShip(b.dataset.ship);
+    else if (b.dataset.act === 'paint') previewPaint(b.dataset.paint);
+    else if (b.dataset.act === 'up') pickUpgrade(b.dataset.up);
+  };
+  const hp = $('hangar');
+  hp.addEventListener('focusin', (e) => { const b = e.target.closest('.hrow'); if (b) hrow(b); });
+  hp.addEventListener('pointerover', (e) => {
     if (e.pointerType !== 'mouse') return;
-    const b = e.target.closest('.ship'); if (b) previewShip(b.dataset.ship);
+    const b = e.target.closest('.hrow'); if (b) hrow(b);
   });
   $('btn-pause').addEventListener('click', (e) => { e.stopPropagation(); pause(); });
   const bombBtn = $('btn-bomb');
@@ -862,10 +1224,25 @@ function bindUI() {
   window.addEventListener('popstate', () => {
     if (state === 'playing' || state === 'resuming') { pause(); pushBackGuard(); }
     else if (panelOpen()) { const inRun = backTo === 'pause'; closePanel(); if (inRun) pushBackGuard(); }
+    else if (state === 'record' && entry) commitEntry(true);
   });
-  window.addEventListener('pagehide', () => { bankMoney(); if (game.score > 0) saveHi(); });
+  // name entries for the board: Enter (or OK) submits the form, Esc keeps the prefilled name.
+  // body.typing (touch): no layout change or rotate hint for the soft keyboard meanwhile.
+  for (const f of document.querySelectorAll('form.entry')) {
+    const box = f.querySelector('.entry-name');
+    f.addEventListener('submit', (e) => { e.preventDefault(); if (entry && entry.form === f && !(performance.now() - entry.focusAt < ENTRY_GAP)) commitEntry(); });
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && entry && entry.form === f) { e.preventDefault(); commitEntry(true); }
+    });
+    // the name is selected when the box gets the focus, so typing replaces it (a tap puts the caret
+    // after the focus event: select once it has landed)
+    box.addEventListener('focus', () => { document.body.classList.toggle('typing', touchUI); setTimeout(() => { if (document.activeElement === box) box.select(); }, 0); });
+    box.addEventListener('blur', () => { document.body.classList.remove('typing'); resize(); });
+  }
+  // (hiding the page keeps the run going: its CR is banked, its score waits for the board)
+  window.addEventListener('pagehide', () => { bankMoney(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { if (state === 'playing' || state === 'resuming') pause(); bankMoney(); if (state === 'paused' && game.score > 0) saveHi(); audio.suspend(); }
+    if (document.hidden) { if (state === 'playing' || state === 'resuming') pause(); bankMoney(); audio.suspend(); }
     else if (state !== 'paused') audio.resume();
   });
   window.addEventListener('blur', () => { if (state === 'playing' || state === 'resuming') pause(); updateFocusNote(); });
@@ -927,20 +1304,37 @@ function exposeDebug() {
       startGame({ loop: game.loop || 1, stage: Math.max(1, n | 0) - 1, keepScore: inRun });
       return game.stage.n;
     },
-    // money(n): set the wallet balance; ship(id): own + equip an aircraft (both persisted)
+    // money(n): set the wallet balance; ship(id, paint): own + equip an aircraft (and a paint of it);
+    // paint(pid): own + equip a paint of the equipped aircraft; upgrades({ id: level }): set the
+    // levels (all persisted; upgrades count from the next run)
     money(n) { const w = readWallet(); w.money = n; writeWallet(w); return walletMem.money; },
-    ship(id) {
+    ship(id, paint) {
       if (!shipDef(id)) return null;
       const w = readWallet();
       if (!w.owned.includes(id)) w.owned.push(id);
       w.equipped = id;
+      if (paint !== undefined && paintOf(id, paint)) { if (!w.paints[id].includes(paint)) w.paints[id].push(paint); w.paint[id] = paint; }
       writeWallet(w);
-      game.setAircraft(id); ui.setShip(game.ac);
+      game.setAircraft(id, walletMem.paint[id]); showShip();
       return id;
+    },
+    paint(pid) { const w = readWallet(); return this.ship(w.equipped, pid) && walletMem.paint[w.equipped]; },
+    upgrades(levels) {
+      const w = readWallet();
+      w.upgrades = { ...w.upgrades, ...levels };
+      writeWallet(w);
+      game.setUpgrades(walletMem.upgrades);
+      if (state === 'title') game.applyUpgrades();
+      return { ...walletMem.upgrades };
     },
     wallet: () => JSON.parse(JSON.stringify(readWallet())),
     bank: () => bankMoney(),
     get runBanked() { return runBanked; },
+    // the board and the run being tracked for it
+    ranking: () => JSON.parse(JSON.stringify(readRanking())),
+    get run() { return run && { ...run }; },
+    get entry() { return entry && { rank: entry.rank, t: entry.t, prefill: entry.prefill, value: entry.input.value, form: entry.form.id }; },
+    get hangar() { return { ...hangar }; },
     god(on = true) { game.player.invuln = on ? 1e9 : 0; },
     jump(d) {
       // fast-forward the current stage to distance d (skips earlier events)
@@ -957,7 +1351,8 @@ function exposeDebug() {
     info() {
       return { state, fps: Math.round(fpsAvg), d: Math.round(world.distance), phase: game.phase, enemies: game.enemies.length,
         bullets: game.eb.n, shots: game.ps.n, particles: fx.p.n, score: game.score, lives: game.lives, bombs: game.bombs,
-        stage: game.stage.n, stageIdx: game.stageIdx, loop: game.loop, aircraft: game.ac.id, continues: game.continues,
+        stage: game.stage.n, stageIdx: game.stageIdx, loop: game.loop, aircraft: game.ac.id, paint: game.paint, continues: game.continues,
+        up: { ...game.up }, shield: game.shield,
         runMoney: Math.floor(game.runMoney), banked: runBanked, money: walletMem.money,
         calls: renderer.info.render.calls, tris: renderer.info.render.triangles, quality: qualityLevel };
     },

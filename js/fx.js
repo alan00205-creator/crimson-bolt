@@ -568,6 +568,26 @@ export class FX {
       p.emit(x, y, z, Math.cos(a) * sp, 0, Math.sin(a) * sp - 3, rnd(0.12, 0.26), 0.16, 0.05, c0, c1, F.STREAK, 0, os);
     }
   }
+  // A shield bubble bursting (game.breakShield; r = its ring radius, col its HDR colour): a hard
+  // white-hot flash, the bubble snapping outward as a camera-facing ring with a flat shock ring on
+  // the plane under it, and a spray of glassy splinters. Rare (once a stage at most): literals are fine.
+  shieldBreak(x, y, z, r = 1.2, col = [0.36, 0.95, 1.35]) {
+    const p = this.p, q = this.lowQuality ? 0.6 : 1;
+    const [cr, cg, cb] = col, S = r / 0.39; // the RING frame's line sits at 0.78 of the half-size
+    p.emit(x, y, z, 0, 0, 0, 0.09, r * 0.8, r * 2.2, [1.5, 1.9, 2.2, 1], [cr, cg, cb, 0], F.GLOW, 0, { drag: 0 });
+    p.emit(x, y, z, 0, 0, 0, 0.26, S, S * 2.1, [cr * 1.8, cg * 1.8, cb * 1.8, 1], [cr * 0.3, cg * 0.3, cb * 0.3, 0], F.RING, 0, { drag: 0, rot: 0 });
+    p.emit(x, y - 0.1, z, 0, 0, 0, 0.4, S * 0.8, S * 3.2, [cr * 1.3, cg * 1.3, cb * 1.3, 0.8], [cr * 0.2, cg * 0.2, cb * 0.2, 0], F.RING, 0, { flat: true, rot: 0, drag: 0 });
+    const n = Math.round(18 * q);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * 6.283 + rnd(-0.15, 0.15), sp = rnd(9, 17), ca = Math.cos(a), sa = Math.sin(a);
+      p.emit(x + ca * r, y, z + sa * r, ca * sp, rnd(-1, 2), sa * sp, rnd(0.3, 0.5), rnd(0.5, 0.7), 0.08,
+        [cr * 2 + 0.5, cg * 2 + 0.5, cb * 2 + 0.5, 1], [cr * 0.4, cg * 0.5, cb * 0.6, 0], F.SHARD, 0, { drag: 4.5, stretch: 0.045 });
+    }
+    for (let i = 0; i < 4; i++) {
+      const a = rnd(0, 6.283);
+      p.emit(x + Math.cos(a) * r, y, z + Math.sin(a) * r, 0, 0, 0, rnd(0.18, 0.3), 0.3, 1.0, [1.8, 2.2, 2.6, 1], [cr, cg, cb, 0], F.FLARE, 0, { drag: 0, vrot: 3 });
+    }
+  }
   smokePuff(x, y, z, s = 0.5, life = 0.7) {
     this.p.emit(x, y, z, rnd(-0.4, 0.4), 0.3, rnd(0.8, 1.6), life, s, s * 2.6, [0.3, 0.3, 0.32, 0.45], [0.2, 0.2, 0.2, 0], F.SMOKE, 2, { drag: 1, vrot: rnd(-1, 1) });
   }

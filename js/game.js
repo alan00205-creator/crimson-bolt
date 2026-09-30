@@ -8,6 +8,7 @@ import { ENEMY, STAGES } from './stages.js';
 import * as WP from './weapons.js';
 import {
   AIRCRAFT, AIRCRAFT_BY_ID, DEFAULT_AIRCRAFT, MONEY, MAIN_WEAPONS, MAIN_ORDER, SUB_WEAPONS, SUB_ORDER, MAX_LEVEL, MAX_SUB_LEVEL,
+  DEFAULT_PAINT, paintOf, UPGRADES, UPGRADE_BY_ID,
 } from './defs.js';
 
 const DEG = Math.PI / 180;
@@ -16,6 +17,7 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 const rnd = (a, b) => a + Math.random() * (b - a);
 const r9 = (v) => Math.round(v * 1e9) / 1e9; // canonical doubles: 1 + 0.3 * 1 === 1.3 exactly
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 // ---------------------------------------------------------------------------
 // View: camera fitting and plane/ground/screen conversions.
@@ -134,10 +136,21 @@ const B_COLOR = [[1.5, 0.16, 0.75], [1.8, 0.42, 0.03], [1.3, 0.2, 1.4], [1.8, 0.
 const SK = WP.SK; // player shot kinds live with the weapons
 const HIT_R0 = 0.3; // the hitbox dot is drawn for this radius (bolt); other aircraft scale it
 const TRAIL_COL = [2.6, 1.1, 0.35]; // engine exhaust sprite colour when the model has no userData.trailColor
+// shield upgrade: the charge's bubble (ring radius around the jet, HDR colour) and what a break does
+const SHIELD_R = 1.2, SHIELD_COL = [0.36, 0.95, 1.35];
+const SHIELD_INVULN = 1.5, SHIELD_CLEAR_R = 3.6;
 // debris fallbacks for models without userData.debrisColor
 const DEATH_DEBRIS = new THREE.Color(0.9, 0.15, 0.18);
 const PART_DEBRIS = new THREE.Color(0.4, 0.4, 0.45);
 const ENEMY_DEBRIS = new THREE.Color(0.35, 0.36, 0.4);
+
+// Pool factories log a failed model build and stand in an empty group, so one broken model can't
+// take the game down.
+const safeMake = (fn) => () => { try { return fn(); } catch (e) { console.error(e); return new THREE.Group(); } };
+// Pool keys of an aircraft's jet / drones in a paint scheme (the factory scheme keeps the plain key).
+const playerKey = (id, paint) => (paint === DEFAULT_PAINT ? 'player:' + id : 'player:' + id + ':' + paint);
+const optionKey = (id, paint) => (paint === DEFAULT_PAINT ? 'option:' + id : 'option:' + id + ':' + paint);
+const warned = new Set();
 
 export class Game {
   constructor(ctx) {
@@ -149,11 +162,17 @@ export class Game {
     this.score = 0; this.runMoney = 0; this.continues = 0;
     this.uidN = 0; // enemy / part uids (pierce hit lists)
     // aircraft (setAircraft): stats, gun line and exhaust points of the current mesh
-    this.ac = AIRCRAFT_BY_ID[DEFAULT_AIRCRAFT];
-    this.playerO = null;
+    this.ac = AIRCRAFT_BY_ID[DEFAULT_AIRCRAFT]; this.paint = DEFAULT_PAINT;
+    this.playerO = null; this.playerKey = null; this.optKey = null;
     this.muzzleZ = -1.0; this.trail = [[0, 0.95]]; this.trailJ = 0.18; this.hitK = 1; this.trailCol = TRAIL_COL;
     // option drones: [{ o, mesh, shadow, x, z, bank, side, row, muzzleZ, trail }]
     this.options = []; this.optLive = false; this.optSpread = 1; this.optCol = [1, 1, 1];
+    // permanent upgrades (setUpgrades): the levels set and the levels in force since the last
+    // stage start / continue (applyUpgrades), with their derived factors
+    this.upgrades = {}; this.up = {};
+    for (const u of UPGRADES) { this.upgrades[u.id] = 0; this.up[u.id] = 0; }
+    this.moneyMul = 1; this.magnetK = 1; this.pickR2 = 1.3 * 1.3; this.magnetR2 = 9;
+    this.shield = false; // a shield charge is ready (HUD hook)
     this.enemies = [];
     this.items = [];
     this.pools = {};
@@ -193,24 +212,25 @@ export class Game {
   // One pool per ENEMY key (model: def.model or the key; air units get a ground shadow), per item
   // kind, per aircraft ('player:<id>', one mesh each) and per drone type ('option:<id>'). Every
   // model is built here and parked in a free list, so main.js precompile() compiles its shaders.
+  // Paint schemes other than the factory one get their own pools on demand (setAircraft): they
+  // reuse the factory materials' shader programs, so they need no compile pass.
   initPools() {
     const M = this.models;
-    const mk = (fn) => () => { try { return fn(); } catch (e) { console.error(e); return new THREE.Group(); } };
     for (const [type, def] of Object.entries(ENEMY)) {
       const make = def.boss ? () => M.createBoss(def.model || 'arclight') : () => M.createEnemy(def.model || type);
-      this.pools[type] = new Pool(this.scene, mk(make), !!def.air, M);
+      this.pools[type] = new Pool(this.scene, safeMake(make), !!def.air, M);
     }
-    for (const k of ['P', 'S', 'B', 'medal', '1UP']) this.pools['item_' + k] = new Pool(this.scene, mk(() => M.createItem(k)), false, M);
+    for (const k of ['P', 'S', 'B', 'medal', '1UP']) this.pools['item_' + k] = new Pool(this.scene, safeMake(() => M.createItem(k)), false, M);
     for (const ac of AIRCRAFT) {
-      this.pools['player:' + ac.id] = new Pool(this.scene, mk(() => M.createPlayer(ac.id)), true, M);
-      if (ac.options > 0) this.pools['option:' + ac.id] = new Pool(this.scene, mk(() => M.createOption(ac.id)), true, M);
+      this.pools['player:' + ac.id] = new Pool(this.scene, safeMake(() => M.createPlayer(ac.id)), true, M);
+      if (ac.options > 0) this.pools['option:' + ac.id] = new Pool(this.scene, safeMake(() => M.createOption(ac.id)), true, M);
     }
-    this.setAircraft(this.ac.id); // the current jet (+ drones) come out of their pools first
+    this.setAircraft(this.ac.id, this.paint); // the current jet (+ drones) come out of their pools first
     for (const [type, def] of Object.entries(ENEMY)) this.pools[type].prewarm(def.prewarm ?? (def.boss || def.midboss ? 1 : 4));
     const counts = { item_P: 4, item_S: 2, item_B: 2, item_medal: 16, item_1UP: 1 };
     for (const [k, n] of Object.entries(counts)) this.pools[k].prewarm(n);
     for (const ac of AIRCRAFT) {
-      if (ac === this.ac) continue; // already built and in use
+      if (this.playerKey === 'player:' + ac.id) continue; // already built and in use
       this.pools['player:' + ac.id].prewarm(1);
       if (ac.options > 0) this.pools['option:' + ac.id].prewarm(ac.options);
     }
@@ -218,20 +238,29 @@ export class Game {
   // Make every pooled model visible for one compile pass (avoids first-spawn hitches).
   forEachPooled(fn) { for (const p of Object.values(this.pools)) for (const o of p.free) fn(o); }
 
-  // Switch the player aircraft (AIRCRAFT id): mesh + shadow, option drones and every stat
+  // Switch the player aircraft (AIRCRAFT id) and its paint scheme (a PAINTS[id] entry's id; an
+  // unknown one falls back to the factory 'std'): mesh + shadow, option drones and every stat
   // (speed, hitbox, graze, bombs, damage, start level). Works at any time: in a run, on the title
-  // fly-by and as the hangar preview. Lives, bombs and weapons carry over; new runs start with
-  // ac.bombs and ac.startLevel. Returns the aircraft def.
-  setAircraft(id) {
-    const ac = AIRCRAFT_BY_ID[id] || AIRCRAFT_BY_ID[DEFAULT_AIRCRAFT];
-    if (ac === this.ac && this.playerO) return ac;
-    const pool = this.pools['player:' + ac.id];
-    if (!pool) { this.ac = ac; return ac; } // before initPools: just remember the choice
+  // fly-by and as the hangar preview (browsing paints too). Lives, bombs and weapons carry over;
+  // new runs start with ac.bombs and ac.startLevel (plus upgrades). A scheme's jet is built the
+  // first time it is shown. Returns the aircraft def.
+  setAircraft(id, paint = DEFAULT_PAINT) {
+    const ac = own(AIRCRAFT_BY_ID, id) ? AIRCRAFT_BY_ID[id] : AIRCRAFT_BY_ID[DEFAULT_AIRCRAFT];
+    let pid = paint;
+    if (!paintOf(ac.id, pid)) {
+      pid = DEFAULT_PAINT;
+      const w = ac.id + '/' + paint;
+      if (paint != null && !warned.has(w)) { warned.add(w); console.warn(`setAircraft: unknown paint "${paint}" for ${ac.id}, using ${pid}`); }
+    }
+    if (ac === this.ac && pid === this.paint && this.playerO) return ac;
+    if (!this.pools['player:' + ac.id]) { this.ac = ac; this.paint = pid; return ac; } // before initPools: just remember the choice
+    const M = this.models, key = playerKey(ac.id, pid);
+    const pool = this.pools[key] || (this.pools[key] = new Pool(this.scene, safeMake(() => M.createPlayer(ac.id, pid)), true, M));
     const p = this.player;
-    if (this.playerO) this.pools['player:' + this.ac.id].put(this.playerO);
-    for (const d of this.options) this.pools['option:' + this.ac.id].put(d.o);
+    if (this.playerO) this.pools[this.playerKey].put(this.playerO);
+    for (const d of this.options) this.pools[this.optKey].put(d.o);
     this.options.length = 0;
-    this.ac = ac;
+    this.ac = ac; this.paint = pid; this.playerKey = key;
     const o = pool.get();
     this.playerO = o; p.mesh = o.mesh; p.shadow = o.shadow;
     const ud = o.mesh.userData;
@@ -243,9 +272,15 @@ export class Game {
     this.trailJ = Math.max(0.06, 0.18 - mx); // bolt: ±0.095 nozzles ± 0.085 = the old ±0.18 spread
     this.trailCol = Array.isArray(ud.trailColor) && ud.trailColor.length === 3 ? ud.trailColor : TRAIL_COL; // bolt has none: the old orange
     this.hitK = ac.hitR / HIT_R0;
-    const c = new THREE.Color(ac.hex);
+    const c = new THREE.Color(paintOf(ac.id, pid).hex); // the scheme's accent ('std': the aircraft colour)
     this.optCol = [c.r, c.g, c.b];
-    const op = this.pools['option:' + ac.id];
+    let op = null;
+    this.optKey = null;
+    if (ac.options > 0) {
+      const ok = optionKey(ac.id, pid);
+      op = this.pools[ok] || (this.pools[ok] = new Pool(this.scene, safeMake(() => M.createOption(ac.id, pid)), true, M));
+      this.optKey = ok;
+    }
     for (let k = 0; op && k < ac.options; k++) {
       const oo = op.get(), dud = oo.mesh.userData;
       const tr = dud.trail && dud.trail.length ? dud.trail[0] : [0, 0.3];
@@ -259,22 +294,54 @@ export class Game {
     return ac;
   }
 
+  // --- permanent upgrades (hangar shop) ----------------------------------------------------
+  // levels: { <UPGRADES id>: level } (missing / unknown / bad values count as 0, levels are clamped
+  // to 0..prices.length). They take effect at the next resetRun / continueRun (applyUpgrades);
+  // returns the sanitised copy that was stored.
+  setUpgrades(levels) {
+    for (const u of UPGRADES) {
+      const v = levels && typeof levels === 'object' && own(levels, u.id) ? Math.floor(Number(levels[u.id])) : 0;
+      this.upgrades[u.id] = v > 0 ? Math.min(v, u.prices.length) : 0; // NaN → 0
+    }
+    return { ...this.upgrades };
+  }
+  // Put the levels set with setUpgrades in force (resetRun / continueRun call it; the title can
+  // call it to refresh the shield bubble on the fly-by after a purchase): the CR multiplier, the
+  // magnet radii and — only when `recharge` — a fresh shield charge. Starting lives / bombs /
+  // power are handed out by resetRun and continueRun themselves.
+  applyUpgrades(recharge = true) {
+    const up = this.up;
+    for (const u of UPGRADES) up[u.id] = this.upgrades[u.id];
+    this.moneyMul = r9(1 + UPGRADE_BY_ID.bonus.step * up.bonus);
+    this.magnetK = r9(1 + UPGRADE_BY_ID.magnet.step * up.magnet);
+    const pr = 1.3 * this.magnetK, mr = 3 * this.magnetK; // pickup radius, medal magnet radius
+    this.pickR2 = pr * pr; this.magnetR2 = mr * mr;
+    if (recharge) this.shield = up.shield > 0;
+  }
+  get startBombs() { return this.ac.bombs + this.up.bombs; } // a new run, a continue and every life
+  get bombCap() { return this.ac.bombCap + this.up.bombs; }
+  get startLives() { return 2 + this.up.life; }             // a new run and a continue
+  get bonusPct() { return Math.round((this.moneyMul - 1) * 100); } // the CR bonus in force, e.g. 20
+
   // Start a stage. stage: 0-based index into STAGES. keepScore carries score, lives, bombs,
   // weapons, continues and runMoney over (next stage / next loop); otherwise it is a new run.
+  // Every stage start puts the upgrades set with setUpgrades in force and recharges the shield.
   resetRun({ keepScore = false, loop = 1, stage = 0 } = {}) {
     this.clearField();
     this.loop = loop;
     this.stageIdx = clamp(stage | 0, 0, STAGES.length - 1);
     this.stage = STAGES[this.stageIdx];
     const ac = this.ac;
+    this.applyUpgrades();
     if (!keepScore) {
-      this.score = 0; this.lives = 2; this.bombs = ac.bombs; this.continues = 0;
+      this.score = 0; this.lives = this.startLives; this.bombs = this.startBombs; this.continues = 0;
       this.runMoney = 0;
       this.extendIdx = 0;
-      Object.assign(this.player, { main: 'red', level: ac.startLevel, sub: null, subLevel: 0 });
+      Object.assign(this.player, { main: 'red', level: Math.min(MAX_LEVEL, ac.startLevel + this.up.power), sub: null, subLevel: 0 });
     }
     this.medalChain = 0; this.medalMaxChain = 0;
-    this.stats = { spawned: 0, killed: 0, deaths: 0, bombsUsed: 0, grazes: 0, medals: 0, stageScoreStart: this.score, moneyStart: this.runMoney, clearMoney: 0 };
+    this.stats = { spawned: 0, killed: 0, deaths: 0, bombsUsed: 0, grazes: 0, medals: 0, shieldBreaks: 0,
+      stageScoreStart: this.score, moneyStart: this.runMoney, clearMoney: 0 };
     this.tlIndex = 0;
     this.phase = 'stage'; // stage | midboss | warning | boss | bossdead | clear
     this.boss = null; this.midboss = null;
@@ -532,7 +599,8 @@ export class Game {
       }
       if (this.clearT > 7.8 && !this.clearDone) {
         this.clearDone = true; this.phase = 'clear';
-        const bonus = MONEY.stageClear[st.n] || 0; // stage-clear CR (stats.clearMoney: this stage's)
+        // stage-clear CR (stats.clearMoney: this stage's, after the bonus upgrade)
+        const bonus = Math.round((MONEY.stageClear[st.n] || 0) * this.moneyMul);
         this.runMoney += bonus; this.stats.clearMoney = bonus;
         this.onEvent('clear');
       }
@@ -641,6 +709,7 @@ export class Game {
   killPlayer() {
     const p = this.player;
     if (!p.alive || p.invuln > 0 || this.bombT > 0 || this.phase === 'bossdead' || this.phase === 'clear') return;
+    if (this.shield) { this.breakShield(); return; }
     p.alive = false;
     p.mesh.visible = false;
     if (p.shadow) p.shadow.visible = false;
@@ -659,16 +728,34 @@ export class Game {
     if (p.sub) this.dropItem('S', p.x + 0.8, p.z, { sub: p.sub });
     p.level = Math.max(1, p.level - 2);
     if (p.sub) { p.subLevel = Math.max(0, p.subLevel - 1); if (p.subLevel === 0) p.sub = null; }
-    this.bombs = Math.max(this.bombs, this.ac.bombs);
+    this.bombs = Math.max(this.bombs, this.startBombs);
     this.lives -= 1;
     p.respawn = 1.4;
     this.medalChain = 0;
     if (this.lives < 0) { p.respawn = 999; this.onEvent('gameover'); }
     else this.onEvent('death');
   }
+  // The shield upgrade's charge takes a hit that would have killed the jet: the bullets around it
+  // are wiped, it is invulnerable for a moment, and the charge is gone until the next stage start
+  // or continue. onEvent('shield') lets the HUD react (g.shield is false from now on).
+  breakShield() {
+    const p = this.player;
+    this.shield = false;
+    this.stats.shieldBreaks++;
+    p.invuln = Math.max(p.invuln, SHIELD_INVULN);
+    this.cancelBullets(p.x, p.z, SHIELD_CLEAR_R, false);
+    this.fx.shieldBreak(p.x, 0.2, p.z, SHIELD_R, SHIELD_COL);
+    this.shake.add(0.4);
+    this.ui.flash(0.2);
+    this.audio.play('shield');
+    this.haptic([30, 30, 70]);
+    this.popupAt(p.x, p.z - 1.8, 'SHIELD', 'big');
+    this.onEvent('shield');
+  }
   // Continue: the score restarts (earned CR stays in runMoney), the stage carries on where it was.
   continueRun() {
-    this.score = 0; this.continues += 1; this.lives = 2; this.bombs = this.ac.bombs;
+    this.applyUpgrades();
+    this.score = 0; this.continues += 1; this.lives = this.startLives; this.bombs = this.startBombs;
     this.extendIdx = 0;
     this.player.respawn = 0.3;
   }
@@ -1030,12 +1117,12 @@ export class Game {
         const c = SUB_ORDER[(it.si + Math.floor(it.t / 2.6)) % SUB_ORDER.length];
         if (c !== it.cur) { it.cur = c; const ud = it.mesh.userData; if (ud.setKind) ud.setKind(c); }
       }
-      // magnet when close
+      // magnet when close (both radii grow with the magnet upgrade)
       let collected = false;
       if (p.alive) {
         const dx = p.x - it.x, dz = p.z - it.z, d2 = dx * dx + dz * dz;
-        if (d2 < 1.3 * 1.3) collected = true;
-        else if (it.kind === 'medal' && (d2 < 9 || this.phase === 'bossdead')) {
+        if (d2 < this.pickR2) collected = true;
+        else if (it.kind === 'medal' && (d2 < this.magnetR2 || this.phase === 'bossdead')) {
           const d = Math.sqrt(d2), sp = this.phase === 'bossdead' ? 14 : 9;
           it.x += dx / d * sp * dt; it.z += dz / d * sp * dt;
         }
@@ -1076,7 +1163,7 @@ export class Game {
         this.popupAt(it.x, it.z, name, 'big');
       }
     } else if (k === 'B') {
-      if (this.bombs < this.ac.bombCap) { this.bombs++; this.popupAt(it.x, it.z, 'BOMB', 'big'); }
+      if (this.bombs < this.bombCap) { this.bombs++; this.popupAt(it.x, it.z, 'BOMB', 'big'); }
       else { this.addScore(5000); this.popupAt(it.x, it.z, '5,000', 'big'); }
       this.audio.play('item');
     } else if (k === 'medal') {
@@ -1097,8 +1184,9 @@ export class Game {
   }
 
   // --- scoring -------------------------------------------------------------------
-  // Every point also earns CR (runMoney, banked by main.js); a continue zeroes the score, not the CR.
-  addScore(n) { this.score += n; this.runMoney += n * MONEY.perScore; }
+  // Every point also earns CR (runMoney, banked by main.js; × moneyMul with the bonus upgrade); a
+  // continue zeroes the score, not the CR.
+  addScore(n) { this.score += n; this.runMoney += n * MONEY.perScore * this.moneyMul; }
   // Extra lives at the EXTENDS scores; returns how many were awarded. quiet: no sound and no
   // 'extend' event (the results screen reports a life its bonus earned in the tally instead).
   checkExtends(quiet = false) {
@@ -1148,6 +1236,7 @@ export class Game {
     if (p.alive && this.phase !== 'clear') {
       const pulse = (0.3 + Math.sin(t * 10) * 0.04) * this.hitK;
       fx.bullets.push(p.x, 0.2, p.z, pulse, pulse, 0, F.ORB, 0, 1.8, 0.4, 0.9, p.invuln > 0 ? 0.5 : 0.85, 0.4);
+      if (this.shield) this.drawShield(fx, p, t, rim);
     }
     // engine trail from one of the jet's exhaust points
     if (emit && p.alive && p.mesh.visible && Math.random() < 0.7) {
@@ -1160,6 +1249,21 @@ export class Game {
       for (const d of this.options) {
         if (d.mesh.visible && Math.random() < 0.5) fx.trail(d.x + d.trail[0] + rnd(-0.05, 0.05), 0.05, d.z + d.trail[1], c[0] * 2, c[1] * 2, c[2] * 2, 0.4, 0.14, 0.16);
       }
+    }
+  }
+  // The shield charge: a faint bubble around the jet — a thin camera-facing ring that breathes,
+  // and two glints running round it (placed on the ring as the camera sees it: camera right is +x,
+  // camera up is (0, sin TILT, -cos TILT)). A bright stage (rim) gets a dark outline under it.
+  drawShield(fx, p, t, rim) {
+    const c = SHIELD_COL, S = SHIELD_R / 0.39; // the RING frame's line sits at 0.78 of the half-size
+    const k = 0.3 + 0.07 * Math.sin(t * 3.1);
+    const x = p.x, y = 0.2, z = p.z;
+    if (rim) fx.underlay.push(x, y, z, S * 1.02, S * 1.02, 0, F.RING, 0, 0.02, 0.05, 0.08, 0.55);
+    fx.bullets.push(x, y, z, S, S, 0, F.RING, 0, c[0], c[1], c[2], k, 0.3);
+    const a = t * 1.7, sy = Math.sin(TILT) * SHIELD_R, sz = Math.cos(TILT) * SHIELD_R;
+    for (let i = 0; i < 2; i++) {
+      const ca = Math.cos(a + i * Math.PI), sa = Math.sin(a + i * Math.PI);
+      fx.bullets.push(x + ca * SHIELD_R, y + sa * sy, z - sa * sz, 0.36, 0.36, 0, F.GLOW, 0, c[0], c[1], c[2], 0.75, 0.6);
     }
   }
 }

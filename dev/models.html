@@ -75,7 +75,10 @@
 
   <div id="gameCtl">
     <h2>Layout</h2>
-    <div class="row"><span class="seg" id="layoutSeg"><button data-l="s1">Stage 1</button><button data-l="s2">Stage 2</button><button data-l="s3">Stage 3</button><button data-l="hangar">Hangar</button></span></div>
+    <div class="row"><span class="seg" id="layoutSeg"><button data-l="s1">Stage 1</button><button data-l="s2">Stage 2</button><button data-l="s3">Stage 3</button><button data-l="hangar">Hangar</button><button data-l="paints">Paints</button></span></div>
+    <h2>Aircraft &amp; paint</h2>
+    <div class="row"><span class="k">stages</span><select id="gPilot"></select></div>
+    <div id="paintRows"></div>
     <h2>Ground (y = −6)</h2>
     <div class="row"><span class="seg" id="groundSeg"><button data-g="sea">Sea</button><button data-g="country">Country</button><button data-g="city">City</button><button data-g="dusk">Dusk sea</button><button data-g="desert">Desert</button><button data-g="clouds">Clouds</button></span></div>
     <h2>Show</h2>
@@ -104,6 +107,10 @@
     </div>
     <h2>Hit flash</h2>
     <div class="row"><span class="k">flash</span><input type="range" id="iFlash" min="0" max="1" step="0.01" value="0"><span class="v" id="iFlashV">0</span><button id="iPulse">Pulse</button></div>
+    <div id="paintCtl">
+      <h2>Paint</h2>
+      <div class="row"><span class="seg" id="iPaintSeg"></span></div>
+    </div>
     <div id="playerCtl">
       <h2>Player</h2>
       <div class="row"><span class="k">bank</span><input type="range" id="iBank" min="-1" max="1" step="0.01" value="0"><span class="v" id="iBankV">0</span></div>
@@ -139,7 +146,7 @@
   <h2>Budgets</h2>
   <table id="stats"><thead><tr><th>model</th><th class="n">meshes</th><th class="n">tris</th><th class="n">budget</th></tr></thead><tbody></tbody></table>
   <p class="sub" style="margin-top:8px">⚠ = userData contract problem (hover, or see the console). Budgets: player 4/1500 · option 3/500 · enemy 4/700 · mid-boss 6/2500 · boss 24/8000 · item 4/700.</p>
-  <p class="sub" style="margin-top:8px">Drag to orbit in Inspect. URL params: <code>mode, model, layout (s1 s2 s3 hangar), ground, boss, bossId, flip, open, destroy, flash, bank, thrust, aim, view, color, kind, bloom, ui</code>.</p>
+  <p class="sub" style="margin-top:8px">Drag to orbit in Inspect. URL params: <code>mode, model (e.g. player:gale:dusk), layout (s1 s2 s3 hangar paints), ground, ac (aircraft in the stage layouts), paints (e.g. bolt:raven,gale:dusk), boss, bossId, flip, open, destroy, flash, bank, thrust, aim, view, color, kind, bloom, ui</code>.</p>
 </aside>
 
 <script type="module">
@@ -150,8 +157,9 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { createPlayer, createOption, createEnemy, createBoss, createItem, createShadow, modelStats,
-  PLAYER_TYPES, OPTION_TYPES, BOSS_TYPES, ENEMY_TYPES, GROUND_TYPES } from '../js/models.js';
-import { AIRCRAFT, MAIN_ORDER, SUB_ORDER } from '../js/defs.js';
+  PLAYER_TYPES, OPTION_TYPES, PAINT_IDS, paintAccent, BOSS_TYPES, ENEMY_TYPES, GROUND_TYPES } from '../js/models.js';
+import * as DEFS from '../js/defs.js';
+const { AIRCRAFT, MAIN_ORDER, SUB_ORDER } = DEFS;
 // the raw extension tables: which stage a type belongs to, and the unpatched factory output for the contract check
 import * as SHIPS from '../js/models_ships.js';
 import * as S2 from '../js/models_s2.js';
@@ -161,6 +169,7 @@ const GROUND_Y = -6;
 const SUN_POS = new THREE.Vector3(-14, 30, 10);
 const Q = new URLSearchParams(location.search);
 const qnum = (k, d) => (Q.has(k) ? Number(Q.get(k)) : d);
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 // ------------------------------------------------------------------ renderer
 const view = document.getElementById('view');
@@ -288,12 +297,18 @@ const srcOf = (t) => (S1_TYPES.includes(t) ? 's1' : S3E[t] ? 's3' : 's2');
 const bossSrc = (id) => (id === 'arclight' ? 's1' : S3B[id] ? 's3' : 's2');
 const OPTION_IDS = [...new Set([...AIRCRAFT.filter((a) => a.options > 0).map((a) => a.id), ...OPTION_TYPES])];
 const SECTIONS = [['ships', 'Aircraft · models_ships.js'], ['s1', 'Stage 1 · models.js'], ['s2', 'Stage 2 · models_s2.js'], ['s3', 'Stage 3 · models_s3.js'], ['items', 'Items']];
+/** paints of an aircraft ('std' first); defs.js PAINTS (the hangar's list) may name them in Chinese */
+const paintsOf = (id) => PAINT_IDS[id] || ['std'];
+const paintZh = (id, pt) => { const l = DEFS.PAINTS && DEFS.PAINTS[id]; const e = Array.isArray(l) && l.find((x) => x && x.id === pt); return e && e.zh ? e.zh : ''; };
+const pid = (id, pt) => (pt && pt !== 'std' ? ':' + pt : '');
 const CATALOG = [
-  // 'player' / 'boss' keep their old ids (bookmarks, ?model=player)
-  { id: 'player', group: 'player', src: 'ships', make: () => createPlayer('bolt') },
-  ...PLAYER_TYPES.filter((id) => id !== 'bolt').map((id) => ({ id: 'player:' + id, group: 'player', src: 'ships', make: () => createPlayer(id), raw: () => SHIPS.PLAYERS[id]() })),
-  ...OPTION_IDS.map((id) => ({ id: 'option:' + id, group: 'option', src: 'ships', make: () => createOption(id),
-    raw: OPTION_TYPES.includes(id) ? () => SHIPS.OPTIONS[id]() : null, note: OPTION_TYPES.includes(id) ? '' : 'placeholder pod' })),
+  // 'player' / 'boss' keep their old ids (bookmarks, ?model=player); every paint of every aircraft gets its own row
+  ...PLAYER_TYPES.flatMap((id) => paintsOf(id).map((pt) => ({
+    id: id === 'bolt' && pt === 'std' ? 'player' : 'player:' + id + pid(id, pt), group: 'player', src: 'ships', ac: id, paint: pt,
+    make: () => createPlayer(id, pt), raw: id === 'bolt' ? null : () => SHIPS.PLAYERS[id](pt) }))),
+  ...OPTION_IDS.flatMap((id) => (OPTION_TYPES.includes(id) ? paintsOf(id) : ['std']).map((pt) => ({
+    id: 'option:' + id + pid(id, pt), group: 'option', src: 'ships', ac: id, paint: pt, make: () => createOption(id, pt),
+    raw: OPTION_TYPES.includes(id) ? () => SHIPS.OPTIONS[id](pt) : null, note: OPTION_TYPES.includes(id) ? '' : 'placeholder pod' }))),
   ...ENEMY_TYPES.map((t) => ({ id: t, group: 'enemy', src: srcOf(t), make: () => createEnemy(t), ground: GROUND_TYPES.includes(t),
     raw: srcOf(t) === 's1' ? null : () => (S3E[t] || S2E[t])() })),
   ...BOSS_TYPES.map((id) => ({ id: id === 'arclight' ? 'boss' : 'boss:' + id, bossId: id, group: 'boss', src: bossSrc(id), make: () => createBoss(id),
@@ -315,7 +330,7 @@ const NEED = {
   boss: ['radius', 'debrisColor', 'muzzles', 'setFlash', 'update', 'dispose', 'parts'],
 };
 function kindWanted(c) {
-  if (c.group === 'player') return 'player:' + (c.id === 'player' ? 'bolt' : c.id.slice(7));
+  if (c.group === 'player') return 'player:' + c.ac + pid(c.ac, c.paint);
   if (c.group === 'boss') return 'boss:' + c.bossId;
   if (c.group === 'option' || c.group === 'enemy') return c.id;
   return null;
@@ -334,6 +349,7 @@ function contractIssues(c, m) {
     if (ud.trail && !(Array.isArray(ud.trail) && ud.trail.every((p) => Array.isArray(p) && p.length === 2))) issues.push('trail must be [[x, z], …]');
     if (typeof ud.muzzleZ === 'number' && ud.muzzleZ >= 0) issues.push('muzzleZ ≥ 0: the nose must point to −z');
   }
+  if (c.paint && c.paint !== 'std') issues.push(...paintIssues(c, m));
   for (const [k, p] of partList(src)) for (const f of ['radius', 'muzzles', 'setFlash', 'setDestroyed']) if (p.userData[f] === undefined) issues.push(`part ${k}: missing ${f}`);
   if (c.src === 's3' && ud.ground) issues.push('stage 3 has no ground (userData.ground)');
   if (c.group !== 'item') {
@@ -344,6 +360,35 @@ function contractIssues(c, m) {
   }
   if (raw && raw.userData.dispose) raw.userData.dispose();
   return issues;
+}
+
+/** a paint must be the std model recoloured: same meshes, same triangles in the same places, same gameplay
+ *  userData (numbers, muzzles, trail), its own geometry cache entry, and a ground shadow of the std silhouette */
+function paintIssues(c, m) {
+  const out = [];
+  const std = c.group === 'player' ? createPlayer(c.ac) : createOption(c.ac);
+  const meshes = (o) => { const a = []; o.traverse((x) => x.isMesh && a.push(x)); return a; };
+  const A = meshes(std), B = meshes(m);
+  if (A.length !== B.length) out.push(`paint has ${B.length} meshes, std ${A.length}`);
+  for (let i = 0; i < Math.min(A.length, B.length); i++) {
+    const ga = A[i].geometry, gb = B[i].geometry;
+    if (A[i].name !== B[i].name) out.push(`mesh ${i}: name ${B[i].name} ≠ ${A[i].name}`);
+    const pa = ga.attributes.position.array, pb = gb.attributes.position.array;
+    if (pa.length !== pb.length || pa.some((v, k) => v !== pb[k])) out.push(`mesh ${A[i].name}: positions differ from std`);
+    if (A[i].name === 'body' && ga === gb) out.push('body shares the std geometry (no recolour)');
+    if (A[i].material.type !== B[i].material.type || A[i].material.constructor !== B[i].material.constructor) out.push(`mesh ${A[i].name}: material kind differs from std (new shader)`);
+  }
+  const ua = std.userData, ub = m.userData;
+  for (const k of ['radius', 'grazeRadius', 'muzzleZ']) if (ua[k] !== ub[k]) out.push(`${k} ${ub[k]} ≠ std ${ua[k]}`);
+  if (JSON.stringify(ua.trail) !== JSON.stringify(ub.trail)) out.push('trail differs from std');
+  if (JSON.stringify((ua.muzzles || []).map((v) => v.toArray())) !== JSON.stringify((ub.muzzles || []).map((v) => v.toArray()))) out.push('muzzles differ from std');
+  const ka = Object.keys(ua).filter((k) => k !== 'kind' && k !== 'trailColor').sort().join(), kb = Object.keys(ub).filter((k) => k !== 'kind' && k !== 'trailColor').sort().join();
+  if (ka !== kb) out.push('userData keys differ from std');
+  if (ub.trailColor && !(Array.isArray(ub.trailColor) && ub.trailColor.length === 3 && ub.trailColor.every(Number.isFinite))) out.push('trailColor must be [r, g, b]');
+  const sa = createShadow(std), sb = createShadow(m);
+  if (sa.geometry !== sb.geometry) out.push('shadow is not the std silhouette');
+  if (ua.dispose) ua.dispose();
+  return out;
 }
 
 // budget table + console log
@@ -386,7 +431,11 @@ function addStatsRow(c) {
 }
 
 // ------------------------------------------------------------------ state
-const state = { mode: 'game', layout: 's1', ground: 'sea', t: 0, anim: true, flash: 0, pulse: 0, aim: 0, sweep: false };
+const state = { mode: 'game', layout: 's1', ground: 'sea', t: 0, anim: true, flash: 0, pulse: 0, aim: 0, sweep: false,
+  pilot: 'bolt', paints: Object.fromEntries(AIRCRAFT.map((a) => [a.id, 'std'])) };
+/** the aircraft (in its selected paint) that the stage layouts show at the bottom */
+const pilotMake = () => createPlayer(state.pilot, state.paints[state.pilot]);
+const pilotId = () => 'player:' + state.pilot + pid(state.pilot, state.paints[state.pilot]);
 const labelsEl = document.getElementById('labels');
 const hud = document.getElementById('hud');
 
@@ -456,7 +505,7 @@ const LAYOUT_BOSS = { s1: 'arclight', s2: Object.keys(S2B)[0], s3: Object.keys(S
 const LAYOUTS = {
   s1() {
     // air units on the gameplay plane (y=0), ground units on the ground (y=−6)
-    place('player', createPlayer, 0, 0, 5.2);
+    place(pilotId(), pilotMake, 0, 0, 5.2);
     place('dart', () => createEnemy('dart'), -5.2, 0, -3.5, Math.PI);
     place('dart', () => createEnemy('dart'), -3.4, 0, -4.6, Math.PI);
     place('hornet', () => createEnemy('hornet'), 0.4, 0, -4.2, Math.PI);
@@ -473,12 +522,12 @@ const LAYOUTS = {
     return '';
   },
   s2() {
-    place('player', createPlayer, 0, 0, 5.2);
+    place(pilotId(), pilotMake, 0, 0, 5.2);
     const n = packUnits('s2');
     return n || Object.keys(S2B).length ? '' : 'No stage-2 models registered yet — fill ENEMIES / BOSSES in js/models_s2.js';
   },
   s3() {
-    place('player', createPlayer, 0, 0, 5.2);
+    place(pilotId(), pilotMake, 0, 0, 5.2);
     const n = packUnits('s3');
     return n || Object.keys(S3B).length ? '' : 'No stage-3 models registered yet — fill ENEMIES / BOSSES in js/models_s3.js';
   },
@@ -487,13 +536,13 @@ const LAYOUTS = {
     // then every item variant: P per main weapon, S per sub-weapon, B, medal, 1UP
     const n = AIRCRAFT.length, missing = [];
     AIRCRAFT.forEach((ac, i) => {
-      const x = (i - (n - 1) / 2) * 3.3, real = PLAYER_TYPES.includes(ac.id);
+      const x = (i - (n - 1) / 2) * 3.3, real = PLAYER_TYPES.includes(ac.id), pt = state.paints[ac.id] || 'std';
       if (!real) missing.push(ac.id);
-      const it = place(ac.id === 'bolt' ? 'player' : 'player:' + ac.id, () => createPlayer(ac.id), x, 0, 5.0);
-      it.label.textContent = ac.id + (real ? '' : '*');
+      const it = place('player:' + ac.id + pid(ac.id, pt), () => createPlayer(ac.id, pt), x, 0, 5.0);
+      it.label.textContent = ac.id + (real ? '' : '*') + (pt !== 'std' ? ' · ' + pt : '');
       for (let k = 0; k < ac.options; k++) {
         const sx = k % 2 ? 1 : -1, row = Math.floor(k / 2);
-        const o = place('option:' + ac.id, () => createOption(ac.id), x + sx * 1.15, 0, 5.5 + row * 0.8);
+        const o = place('option:' + ac.id + pid(ac.id, pt), () => createOption(ac.id, pt), x + sx * 1.15, 0, 5.5 + row * 0.8);
         o.label.textContent = ''; o.lz = -0.75;       // label above the pair, clear of the aircraft label
         if (k === 0) { o.label.textContent = 'options' + (OPTION_TYPES.includes(ac.id) ? '' : '*'); o.dx = 1.15; }
       }
@@ -509,6 +558,25 @@ const LAYOUTS = {
     return msg.length ? msg.join('\n') + '\n(js/models_ships.js)' : '';
   },
 };
+// every aircraft (columns) in every paint (rows, 'std' at the bottom), drones beside the drone carriers:
+// the paints side by side at true gameplay scale over any ground
+LAYOUTS.paints = () => {
+  const n = AIRCRAFT.length, rows = Math.max(...AIRCRAFT.map((a) => paintsOf(a.id).length));
+  AIRCRAFT.forEach((ac, i) => {
+    const x = (i - (n - 1) / 2) * 3.3;
+    paintsOf(ac.id).forEach((pt, r) => {
+      const z = 5.6 - r * 3.1;
+      const it = place('player:' + ac.id + pid(ac.id, pt), () => createPlayer(ac.id, pt), x, 0, z);
+      it.label.textContent = (paintZh(ac.id, pt) || pt) + (r ? '' : ' · ' + ac.id);
+      for (let k = 0; k < ac.options; k++) {
+        const o = place('option:' + ac.id + pid(ac.id, pt), () => createOption(ac.id, pt), x + (k % 2 ? 1 : -1) * 1.15, 0, z + 0.5);
+        o.label.textContent = '';
+      }
+    });
+  });
+  return rows > 1 ? '' : 'No paints registered (PAINT_IDS in js/models.js)';
+};
+LAYOUT_GROUND.paints = 'sea'; LAYOUT_BOSS.paints = null;
 function setLayout(name, keepGround = false) {
   if (!LAYOUTS[name]) name = 's1';
   setBoss(false);
@@ -595,6 +663,7 @@ function select(i) {
   document.getElementById('contractInfo').innerHTML = info.join(' · ') + '<br>' + (issues.length
     ? `<span class="bad">${issues.map((x) => x.replace(/</g, '&lt;')).join('<br>')}</span>` : '<span class="ok">userData contract OK</span>');
   buildPartBoxes();
+  buildInspectPaints(c);
   applyInspectControls();
   const s = modelStats(cur);
   console.log(`[inspect] ${c.id}: meshes=${s.meshes} sprites=${s.sprites} tris=${s.tris}`);
@@ -712,6 +781,41 @@ for (const k of SUB_ORDER) {
   const b = document.createElement('button'); b.dataset.k = k; b.textContent = 'S · ' + k; $('sSeg').appendChild(b);
   b.onclick = () => { if (cur.userData.setKind) cur.userData.setKind(k); seg('sSeg', 'k', cur.userData.subKind); };
 }
+// paint selectors: one per aircraft (hangar / stage layouts), and the inspect paint row
+{
+  const box = $('paintRows'), pilot = $('gPilot');
+  for (const ac of AIRCRAFT) {
+    const o = document.createElement('option'); o.value = ac.id; o.textContent = ac.id; pilot.appendChild(o);
+    const row = document.createElement('div'); row.className = 'row';
+    const k = document.createElement('span'); k.className = 'k'; k.textContent = ac.id;
+    const sel = document.createElement('select'); sel.id = 'paint-' + ac.id;
+    for (const pt of paintsOf(ac.id)) {
+      const op = document.createElement('option'); op.value = pt; op.textContent = pt + (paintZh(ac.id, pt) ? ' ' + paintZh(ac.id, pt) : '');
+      sel.appendChild(op);
+    }
+    const sw = document.createElement('span'); sw.style.cssText = 'width:14px;height:14px;border:1px solid var(--line);display:inline-block';
+    const upd = () => { sw.style.background = '#' + paintAccent(ac.id, sel.value).toString(16).padStart(6, '0'); };
+    sel.onchange = () => { state.paints[ac.id] = sel.value; upd(); if (state.layout !== 'paints') setLayout(state.layout, true); };
+    sel.sync = () => { sel.value = state.paints[ac.id]; upd(); };
+    row.append(k, sel, sw); box.appendChild(row); upd();
+  }
+  pilot.onchange = () => { state.pilot = pilot.value; if (/^s\d$/.test(state.layout)) setLayout(state.layout, true); };
+}
+function syncPaintUI() {
+  $('gPilot').value = state.pilot;
+  for (const ac of AIRCRAFT) { const sel = $('paint-' + ac.id); if (sel) sel.sync(); }
+}
+function buildInspectPaints(c) {
+  const segEl = $('iPaintSeg'); segEl.innerHTML = '';
+  const show = (c.group === 'player' || c.group === 'option') && paintsOf(c.ac).length > 1 && !(c.group === 'option' && !OPTION_TYPES.includes(c.ac));
+  $('paintCtl').classList.toggle('hidden', !show);
+  if (!show) return;
+  for (const pt of paintsOf(c.ac)) {
+    const b = document.createElement('button'); b.dataset.p = pt; b.textContent = pt; segEl.appendChild(b);
+    b.onclick = () => { const i = CATALOG.findIndex((x) => x.group === c.group && x.ac === c.ac && x.paint === pt); if (i >= 0) select(i); };
+  }
+  seg('iPaintSeg', 'p', c.paint);
+}
 $('bloom').onchange = () => {};
 $('toggle').onclick = () => document.body.classList.toggle('has-panel');
 
@@ -778,6 +882,12 @@ if (Q.get('labels') === '0') $('gLabels').checked = false;
 state.layout = LAYOUTS[Q.get('layout')] ? Q.get('layout') : 's1';
 state.ground = Q.get('ground') || LAYOUT_GROUND[state.layout];
 state.bossFlip = Q.get('flip') === '1'; $('gBossFlip').checked = state.bossFlip;
+if (Q.has('ac') && AIRCRAFT.some((a) => a.id === Q.get('ac'))) state.pilot = Q.get('ac');
+for (const pair of (Q.get('paints') || '').split(',').filter(Boolean)) {
+  const [id, pt] = pair.split(':');
+  if (own(state.paints, id) && paintsOf(id).includes(pt)) state.paints[id] = pt;
+}
+syncPaintUI();
 if (Q.has('anim')) { state.anim = Q.get('anim') !== '0'; $('gAnim').checked = $('iAnim').checked = state.anim; }
 if (Q.has('t')) state.t = +Q.get('t');
 state.flash = qnum('flash', 0); $('iFlash').value = state.flash;

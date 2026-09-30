@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-visual">
 <title>赤電 Crimson Bolt</title>
 <meta name="description" content="瀏覽器 3D 縱向捲軸射擊遊戲，致敬經典街機。手機與電腦皆可遊玩。">
 <meta name="theme-color" content="#07080d">
@@ -102,6 +102,15 @@ kbd, .side kbd { display: inline-block; min-width: 22px; padding: 2px 6px; margi
 .stock .icons { display: flex; gap: 4px; min-height: 16px; align-items: center; }
 .icon-ship { width: 15px; height: 16px; background: var(--ship, var(--crimson));
   clip-path: polygon(50% 0, 62% 38%, 100% 70%, 100% 82%, 60% 74%, 58% 100%, 42% 100%, 40% 74%, 0 82%, 0 70%, 38% 38%); filter: drop-shadow(0 0 3px var(--ship, var(--crimson))); }
+/* the shield upgrade's charge (HUD next to the lives; also the how-to / side legends): the ring the
+   jet wears in game; dashed once it has taken a hit this stage */
+.icon-shield { display: inline-block; flex: 0 0 auto; width: 14px; height: 14px; border-radius: 50%; vertical-align: -2px;
+  border: 2px solid #8fe6ff; background: radial-gradient(circle, rgba(143,230,255,0.4), rgba(143,230,255,0.06) 70%);
+  box-shadow: 0 0 6px rgba(143,230,255,0.8), inset 0 0 4px rgba(143,230,255,0.5); }
+#hud-shield { margin-left: 3px; animation: shieldOn 0.45s ease-out; }
+#hud-shield.used { border-style: dashed; border-color: rgba(143,230,255,0.4); background: none; box-shadow: none; animation: shieldOff 0.5s ease-out; }
+@keyframes shieldOn { from { transform: scale(0.2); opacity: 0; } }
+@keyframes shieldOff { from { transform: scale(1.7); border-style: solid; border-color: #fff; box-shadow: 0 0 14px #8fe6ff; } }
 .icon-bomb { width: 15px; height: 15px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ffd27a, #ff7a1a 55%, #a33c00); display: grid; place-items: center;
   font: 700 9px var(--f-display); color: #3b1400; }
 /* weapon names keep their item colours; the shadow keeps them legible on sand and white cloud */
@@ -140,6 +149,9 @@ body:not(.touch) #stick { display: none; }
 #btn-bomb.empty { opacity: 0.35; filter: grayscale(0.7); }
 #btn-bomb:active { transform: scale(0.94); }
 body:not(.touch) #btn-bomb { display: none; }
+/* touch: the B button carries the exact count, so the bomb row stops at 6 icons and keeps clear of
+   the joystick (TITAN with 起始炸彈 holds up to 8; the keyboard layout shows 7 icons and '+1') */
+body.touch #bombs .icon-bomb:nth-child(n+7), body.touch #bombs .hud-label { display: none; }
 /* hold-to-focus (aircraft with option drones): above the bomb button, same thumb */
 .pad-r { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 #btn-focus { --ac: var(--violet); pointer-events: auto; width: 54px; height: 54px; border-radius: 50%; cursor: pointer; touch-action: none;
@@ -282,15 +294,15 @@ body.sides #keys { display: none; } /* the side panel already lists the keys (ma
 .tally .ln { display: flex; justify-content: space-between; gap: 10px; font: 600 14px var(--f-display); letter-spacing: 0.1em;
   border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px; opacity: 0; transform: translateX(-12px); transition: opacity 0.25s, transform 0.25s; }
 .tally .ln.on { opacity: 1; transform: none; }
-.tally .ln span:first-child { color: var(--ink-dim); } .tally .ln span:first-child small { font: 500 11px var(--f-cjk); margin-left: 6px; }
+.tally .ln > span:first-child { color: var(--ink-dim); } .tally .ln > span:first-child small { font: 500 11px var(--f-cjk); margin-left: 6px; }
 .tally .ln.total { font-size: 18px; color: var(--amber); border-bottom: 0; }
 .tally .ln.cr { color: var(--gold); border-top: 1px solid rgba(255,207,74,0.25); border-bottom: 0; padding-top: 8px; font-size: 16px; }
-.tally .ln.cr span:first-child { display: flex; align-items: center; gap: 6px; color: var(--gold); }
+.tally .ln.cr > span:first-child { display: flex; align-items: center; gap: 6px; color: var(--gold); }
 .tally .ln.cr .coin { width: 13px; height: 13px; }
 .tally .ln.wallet { border-bottom: 0; font-size: 13px; padding-bottom: 0; }
-.tally .ln.wallet span:last-child { color: var(--gold); }
-.tally .ln.stage span:last-child { font: 700 13px var(--f-cjk); letter-spacing: 0.1em; }
-.tally .ln.extend, .tally .ln.extend span:first-child { color: var(--lime); }
+.tally .ln.wallet > span:last-child { color: var(--gold); }
+.tally .ln.stage > span:last-child { font: 700 13px var(--f-cjk); letter-spacing: 0.1em; }
+.tally .ln.extend, .tally .ln.extend > span:first-child { color: var(--lime); }
 .rank { font: 700 64px/1 var(--f-display); color: var(--crimson); text-shadow: 0 0 30px rgba(255,46,72,0.7); opacity: 0; transform: scale(2.4); transition: all 0.35s cubic-bezier(.2,1.4,.3,1); }
 .rank.on { opacity: 1; transform: none; }
 .reserve { visibility: hidden; }
@@ -302,7 +314,7 @@ body.sides #keys { display: none; } /* the side panel already lists the keys (ma
 #rotate { position: absolute; inset: 0; background: rgba(4,6,12,0.9); display: none; place-items: center; text-align: center; padding: 20px; z-index: 5; pointer-events: auto; }
 #rotate p { font: 700 16px var(--f-cjk); letter-spacing: 0.2em; margin: 12px 0 0; }
 #rotate small { display: block; margin-top: 8px; color: var(--ink-dim); font: 500 12px var(--f-cjk); }
-@media (orientation: landscape) and (max-height: 500px) { body.touch #rotate { display: grid; } }
+@media (orientation: landscape) and (max-height: 500px) { body.touch:not(.typing) #rotate { display: grid; } }
 .err { color: #ffb3b3; font: 500 14px/1.7 var(--f-cjk); max-width: 320px; }
 .title-stats { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 18px; }
 .title-stats .cr { display: inline-flex; align-items: center; gap: 6px; }
@@ -310,9 +322,9 @@ body.sides #keys { display: none; } /* the side panel already lists the keys (ma
 
 /* ---------- hangar (機庫) ---------- */
 /* The panel stays in the top ~3/4 so the title fly-by jet below it is the live 3D preview. */
-.screen.hangar { justify-content: flex-start; gap: 0; padding-bottom: calc(22vh + var(--safe-b));
+.screen.hangar { justify-content: flex-start; gap: 0; padding-bottom: calc(20vh + var(--safe-b));
   background: linear-gradient(rgba(4,6,12,0.88), rgba(4,6,12,0.82) 62%, rgba(4,6,12,0.25) 80%, rgba(4,6,12,0) 90%); }
-.hpanel { --px: 12px; --pb: 12px; width: min(440px, 100%); gap: 10px; padding: 14px var(--px) var(--pb); }
+.hpanel { --px: 12px; --pb: 12px; width: min(440px, 100%); gap: 8px; padding: 14px var(--px) var(--pb); }
 .hhead { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; padding: 0 4px; }
 .hwallet { display: grid; justify-items: end; gap: 2px; font: 700 18px/1 var(--f-display); color: var(--gold); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
 .hwallet small { font: 600 10px var(--f-cjk); letter-spacing: 0.2em; color: var(--ink-dim); }
@@ -320,11 +332,11 @@ body.sides #keys { display: none; } /* the side panel already lists the keys (ma
 .hwallet .coin { width: 14px; height: 14px; }
 .hwallet.bump div { animation: bump 0.4s ease-out; }
 .ships { display: grid; gap: 7px; }
-.btn.ship { --ac: #fff; --ac-dim: rgba(255,255,255,0.12); display: grid; gap: 5px; padding: 9px 12px 10px 15px; letter-spacing: 0; justify-content: stretch;
+.btn.hrow { --ac: #fff; --ac-dim: rgba(255,255,255,0.12); display: grid; gap: 4px; padding: 7px 12px 8px 15px; letter-spacing: 0; justify-content: stretch;
   box-shadow: inset 3px 0 0 var(--ac); clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); }
-.btn.ship:focus-visible { box-shadow: inset 3px 0 0 var(--ac), 0 0 0 2px var(--amber); }
-.btn.ship.sel { border-color: var(--ac); background: linear-gradient(100deg, var(--ac-dim), rgba(9,11,20,0.82) 70%); }
-.btn.ship.sel:focus-visible { border-color: var(--amber); }
+.btn.hrow:focus-visible { box-shadow: inset 3px 0 0 var(--ac), 0 0 0 2px var(--amber); }
+.btn.hrow.sel { border-color: var(--ac); background: linear-gradient(100deg, var(--ac-dim), rgba(9,11,20,0.82) 70%); }
+.btn.hrow.sel:focus-visible { border-color: var(--amber); }
 .sh-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .sh-top b { font: 700 15px var(--f-display); letter-spacing: 0.14em; color: var(--ink); white-space: nowrap; }
 .sh-top > i { font: 700 13px var(--f-cjk); font-style: normal; letter-spacing: 0.1em; color: var(--ac); white-space: nowrap; }
@@ -339,17 +351,42 @@ body.sides #keys { display: none; } /* the side panel already lists the keys (ma
    row): the description is always a two-line box, whatever text (or one-line message) is in it */
 .sh-desc { font: 500 12px/1.45 var(--f-cjk); letter-spacing: 0.02em; color: var(--ink-dim); min-width: 0; overflow: hidden; text-wrap: pretty;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; min-height: calc(2 * 1.45em); }
-.btn.ship.sel .sh-desc { color: #c9d1e2; }
-.btn.ship .sh-desc.msg { color: var(--amber); font-weight: 700; }
-.btn.ship .sh-desc.bad { color: #ff7a7a; font-weight: 700; }
-.btn.ship .sh-desc.good { color: var(--lime); font-weight: 700; }
+.btn.hrow.sel .sh-desc { color: #c9d1e2; }
+.btn.hrow .sh-desc.msg { color: var(--amber); font-weight: 700; }
+.btn.hrow .sh-desc.bad { color: #ff7a7a; font-weight: 700; }
+.btn.hrow .sh-desc.good { color: var(--lime); font-weight: 700; }
 .sh-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 8px; }
 .sh-stats > div { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .sh-stats small { flex: 0 0 auto; font: 500 10px var(--f-cjk); letter-spacing: 0.04em; color: var(--ink-dim); }
 .sh-bar { display: flex; gap: 2px; flex: 1 1 auto; max-width: 46px; }
 .sh-bar i { flex: 1 1 0; height: 5px; background: rgba(255,255,255,0.13); }
 .sh-bar i.on { background: var(--ac); box-shadow: 0 0 5px var(--ac-dim); }
-.btn.ship.deny { animation: shake 0.36s linear; }
+.btn.hrow.deny { animation: shake 0.36s linear; }
+/* tabs: 機體 / 塗裝 / 強化 (keys: ←→ or Q / E, pad LB / RB) */
+.htabs { display: flex; align-items: stretch; gap: 6px; }
+.htabs kbd { align-self: center; margin: 0; min-width: 20px; padding: 2px 4px; color: var(--ink-dim); }
+.htab { flex: 1 1 0; min-width: 0; display: grid; justify-items: center; gap: 2px; padding: 6px 4px 5px; cursor: pointer;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--panel-line); font: 700 14px/1.1 var(--f-cjk); letter-spacing: 0.24em; text-indent: 0.24em; color: var(--ink-dim);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px); transition: background 0.15s, color 0.15s; }
+.htab small { font: 600 9px/1 var(--f-display); letter-spacing: 0.16em; text-indent: 0.16em; opacity: 0.75; }
+.htab:hover { color: var(--ink); border-color: rgba(255,255,255,0.3); }
+.htab[aria-selected="true"] { background: var(--ink); border-color: var(--ink); color: #0b0d14; }
+.htab:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
+.hctx { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 4px; font: 700 12px var(--f-cjk); letter-spacing: 0.1em; }
+.hctx b { font: 700 13px var(--f-display), var(--f-cjk); letter-spacing: 0.14em; color: var(--ink); white-space: nowrap; }
+.hctx span { color: var(--lime); white-space: nowrap; }
+.hctx.locked span { color: #ff7a7a; }
+.btn.hrow.paint .sh-top b, .btn.hrow.up .sh-top b { font: 700 14px var(--f-cjk); letter-spacing: 0.16em; }
+.btn.hrow.paint .sh-top b { color: var(--ac); }
+.swatch { flex: 0 0 auto; display: inline-block; width: 22px; height: 14px; align-self: center; border: 1px solid rgba(255,255,255,0.4); box-shadow: 0 0 6px var(--ac-dim, transparent); }
+.btn.hrow.locked .swatch, .btn.hrow.locked .sh-top b { opacity: 0.55; }
+.up-pips { display: flex; gap: 3px; align-self: center; }
+.up-pips i { width: 9px; height: 9px; border: 1px solid rgba(255,255,255,0.3); }
+.up-pips i.on { background: var(--ac); border-color: var(--ac); box-shadow: 0 0 5px var(--ac-dim); }
+.sh-tag.max { background: var(--gold); border-color: var(--gold); color: #0b0d14; font-family: var(--f-display); letter-spacing: 0.18em; }
+/* one-line descriptions (paints, upgrades): their messages are kept short enough for a 360 px phone */
+.sh-desc.one { -webkit-line-clamp: 1; line-clamp: 1; min-height: 1.45em; }
+.btn.hrow:where(.paint, .up) { gap: 3px; padding-block: 7px 8px; } /* (:where — the short-screen sizes below still apply) */
 .hhelp { text-align: center; font-family: var(--f-cjk); letter-spacing: 0.1em; }
 .hcap { position: absolute; left: 0; right: 0; bottom: calc(10px + var(--safe-b)); display: grid; justify-items: center; gap: 2px; pointer-events: none;
   text-shadow: 0 1px 0 #000, 0 0 10px rgba(0,0,0,0.9); }
@@ -362,10 +399,12 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
 /* phone browsers (≈640-700 px tall): tighter rows and a lower preview edge keep the full
    two-line descriptions on screen */
 @media (max-height: 700px) {
-  .screen.hangar { padding-bottom: calc(16vh + var(--safe-b)); }
+  .screen.hangar { padding-top: calc(16px + var(--safe-t)); padding-bottom: calc(16vh + var(--safe-b)); }
+  .hpanel h2 small, .hwallet small, .htab small { display: none; } /* (the tabs say where you are) */
+  .htab { padding-block: 6px; }
   .hpanel { --px: 10px; --pb: 10px; gap: 7px; padding: 10px var(--px) var(--pb); }
   .ships { gap: 5px; }
-  .btn.ship { gap: 3px; padding: 6px 10px 7px 13px; }
+  .btn.hrow { gap: 3px; padding: 5px 10px 6px 13px; }
   .hhelp { display: none; }
   .hpanel h2 { font-size: 17px; }
 }
@@ -373,11 +412,62 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
   .screen.hangar { padding-top: calc(10px + var(--safe-t)); }
   .hpanel h2 small, .hwallet small { display: none; }
   .ships { gap: 4px; }
-  .btn.ship { padding-block: 4px 5px; }
+  .btn.hrow { padding-block: 4px 5px; }
   .hpanel .panel-foot .btn { padding-block: 9px; }
 }
+/* ---------- ranking (排行榜) ---------- */
+.rpanel { gap: 10px; }
+.rhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.btn.mini { width: auto; flex: 0 0 auto; gap: 6px; padding: 8px 11px; font-size: 12px; letter-spacing: 0.14em;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px); }
+.btn.mini span { font-size: 11px; letter-spacing: 0.08em; }
+.btn.mini.dim { opacity: 0.5; }
+.btn.mini[data-armed="1"] { border-color: var(--danger); color: #ffb3b3; }
+.rlist { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.rrow { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; grid-template-areas: "n name score" "n meta meta";
+  align-items: baseline; column-gap: 6px; row-gap: 1px; padding: 4px 7px 4px 3px; background: rgba(255,255,255,0.035); border-left: 2px solid transparent; }
+.rrow .rn { grid-area: n; align-self: center; font: 700 15px var(--f-display); color: var(--ink-dim); text-align: center; }
+.rrow.top1 .rn { color: var(--gold); text-shadow: 0 0 10px rgba(255,207,74,0.6); } .rrow.top2 .rn { color: #dfe5ef; } .rrow.top3 .rn { color: #e4a46c; }
+.rname { grid-area: name; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 12px var(--f-cjk); color: var(--ink); }
+.rscore { grid-area: score; text-align: right; font: 700 14px var(--f-display); letter-spacing: 0.02em; color: var(--amber); font-variant-numeric: tabular-nums; }
+.rmeta { grid-area: meta; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 5px; font: 600 11px/1.3 var(--f-cjk); color: var(--ink-dim); }
+.rmeta .swatch { width: 15px; height: 10px; }
+.rac { letter-spacing: 0.08em; }
+.rst { font: 600 11px var(--f-display); letter-spacing: 0.1em; color: var(--ink); }
+.rclear { font: 700 8.5px/1 var(--f-display); font-style: normal; letter-spacing: 0.1em; padding: 2px 3px; color: #0b0d14; background: var(--gold); }
+.rcont { font-size: 10px; }
+.rdate { margin-left: auto; white-space: nowrap; font: 500 10px var(--f-display); letter-spacing: 0.06em; color: var(--ink-dim); }
+.rrow.new { background: linear-gradient(90deg, rgba(255,182,39,0.18), rgba(255,182,39,0.04)); border-left-color: var(--amber); }
+.rempty { padding: 18px 8px; text-align: center; font: 500 13px/1.7 var(--f-cjk); color: var(--ink-dim); }
+.panel .note.arm { color: #ff9a9a; font-weight: 700; } .panel .note.good { color: var(--lime); } .panel .note.bad { color: #ff7a7a; }
+/* name entry for the board (GAME OVER screen, record screen) */
+.entry { width: min(340px, 100%); display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 10px 12px 12px; text-align: left;
+  border: 1px solid rgba(255,182,39,0.45); background: rgba(255,182,39,0.07); }
+.entry-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; font: 500 12px var(--f-cjk); letter-spacing: 0.08em; color: var(--ink-dim); }
+.entry-head b { font: 700 16px var(--f-cjk); letter-spacing: 0.12em; color: var(--amber); }
+.entry-row { display: flex; gap: 8px; }
+.entry-name { flex: 1 1 0; min-width: 0; height: 46px; padding: 0 12px; border-radius: 0; outline: none;
+  font: 700 18px var(--f-display), var(--f-cjk); letter-spacing: 0.08em; color: var(--ink); background: rgba(0,0,0,0.5); border: 1px solid var(--panel-line);
+  user-select: text; -webkit-user-select: text; }
+.entry-name:focus { border-color: var(--amber); box-shadow: 0 0 0 2px rgba(255,182,39,0.35); }
+.btn.entry-ok { width: auto; flex: 0 0 auto; justify-content: center; padding: 0 20px; }
+.entry.done .entry-row, .entry.done .entry-head, .entry:not(.done) .entry-done { display: none; }
+.entry-done { text-align: center; font: 600 13px var(--f-cjk); letter-spacing: 0.08em; color: var(--lime); }
+.entry-done b { color: var(--ink); }
+#rec-title.all { color: var(--amber); text-shadow: 0 0 26px rgba(255,182,39,0.65), 0 2px 0 #000; }
+.rec-score { font: 700 clamp(40px, 13vw, 60px)/1 var(--f-display); color: var(--amber); text-shadow: 0 0 30px rgba(255,182,39,0.5); font-variant-numeric: tabular-nums; }
+.rec-meta .rmeta { justify-content: center; font-size: 12px; }
+.tally .ln .bonus { margin-left: 2px; font: 600 11px var(--f-cjk); letter-spacing: 0.04em; }
+@media (max-height: 700px) {
+  #title .menu { gap: 8px; }
+  #title .btn { padding-block: 11px; }
+  .rpanel { --pb: 12px; gap: 8px; padding-top: 14px; }
+  .rpanel h2 small { display: none; }
+  .rpanel .note { font-size: 11px; line-height: 1.5; }
+  .rrow { padding-block: 2px; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .blink, .warn .w, .warn .stripe, .badge, .btn.ship.deny, .hwallet.bump div { animation: none; }
+  .blink, .warn .w, .warn .stripe, .badge, .btn.hrow.deny, .hwallet.bump div, #hud-shield { animation: none; }
   .bn, .logo { animation-duration: 0.01s; }
 }
 </style>
@@ -415,7 +505,7 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
       <div class="hud-bottom">
         <div class="stock">
           <div class="weapon" id="weapon"></div>
-          <div class="icons" id="lives" aria-label="剩餘機數"></div>
+          <div class="icons"><span class="icons" id="lives" aria-label="剩餘機數"></span><i class="icon-shield" id="hud-shield" role="img" aria-label="能量護盾：可擋一次中彈" hidden></i></div>
           <div class="icons" id="bombs" aria-label="炸彈"></div>
         </div>
         <div class="pad-r">
@@ -448,6 +538,7 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
       <div class="menu">
         <button class="btn primary" data-act="start" id="btn-start">START<span>出擊</span></button>
         <button class="btn" data-act="hangar" id="btn-hangar">HANGAR<span id="hangar-label">機庫</span></button>
+        <button class="btn" data-act="ranking" id="btn-ranking">RANKING<span>排行榜</span></button>
         <button class="btn" data-act="howto">HOW TO PLAY<span>操作說明</span></button>
         <button class="btn" data-act="settings">SETTINGS<span>設定</span></button>
       </div>
@@ -477,7 +568,11 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
         </ul></div>
         <div><h4>HANGAR 機庫</h4><ul>
           <li><i class="coin"></i> 每得 40 分賺 1 CR，過關另有 CR 獎勵。CR 在過關、GAME OVER 或回標題時存入錢包。</li>
-          <li>在標題畫面的「機庫」用 CR 購買新戰機：速度、中彈判定、炸彈數與火力各不相同。</li>
+          <li>標題畫面的「機庫」有三個分頁：<b>機體</b>買新戰機（速度、判定、炸彈與火力各不相同）；<b>塗裝</b>替已擁有的戰機換外觀；<b>強化</b>是全機共用的永久強化，下一局開始生效。<span class="kbd-only">←→ 或 Q／E 切換分頁。</span></li>
+          <li><i class="icon-shield" aria-hidden="true"></i> <b>能量護盾</b>（強化）：每一關可擋下一次致命的中彈。左下角機數旁的藍圈亮著就代表還能用。</li>
+        </ul></div>
+        <div><h4>RANKING 排行榜</h4><ul>
+          <li>一局結束（GAME OVER、從暫停選單離開、打完回標題）時，分數進入前 10 名就能留下名字。排行榜只存在這台裝置的瀏覽器裡。</li>
         </ul></div>
         <div><h4>TIPS 訣竅</h4><ul>
           <li>中彈判定點只有機身中央的小光點；敵彈擦身而過（擦彈）每發 +100 分。</li>
@@ -512,12 +607,49 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
           <h2>HANGAR<small id="hangar-sub">機庫・選擇出擊戰機</small></h2>
           <div class="hwallet" id="hangar-wallet"><small>持有</small><div><i class="coin"></i><span id="hangar-cr">0</span></div></div>
         </div>
-        <div class="ships" id="ships"></div>
-        <div class="foot hhelp kbd-only">↑↓ 選擇・ENTER 購買／設為出擊機・ESC 返回</div>
+        <div class="htabs" id="htabs" role="tablist" aria-label="機庫分頁">
+          <kbd class="kbd-only" aria-hidden="true">Q</kbd>
+          <button class="htab" data-act="htab" data-tab="ship" role="tab" aria-controls="ships">機體<small>AIRCRAFT</small></button>
+          <button class="htab" data-act="htab" data-tab="paint" role="tab" aria-controls="paints">塗裝<small>PAINT</small></button>
+          <button class="htab" data-act="htab" data-tab="up" role="tab" aria-controls="ups">強化<small>UPGRADE</small></button>
+          <kbd class="kbd-only" aria-hidden="true">E</kbd>
+        </div>
+        <div class="hctx" id="hctx" hidden><b></b><span></span></div>
+        <div class="ships" id="ships" role="tabpanel"></div>
+        <div class="ships" id="paints" role="tabpanel" hidden></div>
+        <div class="ships" id="ups" role="tabpanel" hidden></div>
+        <div class="foot hhelp kbd-only">←→ 切換分頁・↑↓ 選擇・ENTER 購買／使用・ESC 返回</div>
         <div class="foot hhelp touch-only">點選即可預覽・購買時需再點一次確認</div>
         <div class="panel-foot"><button class="btn primary" data-act="back">OK<span>返回</span></button></div>
       </div>
       <div class="hcap" aria-hidden="true"><small>PREVIEW</small><b id="hangar-cap">CRIMSON BOLT<i>赤電</i></b></div>
+    </section>
+
+    <section class="screen dim" id="ranking" hidden>
+      <div class="panel rpanel">
+        <div class="rhead">
+          <h2>RANKING<small>排行榜・前 10 名</small></h2>
+          <button class="btn mini" data-act="rank-clear" id="btn-rclear">CLEAR<span>清除</span></button>
+        </div>
+        <ol class="rlist" id="rank-list"></ol>
+        <p class="note" id="rank-note"></p>
+        <div class="panel-foot"><button class="btn primary" data-act="back" id="rank-ok">OK<span>返回</span></button></div>
+      </div>
+    </section>
+
+    <section class="screen dim" id="record" hidden>
+      <div class="h-title" id="rec-title">NEW RECORD</div>
+      <div class="h-sub"><b id="rec-rank">排行榜 第 1 名</b></div>
+      <div class="rec-score" id="rec-score">0</div>
+      <div class="rec-meta" id="rec-meta"></div>
+      <form class="entry" id="rec-entry" autocomplete="off">
+        <div class="entry-head"><b class="entry-rank">第 1 名</b><span>輸入名字（最多 10 字）</span></div>
+        <div class="entry-row">
+          <input class="entry-name" type="text" maxlength="10" enterkeyhint="done" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="排行榜名字，最多 10 字">
+          <button class="btn primary entry-ok" type="submit">OK</button>
+        </div>
+        <div class="entry-done" role="status"></div>
+      </form>
     </section>
 
     <section class="screen dim" id="pause" hidden>
@@ -545,9 +677,17 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
       <div class="tally"><div class="ln on stage"><span>REACHED<small>到達關卡</small></span><span id="go-stage">STAGE 1</span></div>
         <div class="ln on total"><span>SCORE</span><span id="go-score">0</span></div>
         <div class="ln on"><span>HI-SCORE</span><span id="go-hi">0</span></div>
-        <div class="ln on cr"><span><i class="coin"></i>CR<small>本關獲得</small></span><span id="go-cr">+0</span></div>
+        <div class="ln on cr"><span><i class="coin"></i>CR<small>本關獲得</small></span><span><span id="go-cr">+0</span><small class="bonus" id="go-bonus" hidden></small></span></div>
         <div class="ln on wallet"><span>WALLET<small>持有</small></span><span id="go-wallet">CR 0</span></div></div>
       <div class="badge" id="go-new" hidden>NEW RECORD</div>
+      <form class="entry" id="go-entry" autocomplete="off" hidden>
+        <div class="entry-head"><b class="entry-rank">第 1 名</b><span>排行榜入榜！輸入名字（最多 10 字）</span></div>
+        <div class="entry-row">
+          <input class="entry-name" type="text" maxlength="10" enterkeyhint="done" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="排行榜名字，最多 10 字">
+          <button class="btn primary entry-ok" type="submit">OK</button>
+        </div>
+        <div class="entry-done" role="status"></div>
+      </form>
       <div class="menu">
         <button class="btn primary" data-act="retry">RETRY<span>再來一次</span></button>
         <button class="btn" data-act="quit">TITLE<span>回標題</span></button>
@@ -571,12 +711,13 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
   </div>
   <aside class="side" id="side-r" aria-hidden="true">
     <div><h3>HI-SCORE</h3><div class="big" id="side-hi">0</div></div>
-    <div><h3>WALLET</h3><div class="big cr"><i class="coin"></i><span id="side-cr">0</span></div><div class="row">出擊機 <b id="side-ship">CRIMSON BOLT 赤電</b></div></div>
+    <div><h3>WALLET</h3><div class="big cr"><i class="coin"></i><span id="side-cr">0</span></div><div class="row">出擊機 <b id="side-ship">CRIMSON BOLT 赤電</b></div><div class="row">機庫：戰機・塗裝・強化</div></div>
     <div><h3>MISSION</h3><div class="row" id="side-stage">STAGE 1 · 沿岸前線</div><div class="row" id="side-mission">擊破巨大要塞 ARCLIGHT</div><div class="route" id="side-route"></div></div>
     <div><h3>SCORING</h3>
       <div class="row">勳章連鎖 500 → 10,000</div>
       <div class="row">擦彈 +100 / 發</div>
       <div class="row">300,000・1,000,000 分各加一架戰機</div>
+      <div class="row"><i class="icon-shield" aria-hidden="true"></i> 能量護盾（強化）每關擋一次中彈</div>
     </div>
   </aside>
 </div>

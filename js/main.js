@@ -108,11 +108,6 @@ function fail(msg) {
   m.textContent = msg;
 }
 
-// Sounds and tracks added by later audio versions fall back to an existing one until they exist.
-let sfxNames = null, musicNames = null;
-function sfx(name, fallback, opts) { audio.play(!sfxNames || sfxNames.has(name) ? name : fallback, opts); }
-function track(name, fallback) { return !name ? fallback : !musicNames || musicNames.has(name) ? name : fallback; }
-
 async function boot() {
   let worldMod, audioMod;
   try {
@@ -124,8 +119,6 @@ async function boot() {
     return fail('遊戲模組載入失敗，請重新整理頁面。');
   }
   audio = audioMod.audio;
-  sfxNames = audioMod.SFX_NAMES ? new Set(audioMod.SFX_NAMES) : null;
-  musicNames = audioMod.MUSIC_TRACKS ? new Set(audioMod.MUSIC_TRACKS) : null;
   try {
     renderer = new THREE.WebGLRenderer({ antialias: !isTouch, powerPreference: 'high-performance', alpha: false, stencil: false });
   } catch (err) {
@@ -450,8 +443,8 @@ function startGame({ loop = 1, stage = 0, keepScore = false } = {}) {
   ui.setMission(gameMod.STAGES, game.stageIdx, loop);
   const k = loop <= 1 ? `STAGE ${st.n}` : game.stageIdx === 0 ? `LOOP ${loop} · 難度提升` : `STAGE ${st.n} · LOOP ${loop}`;
   ui.banner(`<div class="k">${k}</div><div class="h">${st.name}</div><div class="s">${st.zh}</div>`, '', 2800);
-  sfx(st.startSfx, 'stageStart');
-  audio.music(track(st.music, 'stage'));
+  audio.play(st.startSfx);
+  audio.music(st.music);
   hintState = { moveShown: false, bombShown: false };
   if (loop === 1 && game.stageIdx === 0 && !keepScore && !(hintFlags.moved && touchUI)) {
     setTimeout(() => { if (state === 'playing') { hintState.moveShown = true; input.dragTravel = 0; ui.hint(touchUI); } }, 1200);
@@ -510,8 +503,8 @@ function continueYes() {
   state = 'playing';
   ui.only();
   const st = game.stage;
-  const tr = { boss: track(st.bossMusic, 'boss'), warning: null, bossdead: null, clear: null }[game.phase];
-  audio.music(tr === undefined ? track(st.music, 'stage') : tr);
+  const tr = { boss: st.bossMusic, warning: null, bossdead: null, clear: null }[game.phase];
+  audio.music(tr === undefined ? st.music : tr);
   audio.play('confirm');
   input.clearEdges();
 }
@@ -551,7 +544,6 @@ async function showResults() {
   state = 'results';
   const g = game, st = g.stats, meta = g.stage;
   const last = g.stageIdx >= gameMod.STAGES.length - 1;
-  if (!st.clearMoney && MONEY.stageClear[meta.n]) { st.clearMoney = MONEY.stageClear[meta.n]; g.runMoney += st.clearMoney; } // (game.js adds it at 'clear')
   const stageScore = (st.stageCarry || 0) + Math.max(0, g.score - st.stageScoreStart);
   const pct = st.spawned ? st.killed / st.spawned : 1;
   const clearBonus = 50000 * g.loop * meta.n;
@@ -596,8 +588,8 @@ async function showResults() {
   await ui.tally(lines, g.score, rank, isNew, () => speedTally, (kind, k) => {
     if (kind === 'line') audio.play('select', { vol: 0.5 });
     else if (kind === 'total') audio.play('confirm');
-    else if (kind === 'coin') sfx('coin', 'medal', { vol: 0.5, pitch: Math.round(k * 6) * 2 });
-    else if (kind === 'coinEnd') sfx('coin', 'item', { vol: 0.7, pitch: 12 });
+    else if (kind === 'coin') audio.play('coin', { vol: 0.5, pitch: Math.round(k * 6) * 2 });
+    else if (kind === 'coinEnd') audio.play('coin', { vol: 0.7, pitch: 12 });
     else if (kind === 'rank') audio.play('powerup');
     else if (kind === 'record') audio.play('oneup');
   }, { earned, wallet: readWallet().money });
@@ -621,7 +613,7 @@ function onGameEvent(ev) {
       ui.warning(false);
       ui.danger(false);
       ui.boss(true, game.stage.boss, game.stage.bossZh);
-      audio.music(track(game.stage.bossMusic, 'boss'));
+      audio.music(game.stage.bossMusic);
       break;
     case 'midboss':
       audio.play('lock', { vol: 0.6 });
@@ -715,7 +707,7 @@ function activateShip(btn) {
     if (w.equipped === id) { audio.play('select'); ui.hangarMsg(id, '這架已是出擊機', 'good', 1200); return; }
     w.equipped = id;
     writeWallet(w);
-    sfx('equip', 'confirm');
+    audio.play('equip');
     ui.setShip(ac);
     ui.hangarMsg(id, '已設為出擊機', 'good', 1400);
     return;
@@ -729,14 +721,14 @@ function activateShip(btn) {
   if (!w2.owned.includes(id)) w2.owned.push(id);
   w2.equipped = id;
   writeWallet(w2);
-  sfx('buy', 'oneup');
+  audio.play('buy');
   ui.flash(0.2);
   ui.walletBump();
   ui.setShip(ac);
   ui.hangarMsg(id, `購買完成！已設為出擊機`, 'good', 2200);
 }
 function refuse(id, short) {
-  sfx('deny', 'hitArmor');
+  audio.play('deny');
   ui.hangarShake(id);
   ui.hangarMsg(id, `還差 ${MONEY.label} ${fmt(short)}`, 'bad', 1600);
 }

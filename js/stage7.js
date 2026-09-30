@@ -138,7 +138,8 @@ function breathe(g, i, k) {
 const VEN_A = [1.1, 2.4, 0.35, 0.9], VEN_B = [0.25, 0.6, 0.05, 0];        // lime bio-light
 const XT_A = [1.4, 2.6, 3.2, 1], XT_B = [0.3, 0.7, 1.1, 0];               // crystal light
 const WARP_A = [1.8, 0.9, 3.2, 1], WARP_B = [0.35, 0.12, 0.9, 0];         // warp violet
-const WHITE_A = [2.8, 2.6, 3.0, 1], WHITE_B = [0.8, 0.5, 1.4, 0];
+const WHITE_A = [2.8, 2.6, 3.0, 1];
+const TEAR_A = [1.6, 2.2, 0.5, 0.9], TEAR_B = [0.6, 0.3, 0.05, 0];          // bio-fire along a torn hull
 const OPT_GLOW = { drag: 1.4 }, OPT_FLAT = { flat: true, rot: 0, drag: 0 }, OPT_SHARD = { drag: 3, stretch: 0.05 };
 const OPT_SPORE = { drag: 0.6, vrot: 0 }, NO_DRAG = { drag: 0 };
 /** a puff of lime bio-light behind a unit (dx, dz: the wake direction on the plane) */
@@ -877,7 +878,7 @@ function nemesisDeath(e, dt, g) {
   if (ud.setBreak) ud.setBreak(clamp((t - 1.2) / 2.0, 0, 1));
   if (t > 1.2 && t < 3.4 && Math.random() < 0.5) {   // fire along the tear between prow and carapace
     g.fx.p.emit(e.x + rnd(-2.2, 2.2), 0.6 + y, e.z + 2.9 + rnd(-0.5, 0.5), rnd(-0.6, 0.6), rnd(0.6, 1.6), rnd(-0.6, 0.6), rnd(0.4, 0.8), rnd(0.6, 1.0), rnd(1.6, 2.6),
-      [1.6, 2.2, 0.5, 0.9], [0.6, 0.3, 0.05, 0], F.FIRE, 0, OPT_GLOW);
+      TEAR_A, TEAR_B, F.FIRE, 0, OPT_GLOW);
   }
   // it sinks away, pitching and shrinking with distance
   e.z += 0.4 * dt;

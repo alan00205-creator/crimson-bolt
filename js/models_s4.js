@@ -505,7 +505,7 @@ function createMine() {
 // the head AND the curved neck reaching back to the base (so the hit circle sits on the head).
 const HY_CORE = [0, 0.74, 0.95];
 // neck bases [x, y, z] and their resting yaw (outer necks splay out)
-const HY_NECK = [[-1.45, 0.34, -1.5, 0.42], [0, 0.46, -1.9, 0], [1.45, 0.34, -1.5, -0.42]];
+const HY_NECK = [[-1.5, 0.34, -1.45, 0.52], [0, 0.46, -1.9, 0], [1.5, 0.34, -1.45, -0.52]];
 const HY_REACH = 2.45, HY_LIFT = 0.28;    // head centre relative to its neck base (forward, up)
 function buildHydraBody() {
   const b = new GB();
@@ -628,7 +628,7 @@ function createHydra() {
     const [x, y, z, yaw] = HY_NECK[k], big = k === 1 ? 1.15 : 1;
     const neck = new THREE.Object3D(); neck.name = 'neck' + k; neck.position.set(x, y, z); neck.rotation.order = 'YXZ'; neck.rotation.y = yaw;
     const m = bodyMat(0.5, 0.3); allMats.push(m);
-    const part = destructiblePart({ key: 'ext:s4:hydra.head', build: buildHydraHead, name: names[k], radius: 0.95 * big,
+    const part = destructiblePart({ key: 'ext:s4:hydra.head', build: buildHydraHead, name: names[k], radius: 0.8 * big,
       muzzles: [new THREE.Vector3(-0.16, -0.08, -1.42), new THREE.Vector3(0.16, -0.08, -1.42)], wreck: headKeep, sag: [0.25, -0.1, 0.1 * (k - 1)], mat: m });
     part.position.set(0, HY_LIFT * big, -HY_REACH * big);
     part.scale.setScalar(big);

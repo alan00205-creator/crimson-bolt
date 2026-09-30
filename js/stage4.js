@@ -41,9 +41,9 @@ export const ENEMY = {
   hydra: {
     hp: 9999, score: 40000, radius: 2.0, air: true, explode: 3.4, debris: 32, midboss: true, noRevenge: true, bodyTarget: false, keepOff: 8, prewarm: 1,
     parts: [
-      { key: 'headL', hp: 150, score: 6000, medals: 2, big: 1.8 }, { key: 'headC', hp: 190, score: 8000, medals: 2, big: 2.0 },
-      { key: 'headR', hp: 150, score: 6000, medals: 2, big: 1.8 },
-      { key: 'core', hp: 600, core: true, score: 40000 },
+      { key: 'headL', hp: 165, score: 6000, medals: 2, big: 1.8 }, { key: 'headC', hp: 210, score: 8000, medals: 2, big: 2.0 },
+      { key: 'headR', hp: 165, score: 6000, medals: 2, big: 1.8 },
+      { key: 'core', hp: 660, core: true, score: 40000 },
     ],
     hull: { hw: 2.2, z0: -2.9, z1: -1.75 },        // the carapace behind the core (never in front of a part)
   },
@@ -59,7 +59,7 @@ export const ENEMY = {
       { key: 'cannon', hp: 700, score: 25000, medals: 4, big: 2.4 },
       { key: 'capL', hp: 260, score: 10000, medals: 2, big: 1.6 },
       { key: 'capR', hp: 260, score: 10000, medals: 2, big: 1.6 },
-      { key: 'core', hp: 2300, core: true, score: 250000 },
+      { key: 'core', hp: 1850, core: true, score: 250000 },
     ],
     hull: { hw: 2.3, z0: -2.9, z1: -1.95 },
   },
@@ -335,7 +335,8 @@ function mineAI(x0, vz = 2.3, drift = 0, armZ = 0.58) {
 const HY_ROW = 8.5;     // station below the top edge
 const HY_OPEN = 16;     // fight time at which the core opens even with heads left
 const HY_FIGHT = 46;    // fight time at which it gives up and climbs away
-const HY_BASE = [[-1.45, -1.5], [0, -1.9], [1.45, -1.5]];   // neck bases (model x, z)
+const NECK_REACH = 0.34; // how far a neck swings off its rest angle to track the jet (the heads never bunch up)
+const HY_BASE = [[-1.5, -1.45], [0, -1.9], [1.5, -1.45]];   // neck bases (model x, z)
 // the neck's yaw that points its head at the jet (model frame: the platform faces the jet, yaw π)
 function neckAim(g, e, k) {
   const bx = e.x - HY_BASE[k][0], bz = e.z - HY_BASE[k][1];      // yaw π: model (x, z) → (−x, −z)
@@ -377,7 +378,7 @@ function hydraAI() {
       const n = N[k], hs = s.hs[k], rest = ud.neckYaw[k];
       if (!live(H[k])) { n.rotation.x += (-0.42 - n.rotation.x) * Math.min(1, dt * 1.5); n.rotation.y += (rest * 1.4 - n.rotation.y) * Math.min(1, dt); continue; }
       const sway = Math.sin(s.life * 1.3 + k * 2.1) * 0.12;
-      const want = hs.st === 'fire' || hs.st === 'breath' ? hs.lock : clamp(neckAim(g, e, k), rest - 0.62, rest + 0.62) + (hs.st === 'idle' ? sway : 0);
+      const want = hs.st === 'fire' || hs.st === 'breath' ? hs.lock : clamp(neckAim(g, e, k), rest - NECK_REACH, rest + NECK_REACH) + (hs.st === 'idle' ? sway : 0);
       n.rotation.y += clamp(wrapA(want - n.rotation.y), -2.2 * dt, 2.2 * dt);
       const rw = hs.st === 'rear' ? 0.34 : hs.st === 'fire' ? -0.1 : hs.st === 'breath' ? 0.12 : Math.sin(s.life * 1.7 + k) * 0.05;
       n.rotation.x += (rw - n.rotation.x) * Math.min(1, dt * (hs.st === 'fire' ? 16 : 5));
@@ -401,7 +402,7 @@ function hydraAI() {
         if (hs.t <= 0) { hs.st = 'rear'; hs.mt = 0; hs.t = 3.4 / fr; }
       } else if (hs.st === 'rear') {
         pt.obj.userData.setCharge(Math.min(1, hs.mt / 0.55));
-        if (hs.mt > 0.6) { hs.st = 'fire'; hs.mt = 0; hs.lock = neckAim(g, e, k); hs.burst = 5; hs.bt = 0.08; pt.obj.userData.setCharge(0); g.audio.play('missile', { vol: 0.35, pitch: 3 }); }
+        if (hs.mt > 0.6) { hs.st = 'fire'; hs.mt = 0; hs.lock = clamp(neckAim(g, e, k), ud.neckYaw[k] - NECK_REACH, ud.neckYaw[k] + NECK_REACH); hs.burst = 5; hs.bt = 0.08; pt.obj.userData.setCharge(0); g.audio.play('missile', { vol: 0.35, pitch: 3 }); }
       } else if (hs.st === 'fire') {
         hs.bt -= dt;
         if (hs.bt <= 0 && hs.burst > 0) {
@@ -423,7 +424,7 @@ function hydraAI() {
           if (hs.t <= 0) { hs.st = 'rear'; hs.mt = 0; hs.t = 5.4 / fr; g.audio.play('lock', { vol: 0.35, pitch: -4 }); }
         } else if (hs.st === 'rear') {
           pt.obj.userData.setCharge(Math.min(1, hs.mt / 0.9) * (0.8 + Math.sin(hs.mt * 30) * 0.2));
-          if (hs.mt > 0.95) { hs.st = 'breath'; hs.mt = 0; hs.bt = 0; hs.lock = neckAim(g, e, 1); }
+          if (hs.mt > 0.95) { hs.st = 'breath'; hs.mt = 0; hs.bt = 0; hs.lock = clamp(neckAim(g, e, 1), -NECK_REACH, NECK_REACH); }
         } else if (hs.st === 'breath') {
           pt.obj.userData.setCharge(0.6);
           hs.bt -= dt;
@@ -708,7 +709,7 @@ function aegisAI() {
         s.c = (s.c || 0) + 0.5;
         g.ring(cx, cz, n, 4.1, s.c * (TAU / n) + s.cyc * 0.05);
       }
-    } else if (!s.fanned) { s.fanned = true; g.fan(cx, cz, g.aim(cx, cz), hard ? 9 : 7, hard ? 1.1 : 0.9, 6.6, g.BK.BIG); g.audio.play('lock', { vol: 0.4 }); }
+    } else if (!s.fanned) { s.fanned = true; g.fan(cx, cz, g.aim(cx, cz), hard ? 7 : 5, hard ? 0.95 : 0.75, 6.6, g.BK.BIG); g.audio.play('lock', { vol: 0.4 }); }
     if (cyc < 7.6) s.fanned = false;
     if (rage) {
       s.mnT = (s.mnT ?? 1.5) - dt;
@@ -790,19 +791,24 @@ function aegisDeath(e, dt, g) {
     g.fx.p.emit(e.x + rnd(-2, 2), 0.6 + y, e.z + rnd(-2, 2), rnd(-0.6, 0.6), rnd(0.6, 1.6), rnd(-0.6, 0.6), rnd(0.4, 0.8), rnd(0.6, 1.0), rnd(1.6, 2.6),
       FIRE_A, FIRE_B, F.FIRE, 0, OPT_FIRE);
   }
-  // it falls away toward the planet: sinking, pitching, shrinking with distance, burning up
+  // it falls away toward the planet: sinking, pitching, shrinking with distance, burning up. The sink stops
+  // short of GROUND_Y: the orbit's depth-only occluder there (world.js space kit) would swallow the wreck
   e.z += 0.5 * dt;
   s.pitch = Math.min(0.35, t * 0.09);
-  if (t > 2.0) s.y = -(t - 2.0) * (t - 2.0) * 1.3;
-  const sc = 1 - 0.55 * smooth((t - 2.4) / 2.8);
+  s.y = -5.3 * smooth((t - 2.0) / 3.3);
+  const sc = 1 - 0.6 * smooth((t - 2.3) / 3.0);
   e.mesh.scale.setScalar(sc);
-  if (t > 2.3) for (let i = 0; i < 2; i++) reentry(g, e.x + rnd(-2.5, 2.5) * sc, (s.y || 0) + 0.8, e.z + rnd(-2.5, 2.5) * sc, 1.2 * sc);
+  // re-entry fire off the leading edges of the two halves (not over the middle: the wreck stays readable)
+  if (t > 2.3 && Math.random() < 0.7) {
+    const a = s.spin + (Math.random() < 0.5 ? 0 : Math.PI) + rnd(-0.5, 0.5), r = 5.4 * sc;
+    reentry(g, e.x - Math.cos(a) * r, (s.y || 0) + 0.6, e.z - Math.sin(a) * r, 0.9 * sc);
+  }
   if (t > 2.4 && !s.final) {
     s.final = true;
-    g.fx.explosion(e.x, 0.5, e.z, 4.2, { debris: 40, color: ud.debrisColor });
+    g.fx.explosion(e.x, 0.5, e.z, 3.8, { debris: 40, color: ud.debrisColor });
     g.fx.shockwave(e.x, 0.1, e.z, 32, [1.4, 2.8, 1.8, 1], 1.0);
     g.fx.shockwave(e.x, 0.1, e.z, 19, [2.6, 2.4, 2.0, 1], 0.8);
-    g.ui.flash(0.8); g.shake.add(1);
+    g.ui.flash(0.65); g.shake.add(1);
     g.audio.play('bossDown');
     g.haptic([80, 50, 200]);
     for (let i = 0; i < 18; i++) g.dropItem('medal', e.x + rnd(-5, 5), e.z + rnd(-3, 3));

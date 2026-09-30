@@ -6108,7 +6108,7 @@ const MN_DRV_X = 9.0, MN_DRV_A = 1004, MN_DRV_B = 1236;   // the mass driver's r
 
 // lunar palette (regolith kept mid-toned: the glowing bullets need a ground darker than themselves)
 const MP = {
-  hi: C(0x858480), reg: C(0x777674), regL: C(0x92918e), regD: C(0x5a5958), ejecta: C(0xa3a29e), dust: C(0x676663),
+  hi: C(0x7b7a76), reg: C(0x70706e), regL: C(0x8a8987), regD: C(0x555453), ejecta: C(0x9c9b97), dust: C(0x62615e),
   mare: C(0x404145), mareD: C(0x35363a), mareL: C(0x55565a), graded: C(0x72716f), wall: C(0x676562),
   track: C(0x67655f), trackL: C(0x6f6d68), rut: C(0x4c4a46),
   sinter: C(0x8b8883), sinterL: C(0x9d9a94), sinterD: C(0x6c6a66), paint: C(0xd4cebb), hazard: C(0xc9a23c),
@@ -7322,11 +7322,11 @@ function mnDrvLot(ch, kind, a, b) {
 // (shK: the sun stands low). Backdrop: black space, the galactic band, crisp stars and, low beside the
 // mare, the Earth — its day side toward the sun
 const MOON_TOD_SRC = [
-  { d: -60, sun: 0xfff8f0, sunI: 2.2, sky: 0x1c2230, gnd: 0x0c0d10, hemiI: 0.45, fog: 0x000000, near: 120, far: 320,
+  { d: -60, sun: 0xfff8f0, sunI: 2.1, sky: 0x1c2230, gnd: 0x0c0d10, hemiI: 0.45, fog: 0x000000, near: 120, far: 320,
     cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0.7, shK: 3.2, cloud: 0,
     pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xc6ceda, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
     pSpace: 0x010103, pNeb: 0x262a3c, pX: 13, pZ: -14, pF: 17, pH: 4.2, pCover: 0.55, pAtmW: 0.03, pNebI: 0.9, pStar: 1.0, pCityI: 0.6, psun: [-0.7, 0.45, 0.55] },
-  { d: 520, sun: 0xfff8f0, sunI: 2.2, sky: 0x1c2230, gnd: 0x0c0d10, hemiI: 0.45, fog: 0x000000, near: 120, far: 320,
+  { d: 520, sun: 0xfff8f0, sunI: 2.1, sky: 0x1c2230, gnd: 0x0c0d10, hemiI: 0.45, fog: 0x000000, near: 120, far: 320,
     cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0.7, shK: 3.0, cloud: 0,
     pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xc6ceda, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
     pSpace: 0x010103, pNeb: 0x262a3c, pX: 13, pZ: -14, pF: 17, pH: 4.2, pCover: 0.55, pAtmW: 0.03, pNebI: 0.9, pStar: 1.0, pCityI: 0.6, psun: [-0.7, 0.45, 0.55] },

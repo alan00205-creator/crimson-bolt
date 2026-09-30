@@ -609,11 +609,12 @@ function seleniteFight(e, dt, g) {
   }
 }
 const SHARD_A = [1.4, 2.0, 3.0, 1], SHARD_B = [1.8, 2.4, 3.2, 1];
+const SHARD_FLY = { drag: 0, vrot: 9 };
 function prismShard(g, e, C) {
   const m = g.muzzlePos(C.obj), mx = m.x, mz = m.z, P = g.player;
   const k = 0.45, tx = mx + (P.x - mx) * k, tz = mz + (P.z - mz) * k, fuse = 0.85;
   const vx = (tx - mx) / fuse, vz = (tz - mz) / fuse;
-  g.fx.p.emit(mx, 0.3, mz, vx, 0, vz, fuse, 0.7, 1.1, SHARD_A, SHARD_B, F.SHARD, 0, { drag: 0, vrot: 9 });
+  g.fx.p.emit(mx, 0.3, mz, vx, 0, vz, fuse, 0.7, 1.1, SHARD_A, SHARD_B, F.SHARD, 0, SHARD_FLY);
   g.fx.p.emit(mx, 0.3, mz, vx, 0, vz, fuse, 1.3, 1.9, MOON_A, MOON_A, F.GLOW, 0, NO_DRAG);
   g.audio.play('lock', { vol: 0.3, pitch: 7 });
   g.later(fuse, () => {
@@ -903,6 +904,7 @@ function sunLance(e, dt, g, M, fr) {
     if (s.gunT > 1.9 / fr) { s.gun = 'track'; s.gunT = 0; }
   }
 }
+const ECL_A = [0.05, 0.05, 0.1, 0.8], ECL_B = [0.4, 0.5, 1.0, 0.9];         // the eclipse's closing ring
 function heartPatterns(e, dt, g, fr, hard) {
   const s = e.s, core = s.core;
   const cm = g.muzzlePos(core.obj), cx = cm.x, cz = cm.z;
@@ -928,7 +930,7 @@ function heartPatterns(e, dt, g, fr, hard) {
   if (cyc < 7.0) s.fanned = false;
   if (rage) {                                              // eclipse: dark for a moment, then a double ring and mines
     s.ecT = (s.ecT ?? 2.0) - dt;
-    if (s.ecT <= 0.8 && !s.ecl) { s.ecl = true; g.fx.p.emit(cx, 0.2, cz, 0, 0, 0, 0.8, 9, 1.5, [0.05, 0.05, 0.1, 0.8], [0.4, 0.5, 1.0, 0.9], F.RING, 0, FLAT); g.audio.play('warning', { vol: 0.3 }); }
+    if (s.ecT <= 0.8 && !s.ecl) { s.ecl = true; g.fx.p.emit(cx, 0.2, cz, 0, 0, 0, 0.8, 9, 1.5, ECL_A, ECL_B, F.RING, 0, FLAT); g.audio.play('warning', { vol: 0.3 }); }
     if (s.ecT <= 0) {
       s.ecT = 7 / fr; s.ecl = false; s.b += 0.3;
       g.ring(cx, cz, 20, 3.8, s.b); g.ring(cx, cz, 20, 5.0, s.b + Math.PI / 20);

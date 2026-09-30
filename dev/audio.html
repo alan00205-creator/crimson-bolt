@@ -81,11 +81,8 @@
   <section>
     <h2>Music</h2>
     <div class="row" id="tracks"></div>
-    <p class="note">Tracks crossfade (~0.6 s). The loop plays twice with different orchestration (harmony, doubling, busier drums) before repeating. A stage's music + its fanfare together is what the game does when a stage starts (each fanfare is locked to its own theme's tempo and key): <b>stage</b> + <b>stageStart</b> (D minor, 140), <b>stage2</b> + <b>stageStart2</b> (B phrygian desert, 148), <b>stage3</b> + <b>stageStart3</b> (C lydian skies, 152). Bosses: <b>boss</b> (E minor, 155), <b>boss2</b> (A minor machine, 136), <b>boss3</b> (D minor finale, 165).</p>
-    <div class="row" style="margin-top:8px">
-      <button data-run="">Stage 1 start</button><button data-run="2">Stage 2 start</button><button data-run="3">Stage 3 start</button>
-      <button data-boss="boss">Boss 1 entrance (warning → boss)</button><button data-boss="boss2">Boss 2 entrance</button><button data-boss="boss3">Boss 3 entrance</button>
-    </div>
+    <p class="note">Tracks crossfade (~0.6 s). The loop plays twice with different orchestration (harmony, doubling, busier drums, other guitar and arp parts) before repeating. A stage's music + its fanfare together is what the game does when a stage starts (each fanfare is locked to its own theme's tempo and key): <span id="stagekeys"></span>. Bosses: <span id="bosskeys"></span>.</p>
+    <div class="row" id="runs" style="margin-top:8px"></div>
   </section>
 
   <section>
@@ -134,19 +131,20 @@
   </section>
 
 <script type="module">
-import { audio, SFX_NAMES, MUSIC_TRACKS, __renderForTest, __renderBuffer, __songInfo, __bakeStats } from '../js/audio.js';
+import { audio, SFX_NAMES, MUSIC_TRACKS, __renderForTest, __renderBuffer, __songInfo, __bakeStats, __scenarios } from '../js/audio.js';
 
 const $ = (id) => document.getElementById(id);
-const DUR = { shot: 0.5, laser: 0.5, hit: 0.5, graze: 0.5, lock: 0.5, select: 0.5, hitArmor: 0.8, vulcan: 5, laserBeam: 5, firefight: 8, gameplayLaser: 8, runStart: 4, hitStream: 5, armorStream: 5,
+const DUR = { shot: 0.5, laser: 0.5, hit: 0.5, graze: 0.5, lock: 0.5, select: 0.5, hitArmor: 0.8, vulcan: 5, laserBeam: 5, firefight: 8, hitStream: 5, armorStream: 5,
   item: 0.8, missile: 1, pause: 1, confirm: 1.2, explodeS: 1.5, medal: 1.5, powerup: 1.5,
-  oneup: 2, explodeM: 3, explodeL: 5, death: 5, warning: 4, stageStart: 3.5, bomb: 6, bossDown: 9,
-  stageStart2: 3.5, stageStart3: 3.5, plasma: 0.5, wave: 0.5, multi: 1, coin: 0.5, buy: 1.5, deny: 0.6, equip: 1,
-  runStart2: 4, runStart3: 4, plasmaBeam: 5, waveGun: 5, multiSalvo: 5, coinTally: 3, gameplay: 8, gameplay2: 8, gameplay3: 8,
-  stress: 6, stressRaw: 6, stress2: 6, stress3: 6 };
+  oneup: 2, explodeM: 3, explodeL: 5, death: 5, warning: 4, bomb: 6, bossDown: 9,
+  plasma: 0.5, wave: 0.5, multi: 1, coin: 0.5, buy: 1.5, deny: 0.6, equip: 1,
+  plasmaBeam: 5, waveGun: 5, multiSalvo: 5, coinTally: 3, stressRaw: 6 };
+// render length of a job; the numbered families (stageStart2 …, runStart2 …, gameplay2 …, stress2 …) share one
+const durOf = (n, def) => DUR[n] || (/^stageStart\d?$/.test(n) ? 3.5 : /^runStart\d?$/.test(n) ? 4
+  : /^gameplay/.test(n) ? 8 : /^stress\d?$/.test(n) ? 6 : def);
 const TRACK_SECONDS = 8;
-// scenario jobs of the auto test (besides every SFX and every track)
-const SCENARIOS = ['runStart', 'runStart2', 'runStart3', 'vulcan', 'laserBeam', 'plasmaBeam', 'waveGun', 'multiSalvo', 'coinTally',
-  'hitStream', 'armorStream', 'firefight', 'gameplay', 'gameplayLaser', 'gameplay2', 'gameplay3', 'stress', 'stress2', 'stress3', 'stressRaw'];
+// scenario jobs of the auto test (besides every SFX and every track): every one the module offers
+const SCENARIOS = __scenarios();
 const BUDGET_TRACKS = ['stage', 'boss'];      // the CPU budget: new tracks are measured against these
 
 // ---- live controls
@@ -177,16 +175,39 @@ for (const t of [...MUSIC_TRACKS, null]) {
   b.onclick = () => { audio.init(); audio.music(t); refreshStatus(); };
   $('tracks').appendChild(b);
 }
-// what main.js does when a stage starts: its fanfare and its music in the same frame
-for (const b of document.querySelectorAll('[data-run]')) {
-  b.onclick = () => { const n = b.dataset.run; audio.init(); audio.play('stageStart' + n); audio.music('stage' + n); refreshStatus(); };
+// what main.js does when a stage starts: its fanfare and its music in the same frame; and the
+// boss entrance (music stops, the warning klaxon, the boss theme) — one pair per stage the
+// module has, with each theme's key and tempo in the note above
+const KEYN = ['C', 'C#', 'D', 'E♭', 'E', 'F', 'F#', 'G', 'A♭', 'A', 'B♭', 'B'];
+const INFO = __songInfo();
+const MODE = { '0,1,3,5,7,8,10': ' phrygian', '0,2,4,6,7,9,11': ' lydian', '0,2,3,5,7,9,10': ' dorian' };
+const keyOf = (t) => `${KEYN[INFO[t].key]}${INFO[t].scale ? MODE[INFO[t].scale.join()] || ' mode' : INFO[t].minor ? ' minor' : ' major'}, ${INFO[t].bpm}`;
+const stageKeys = [], bossKeys = [];
+for (let n = 1; n <= 9; n++) {
+  const sfx = n > 1 ? String(n) : '', st = 'stage' + sfx, bs = 'boss' + sfx;
+  if (INFO[st] && SFX_NAMES.includes('stageStart' + sfx)) {
+    const b = document.createElement('button');
+    b.textContent = `Stage ${n} start`;
+    b.onclick = () => { audio.init(); audio.play('stageStart' + sfx); audio.music(st); refreshStatus(); };
+    $('runs').appendChild(b);
+    stageKeys.push(`<b>${st}</b> + <b>stageStart${sfx}</b> (${keyOf(st)})`);
+  }
+  if (INFO[bs]) bossKeys.push(`<b>${bs}</b> (${keyOf(bs)})`);
 }
-for (const b of document.querySelectorAll('[data-boss]')) {
-  b.onclick = () => { audio.init(); audio.music(null); audio.play('warning'); setTimeout(() => audio.music(b.dataset.boss), 3200); };
+for (let n = 1; n <= 9; n++) {
+  const bs = 'boss' + (n > 1 ? n : '');
+  if (!INFO[bs]) continue;
+  const b = document.createElement('button');
+  b.textContent = n === 1 ? 'Boss 1 entrance (warning → boss)' : `Boss ${n} entrance`;
+  b.onclick = () => { audio.init(); audio.music(null); audio.play('warning'); setTimeout(() => audio.music(bs), 3200); };
+  $('runs').appendChild(b);
 }
+$('stagekeys').innerHTML = stageKeys.join(', ');
+$('bosskeys').innerHTML = bossKeys.join(', ');
 const HINT = { shot: 'vulcan · 13/s', laser: 'beam · hold to sustain', medal: 'uses chain step', warning: '3 s klaxon',
   bossDown: 'long tail', stageStart: 'fanfare', bomb: 'screen clear', graze: 'sparkle',
-  stageStart2: 'stage 2 fanfare', stageStart3: 'stage 3 fanfare', plasma: 'beam · hold to sustain', wave: 'wave gun · rapid',
+  stageStart2: 'stage 2 fanfare', stageStart3: 'stage 3 fanfare', stageStart4: 'stage 4 fanfare', stageStart5: 'stage 5 fanfare',
+  plasma: 'beam · hold to sustain', wave: 'wave gun · rapid',
   multi: 'rocket fan', coin: 'results CR tick', buy: 'hangar purchase', deny: 'not enough CR', equip: 'hangar equip' };
 for (const n of SFX_NAMES) {
   const b = document.createElement('button');
@@ -229,8 +250,8 @@ async function runAuto() {
   const rows = [];
   const tbl = $('results');
   tbl.innerHTML = '<tr><th>name</th><th>kind</th><th>sec</th><th>peak</th><th>peak dBFS</th><th>pre-limiter</th><th>rms dBFS</th><th>NaN</th><th>render ms</th><th>ms / s</th><th>result</th></tr>';
-  const jobs = [...SFX_NAMES.map((n) => [n, DUR[n] || 2]), ...MUSIC_TRACKS.map((t) => [t, TRACK_SECONDS]),
-    ...SCENARIOS.map((n) => [n, DUR[n] || 5])];
+  const jobs = [...SFX_NAMES.map((n) => [n, durOf(n, 2)]), ...MUSIC_TRACKS.map((t) => [t, TRACK_SECONDS]),
+    ...SCENARIOS.map((n) => [n, durOf(n, 5)])];
   let pass = 0;
   for (const [name, sec] of jobs) {
     const r = await __renderForTest(name, sec);
@@ -410,9 +431,9 @@ async function drawOne(name, sec, prepend) {
 }
 async function drawAll(list) {
   $('viz').innerHTML = '';
-  const names = list || [...SFX_NAMES, ...MUSIC_TRACKS, 'runStart', 'runStart2', 'runStart3', 'vulcan', 'laserBeam', 'plasmaBeam', 'waveGun',
+  const names = list || [...SFX_NAMES, ...MUSIC_TRACKS, ...SCENARIOS.filter((n) => /^runStart/.test(n)), 'vulcan', 'laserBeam', 'plasmaBeam', 'waveGun',
     'armorStream', 'gameplay', 'stress'];
-  for (const n of names) await drawOne(n, MUSIC_TRACKS.includes(n) ? TRACK_SECONDS : (DUR[n] || 2));
+  for (const n of names) await drawOne(n, MUSIC_TRACKS.includes(n) ? TRACK_SECONDS : durOf(n, 2));
   window.__vizDone = true;
 }
 $('vizall').onclick = () => drawAll();

@@ -1621,16 +1621,17 @@ const FANFARE3 = {
   song: 'stage3', lead: iLead, toms: false, v: 0.55, pad: [48, 55, 64, 71], bells: [84, 88, 90, 95], gtr: 48,
   seq: [0, 67, 64, 1, 1, 67, 64, 1, 2, 67, 64, 1, 4, 72, 67, 3, 8, 79, 76, 8],
 };
-// Stage 4 (F# minor, militant): F# F# F# A → C#, snare drags on every hit, then an icy bell
-// arpeggio (F# A C# F#) over the F#m chord.
+// Stage 4 (G minor, orbit): the theme's rising call as a fanfare — G B-flat D climbing in 16ths
+// to G5, then a fifth up to D6 — and a bell sparkle up G B-flat D G (the starfield) over Gm.
 const FANFARE4 = {
-  song: 'stage4', lead: iLead, toms: 'drag', v: 0.55, pad: [42, 49, 54, 57], bells: [78, 81, 85, 90], gtr: 42,
-  seq: [0, 66, 61, 1, 1, 66, 61, 1, 2, 66, 61, 1, 4, 69, 66, 3, 8, 73, 69, 8],
+  song: 'stage4', lead: iLead, toms: false, v: 0.55, pad: [43, 50, 55, 58], bells: [79, 82, 86, 91], gtr: 43,
+  seq: [0, 67, 62, 1, 1, 70, 67, 1, 2, 74, 70, 1, 4, 79, 74, 3, 8, 86, 79, 8],
 };
-// Stage 5 (G minor, the finale): G G G B-flat → D, the longest last note, under a choir.
+// Stage 5 (F# minor, the siege march): F# F# F# A → C#, snare drags on every hit, and a choir
+// swelling on the F#m chord.
 const FANFARE5 = {
-  song: 'stage5', lead: iLead, toms: false, v: 0.55, pad: [43, 50, 55, 58], choir: true, gtr: 43,
-  seq: [0, 67, 62, 1, 1, 67, 62, 1, 2, 67, 62, 1, 4, 70, 67, 3, 8, 74, 70, 8],
+  song: 'stage5', lead: iLead, toms: 'drag', v: 0.55, pad: [42, 49, 54, 57], choir: true, gtr: 42,
+  seq: [0, 66, 61, 1, 1, 66, 61, 1, 2, 66, 61, 1, 4, 69, 66, 3, 8, 73, 69, 8],
 };
 const BUY_NOTES = [74, 78, 81, 86];
 const SHIELD_PINGS = [2349.3, 3322.4, 4186, 5587.7], PING_PAN = [0, 0.35, -0.35, 0.3]; // 'shield' crystal pings (Hz)
@@ -1672,7 +1673,7 @@ const SFX = {
   stageStart3: { gap: 0.5,  max: 1, pri: 9, lv: 2, verb: 1 },
   stageStart4: { gap: 0.5,  max: 1, pri: 9, lv: 2, verb: 1 },
   stageStart5: { gap: 0.5,  max: 1, pri: 9, lv: 2, verb: 1 },
-  plasma:    { gap: 0.045, max: 1, pri: 2, lv: -14, hold: 0.09 },
+  plasma:     { gap: 0.045, max: 1, pri: 2, lv: -14, hold: 0.09 },
   wave:       { gap: 0.05,  max: 3, pri: 1, lv: 2, bake: [2, 0.16], jit: 0.5 },
   multi:      { gap: 0.06,  max: 4, pri: 2, lv: 6, bake: [1, 0.5], jit: 0.75 },
   coin:       { gap: 0.025, max: 3, pri: 5, lv: 4, bake: [1, 0.2], jit: 0.15, streak: [4, 0.06] },
@@ -1793,10 +1794,15 @@ const DRUM = {
   mA:     { k: 'x.x.x.x.x.x.x.x.', s: '....x.......x...', h: 'xgxgxgxgxgxgxgxg', c: '...x...x...x...x' },
   mB:     { k: 'x.xgx.xgx.xgx.xg', s: '....x.......x..g', h: 'XgxgXgxgXgxgXgxg', c: '...x..gx...x..gx' },
   mHalf:  { k: 'x.....x...x.....', s: '........x.......', c: '..x...x...x...x.', t: '............hml.' },
-  // timpani intro (bosses 3 and 5)
+  // timpani intro (boss 3)
   finI:   { k: 'x.......x.......', t: '..........l.l.ml' },
   // breakdown: crash-stab hits in 3+3+2
   brkY:   { k: 'x.....x.....x.x.', s: '........x.......', y: 'x.....x.........', t: '............ffll' },
+  // stage 4: four-on-the-floor under 16th hats accented on the offbeat 8ths (the sequencer pulse)
+  orA:    { k: 'x...x...x...x...', s: '....x.....g.x...', h: 'xgXgxgXgxgXgxgXg' },
+  orB:    { k: 'x...x...x.x.x...', s: '....x..g..g.x..g', h: 'xgXgxgXgxgXgxgXo' },
+  // stage 5: the walkers' stomp — half-time snare, 3+3+2 kicks, floor-tom footsteps
+  moonH:  { k: 'x.....x.....x...', s: '........x.......', t: '...f.....f...fff', h: 'x.g.x.g.x.g.x.g.' },
 };
 
 const BASS = {
@@ -1831,7 +1837,8 @@ const ARP = {
   bellA:    { v: 'bell', p: '0.2.1.3.2.4.3.5.', vel: 0.65 },
   bellSlow: { v: 'bell', p: '0...2...4...5...', vel: 0.7 },
   bellDark: { v: 'bell', p: '5..4..3..2..1...', vel: 0.6 },
-  bellIce:  { v: 'bell', p: '0.4.2.5.1.4.3.6.', vel: 0.55 },   // wide crystal leaps (stage 4)
+  arpO:     { v: 'arp',  p: '0123401234012340', vel: 0.72 },    // orbital sequencer: 5-note climbs across the 16ths
+  bellMoon: { v: 'bell', p: '0.4.2.5.1.4.3.6.', vel: 0.55 },   // wide leaps echoing over the craters
   pluckA:   { v: 'pluck', p: '0..1..2.0..1..3.', vel: 0.85 },   // oud ostinato, 3+3+2
   pluckB:   { v: 'pluck', p: '0.0.1.0.2.0.1.0.', vel: 0.8 },    // pedal-note picking
   bellSky:  { v: 'bell', p: '0.1.2.3.4.3.2.1.', vel: 0.6 },
@@ -1894,27 +1901,28 @@ const FINAL_A =
   'g5:2 g5:2 d6:4 c6:2 bb5:2 a5:2 bb5:2 | g5:4 d5:4 g5:4 bb5:4 |';
 const FINAL_END = 'a5:4 c#6:4 e6:4 a5:4 | g5:2 f5:2 e5:2 c#5:2 e5:2 g5:2 a5:4';
 const FINAL_END2 = 'a5:2 bb5:2 a5:2 g5:2 f5:2 e5:2 f5:2 g5:2 | a5:6 g5:2 f5:2 e5:2 c#5:4';
-// Stage 4: a militant "ta-ta-ta" hook leaping a fifth, and the chorus (VI VII i, VI VII V).
-const ICE_A =
-  'f#5:2 f#5:1 f#5:1 c#6:4 b5:2 a5:2 g#5:2 a5:2 | f#5:4 d5:4 a5:6 f#5:2 |' +
-  'e5:2 e5:1 e5:1 b5:4 a5:2 g#5:2 f#5:2 g#5:2 | g#5:6 e5:2 c#5:8 |';
-const ICE_CHORUS =
-  'a5:6 f#5:2 d6:8 | c#6:4 b5:2 a5:2 b5:4 e5:4 | a5:6 g#5:2 f#5:4 c#6:4 | c#6:4 b5:2 a5:2 g#5:2 a5:2 b5:2 c#6:2 |' +
-  'd6:6 c#6:2 a5:8 | b5:4 c#6:2 d6:2 e6:8 | e#6:6 d6:2 c#6:4 b5:4 | c#6:4 g#5:2 e#5:2 g#5:2 c#6:2 e#6:4';
-// Boss 4: a 3+3+2 riff-melody over the gallop.
-const POLAR_A =
-  'b4:3 d5:3 f#5:2 e5:3 d5:3 c#5:2 | d5:3 c#5:3 b4:2 f#4:8 |' +
-  'g4:3 b4:3 d5:2 f#5:3 e5:3 d5:2 | e5:3 c#5:3 a4:2 e5:8 |';
-// Stage 5: the finale's rising call (G minor).
+// Stage 4: the orbit's rising call (G minor: a triad climbing an octave and a half), and the
+// chorus's first seven bars (its eighth differs: a fall into the bridge, a climb into the loop).
 const ORBIT_A =
   'g4:2 bb4:2 d5:4 g5:6 f5:2 | eb5:4 d5:2 c5:2 bb4:4 g4:4 | a4:2 c5:2 f5:4 a5:6 g5:2 | f5:6 e5:2 d5:8 |';
-const ORBIT_CHORUS =
+const ORBIT_CHORUS7 =
   'g5:6 bb5:2 eb6:8 | d6:4 c6:2 bb5:2 f5:8 | a5:4 c6:4 f6:6 eb6:2 | d6:6 c6:2 bb5:4 g5:4 |' +
-  'eb6:6 d6:2 eb6:4 g6:4 | f6:6 eb6:2 d6:4 bb5:4 | c6:4 eb6:4 g6:4 f6:2 eb6:2 | f#6:4 d6:4 a5:4 f#5:4';
-// Boss 5: the hero call "da-da DAAA" down the Andalusian cadence (Cm Bb Ab G), twice.
-const OMEGA_A =
+  'eb6:6 d6:2 eb6:4 g6:4 | f6:6 eb6:2 d6:4 bb5:4 | c6:4 eb6:4 g6:4 f6:2 eb6:2 |';
+// Boss 4: the call "da-da DAAA" down the Andalusian cadence (Cm Bb Ab G), twice.
+const AEGIS_A =
   'g5:3 g5:1 c6:4 bb5:2 g5:2 eb5:2 f5:2 | d5:3 d5:1 bb5:4 ab5:2 f5:2 d5:2 f5:2 |' +
   'eb5:3 eb5:1 ab5:4 g5:2 f5:2 eb5:2 c5:2 | d5:4 b4:4 g4:4 b4:4 |';
+// Stage 5: a militant "ta-ta-ta" hook leaping a fifth, and the chorus (VI VII i, VI VII V).
+const LUNAR_A =
+  'f#5:2 f#5:1 f#5:1 c#6:4 b5:2 a5:2 g#5:2 a5:2 | f#5:4 d5:4 a5:6 f#5:2 |' +
+  'e5:2 e5:1 e5:1 b5:4 a5:2 g#5:2 f#5:2 g#5:2 | g#5:6 e5:2 c#5:8 |';
+const LUNAR_CHORUS =
+  'a5:6 f#5:2 d6:8 | c#6:4 b5:2 a5:2 b5:4 e5:4 | a5:6 g#5:2 f#5:4 c#6:4 | c#6:4 b5:2 a5:2 g#5:2 a5:2 b5:2 c#6:2 |' +
+  'd6:6 c#6:2 a5:8 | b5:4 c#6:2 d6:2 e6:8 | e#6:6 d6:2 c#6:4 b5:4 | c#6:4 g#5:2 e#5:2 g#5:2 c#6:2 e#6:4';
+// Boss 5: a 3+3+2 riff-melody over the gallop.
+const SELENE_A =
+  'b4:3 d5:3 f#5:2 e5:3 d5:3 c#5:2 | d5:3 c#5:3 b4:2 f#4:8 |' +
+  'g4:3 b4:3 d5:2 f#5:3 e5:3 d5:2 | e5:3 c#5:3 a4:2 e5:8 |';
 
 // Songs. `intro` sections play once; the `loop` plays twice (second pass applies each
 // section's `p2` overrides: harmony, doubling, busier drums, other guitar and arp parts), then
@@ -2215,51 +2223,53 @@ const SONGDEF = {
     },
   },
 
-  // FROZEN FRONTIER — a cold march. F# minor, 166 BPM: militant snare drags over
-  // four-on-the-floor, pumping 16th bass, palm-mute chugs, icy bell arpeggios and a pulse lead
-  // with a "ta-ta-ta" hook; the chorus climbs VI VII i / VI VII V; a choir-and-brass bridge on
-  // the Neapolitan (G major) wind before the build. 4-bar intro, 40-bar loop: A1 A2 B(chorus)
-  // C(bridge) D(chorus').
+  // ORBITAL FRONT — Earth orbit. G minor, 166 BPM: a sequencer arpeggio climbing in fives
+  // across the 16ths (into the dotted-8th echo) over four-on-the-floor with offbeat-accented
+  // hats, pumping 16th bass and palm-mute chugs; the orbit's rising call on the pulse lead,
+  // bells an octave up for the starfield; the chorus over a ringing guitar wall and brass
+  // hits; a weightless half-time bridge (brass and choir, the Neapolitan A-flat) building back
+  // to the chorus. 4-bar intro, 40-bar loop: A1 A2 B(chorus) C(bridge) D(chorus').
   stage4: {
-    bpm: 166, key: 6, minor: true, delay: 0.75, intro: ['I'], loop: ['A1', 'A2', 'B', 'C', 'D'],
+    bpm: 166, key: 7, minor: true, delay: 0.75, intro: ['I'], loop: ['A1', 'A2', 'B', 'C', 'D'],
     S: {
       I: {
-        chords: 'F#m F#m D C#', lead: 'r:48 g#4:2 c#5:2 e#5:2 g#5:2 c#6:4 r:4',
-        bass: 'hold ped16 p16 build', drums: 'bI milT milB fD', crash: [0], rise: 2,
-        gtr: 'none ch16*2 hold', arp: 'bellIce*4',
+        chords: 'Gm Gm Eb D', lead: 'r:48 a4:2 d5:2 f#5:2 a5:2 d6:4 r:4',
+        bass: 'hold ped16 p16 build', drums: 'bI bI2 orB fD', crash: [0], rise: 2,
+        gtr: 'none ch16*2 hold', arp: 'arpO*4',
       },
       A1: {
-        chords: 'F#m D E C#m F#m D Bm C#',
-        lead: ICE_A + 'f#5:2 f#5:1 f#5:1 c#6:4 b5:2 a5:2 g#5:2 a5:2 | b5:4 a5:2 f#5:2 d6:6 c#6:2 |' +
-              'b5:3 a5:1 g#5:2 f#5:2 d5:4 f#5:4 | e#5:4 g#5:4 c#6:6 r:2',
-        bass: 'pump*7 build', drums: 'mrA*3 mrB mrA*3 fS', crash: [0],
-        gtr: 'ch8*3 syn ch8*3 push', stab: 'hA none*3 hA none*3', arp: 'bellA*8',
-        p2: { dbl: 'bell+12', drums: 'mrB*3 bC mrB*3 fS', gtr: 'gal*3 syn gal*3 push', arp: 'arpC*8' },
+        chords: 'Gm Eb F Dm Gm Eb Cm D',
+        lead: ORBIT_A + 'g5:2 a5:2 bb5:4 d6:6 c6:2 | bb5:4 g5:2 eb5:2 g5:4 bb5:4 |' +
+              'c6:6 bb5:2 a5:2 g5:2 f#5:4 | a5:4 f#5:4 d5:6 r:2',
+        bass: 'pump*7 build', drums: 'orA*3 orB orA*3 fS', crash: [0],
+        gtr: 'ch8*3 syn ch8*3 push', stab: 'hA none*3 hA none*3', arp: 'arpO*8',
+        p2: { dbl: 'bell+12', drums: 'orB*3 bC orB*3 fS', gtr: 'gal*3 syn gal*3 push', arp: 'arpC*8' },
       },
       A2: {
-        chords: 'F#m D E C#m F#m D C# F#m',
-        lead: ICE_A + 'a5:2 a5:1 a5:1 f#6:4 e6:2 d6:2 c#6:2 d6:2 | e6:4 d6:2 a5:2 f#5:4 a5:4 |' +
-              'g#5:3 f#5:1 e#5:2 f#5:2 g#5:4 c#6:4 | f#5:8 r:2 c#5:2 d5:2 e5:2',
-        bass: 'pump*7 build', drums: 'mrA*3 mrB mrA*3 fT', crash: [0, 4],
-        gtr: 'ch8*3 syn ch8*2 push hit', arp: 'bellA*8',
-        p2: { harm: 1, drums: 'mrB*3 bC mrB*3 fT', gtr: 'gal*3 syn gal*2 push hit', arp: 'arpC*8' },
+        chords: 'Gm Eb F Dm Gm Eb D Gm',
+        lead: ORBIT_A + 'd6:2 c6:2 bb5:4 d6:6 f6:2 | eb6:4 d6:2 bb5:2 g5:4 bb5:4 |' +
+              'a5:3 bb5:1 a5:2 f#5:2 d5:4 f#5:4 | g5:8 r:2 d5:2 eb5:2 f5:2',
+        bass: 'pump*7 build', drums: 'orA*3 orB orA*3 fT', crash: [0, 4],
+        gtr: 'ch8*3 syn ch8*2 push hit', arp: 'arpO*8',
+        p2: { harm: 1, drums: 'orB*3 bC orB*3 fT', gtr: 'gal*3 syn gal*2 push hit', arp: 'bellA*8' },
       },
       B: {
-        chords: 'D E F#m F#m D E C# C#', lead: ICE_CHORUS,
+        chords: 'Eb Bb F Gm Eb Bb Cm D', lead: ORBIT_CHORUS7 + ' f#6:4 d6:4 a5:4 f#5:4', pad: 0.7,
         bass: 'oct16*7 build', drums: 'bC*7 fS', crash: [0, 4], gtr: 'half*7 push',
-        stab: 'hB none hA none hB none hA hA', arp: 'arpB*8',
-        p2: { dbl: 'brass-12', arp: 'bellIce*8' },
+        stab: 'hB none hA none hB none hA hA', arp: 'arpO*8',
+        p2: { dbl: 'brass-12', arp: 'bellSky*8' },
       },
       C: {
-        chords: 'Bm Bm F#m F#m G G C# C#', leadV: 'brass', padV: 'choir',
-        lead: 'b4:8 d5:4 f#5:4 | e5:6 d5:2 c#5:4 b4:4 | c#5:8 f#5:4 a5:4 | g#5:12 f#5:4 |' +
-              'g5:8 b5:4 d6:4 | d6:6 b5:2 g5:4 b5:4 | e#5:4 g#5:4 c#6:4 e#6:4 | e#6:4 d6:2 c#6:2 b5:2 a5:2 g#5:2 e#5:2',
-        bass: 'halves*4 pump*3 build', drums: 'milT*3 fS milB*3 fD', crash: [0, 4], rise: 2,
-        gtr: 'brk*4 ch16*2 hold*2', arp: 'bellSlow*4 bellA*4', pad: 1,
+        chords: 'Cm Cm Gm Gm Ab Ab D D', leadV: 'brass', padV: 'choir', pad: 1,
+        lead: 'c5:8 eb5:4 g5:4 | f5:6 eb5:2 d5:4 c5:4 | d5:8 g5:4 bb5:4 | a5:12 g5:4 |' +
+              'ab5:8 c6:4 eb6:4 | eb6:6 c6:2 ab5:4 c6:4 | f#5:4 a5:4 d6:4 f#6:4 | f#6:4 e6:2 d6:2 c6:2 bb5:2 a5:2 f#5:2',
+        bass: 'halves*4 pump*3 build', drums: 'bH*4 orA orB*2 fD', crash: [0, 4], rise: 2,
+        gtr: 'hold*4 ch16*2 hold*2', arp: 'bellSlow*4 arpO*4',
         p2: { harm: 1 },
       },
       D: {
-        chords: 'D E F#m F#m D E C# C#', lead: ICE_CHORUS, harm: 1,
+        chords: 'Eb Bb F Gm Eb Bb Cm D', harm: 1, pad: 0.7,
+        lead: ORBIT_CHORUS7 + ' a5:2 d6:2 f#6:2 d6:2 a5:2 c6:2 d6:2 f#6:2',
         bass: 'oct16*6 p16 build', drums: 'bD*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
         gtr: 'half*6 ch16 hold', stab: 'hB none hA none hB none hD none', arp: 'arpC*8',
         p2: { dbl: 'bell+12' },
@@ -2267,20 +2277,125 @@ const SONGDEF = {
     },
   },
 
-  // NORTHSTAR, the polar fortress. B minor (harmonic: A# over F#; the Neapolitan C major for
-  // the dark cadence), 174 BPM: galloping kick, bass and guitars, the driven lead on a 3+3+2
-  // riff-melody, brass hits, icy bells in the breakdown. 2-bar intro, 32-bar loop: A B
-  // C(breakdown → build) A2.
+  // AEGIS, the orbital defence battery. C minor (the stage's key a fourth up), 172 BPM: the
+  // call "da-da DAAA" down the Andalusian cadence (Cm Bb Ab G, then the Neapolitan D-flat) on
+  // the driven lead, over 16th double-kick blasts, galloping bass and guitars and brass hits on
+  // the downbeats; the machine sequencer throughout and square "charging" stabs on the
+  // offbeats (the battery powering up in the intro, over a tonic-pedal 16th bass); a half-time
+  // choir hymn before the last climb to the leading tone. 4-bar intro, 32-bar loop: A B C A2.
   boss4: {
+    bpm: 172, key: 0, minor: true, delay: 0.75, intro: ['I'], loop: ['A', 'B', 'C', 'A2'],
+    S: {
+      I: {
+        chords: 'Cm Cm Ab G', leadV: 'brass',
+        lead: 'r:32 ab4:8 c5:4 eb5:4 | d5:4 f5:4 g5:4 b5:4',
+        bass: 'ped16*2 halves build', drums: 'bH*2 milT fD', crash: [0], rise: 2,
+        gtr: 'hold ch16 half ch16', stab: 'sM*2 hA hC', arp: 'arpM*4',
+      },
+      A: {
+        chords: 'Cm Bb Ab G Cm Bb Db G', leadV: 'dlead',
+        lead: AEGIS_A + 'g5:3 g5:1 c6:4 d6:2 eb6:2 d6:2 c6:2 | bb5:3 bb5:1 f6:4 eb6:2 d6:2 c6:2 bb5:2 |' +
+              'ab5:3 ab5:1 db6:4 c6:2 bb5:2 ab5:2 f5:2 | g5:4 b5:4 d6:4 f6:4',
+        bass: 'gallop*8', drums: 'bD*3 bG bD*3 fX', crash: [0, 4],
+        gtr: 'gal*3 half gal*3 push', stab: 'hA hA hA hB hA hA hA hB', arp: 'arpM*8',
+        p2: { harm: 1, drums: 'bD*7 fX', stab: 'hA sM hA hB hA sM hA hB' },
+      },
+      B: {
+        chords: 'Fm Fm Cm Cm Db Eb G G', dbl: 'brass-12', pad: 0.6,
+        lead: 'ab5:8 c6:4 f6:4 | eb6:6 db6:2 c6:4 ab5:4 | g5:8 c6:4 eb6:4 | d6:6 c6:2 g5:8 |' +
+              'f5:4 ab5:4 db6:6 c6:2 | bb5:4 eb6:4 g6:6 f6:2 | f6:4 d6:2 b5:2 g5:4 b5:4 | d6:2 eb6:2 d6:2 c6:2 b5:2 c6:2 d6:2 f6:2',
+        bass: 'pump*6 build*2', drums: 'bG*3 bD bG*3 fS', crash: [0, 4],
+        gtr: 'half*6 ch16 hold', stab: 'hB*8', arp: 'arpC*8',
+        p2: { harm: 1, dbl: null },
+      },
+      C: {
+        chords: 'Ab Eb Bb Cm Ab Eb Fm G', leadV: 'brass', padV: 'choir', pad: 1,
+        lead: 'c5:12 eb5:4 | bb4:8 eb5:4 g5:4 | f5:12 d5:4 | eb5:8 g5:4 c6:4 |' +
+              'c6:12 bb5:4 | g5:8 bb5:4 eb6:4 | ab5:4 c6:4 f6:4 eb6:4 | d6:4 b5:4 g5:2 b5:2 d6:2 f6:2',
+        bass: 'halves*4 pump*3 build', drums: 'bH*4 milB*3 fR', crash: [0, 4],
+        gtr: 'hold*4 half*3 hold', stab: 'hA none*3 hA none hA hB', arp: 'bellSlow*4 arpM*4',
+        p2: { dbl: 'bell+12', harm: 1 },
+      },
+      A2: {
+        chords: 'Cm Bb Ab G Cm Bb Db G', leadV: 'dlead', dbl: 'bell+12',
+        lead: AEGIS_A + 'c6:3 c6:1 g6:4 f6:2 eb6:2 d6:2 eb6:2 | d6:3 d6:1 bb5:4 f5:4 bb5:4 |' +
+              'db6:3 db6:1 f6:4 eb6:2 db6:2 c6:2 ab5:2 | b5:2 c6:2 d6:2 f6:2 g6:8',
+        bass: 'gallop*7 build', drums: 'bD*6 fR fD', crash: [0, 4, 6], rise: 2,
+        gtr: 'gal*6 ch16 hold', stab: 'hB*8', arp: 'arpM*8',
+        p2: { harm: 1, dbl: null },
+      },
+    },
+  },
+
+  // LUNAR SIEGE — the assault on the Moon base. F# minor, 168 BPM: a siege march (militant
+  // snare drags over four-on-the-floor, pumping 16th bass, palm-mute chugs) under the pulse
+  // lead's "ta-ta-ta" hook leaping a fifth, bells leaping across the craters; the chorus
+  // climbs VI VII i / VI VII V over a ringing guitar wall; the bridge is the walkers' stomp
+  // (half time, floor-tom footsteps, 3+3+2 guitar and brass stabs) under brass and a choir on
+  // the Neapolitan G major, then a militant build. 4-bar intro, 40-bar loop: A1 A2 B(chorus)
+  // C(bridge) D(chorus').
+  stage5: {
+    bpm: 168, key: 6, minor: true, delay: 0.75, intro: ['I'], loop: ['A1', 'A2', 'B', 'C', 'D'],
+    S: {
+      I: {
+        chords: 'F#m F#m D C#', lead: 'r:48 g#4:2 c#5:2 e#5:2 g#5:2 c#6:4 r:4',
+        bass: 'hold ped16 p16 build', drums: 'bI milT milB fD', crash: [0], rise: 2,
+        gtr: 'none ch16*2 hold', arp: 'bellMoon*4',
+      },
+      A1: {
+        chords: 'F#m D E C#m F#m D Bm C#',
+        lead: LUNAR_A + 'f#5:2 f#5:1 f#5:1 c#6:4 b5:2 a5:2 g#5:2 a5:2 | b5:4 a5:2 f#5:2 d6:6 c#6:2 |' +
+              'b5:3 a5:1 g#5:2 f#5:2 d5:4 f#5:4 | e#5:4 g#5:4 c#6:6 r:2',
+        bass: 'pump*7 build', drums: 'mrA*3 mrB mrA*3 fS', crash: [0],
+        gtr: 'ch8*3 syn ch8*3 push', stab: 'hA none*3 hA none*3', arp: 'bellA*8',
+        p2: { dbl: 'bell+12', drums: 'mrB*3 bC mrB*3 fS', gtr: 'gal*3 syn gal*3 push', arp: 'arpC*8' },
+      },
+      A2: {
+        chords: 'F#m D E C#m F#m D C# F#m',
+        lead: LUNAR_A + 'a5:2 a5:1 a5:1 f#6:4 e6:2 d6:2 c#6:2 d6:2 | e6:4 d6:2 a5:2 f#5:4 a5:4 |' +
+              'g#5:3 f#5:1 e#5:2 f#5:2 g#5:4 c#6:4 | f#5:8 r:2 c#5:2 d5:2 e5:2',
+        bass: 'pump*7 build', drums: 'mrA*3 mrB mrA*3 fT', crash: [0, 4],
+        gtr: 'ch8*3 syn ch8*2 push hit', arp: 'bellA*8',
+        p2: { harm: 1, drums: 'mrB*3 bC mrB*3 fT', gtr: 'gal*3 syn gal*2 push hit', arp: 'arpC*8' },
+      },
+      B: {
+        chords: 'D E F#m F#m D E C# C#', lead: LUNAR_CHORUS,
+        bass: 'oct16*7 build', drums: 'bC*7 fS', crash: [0, 4], gtr: 'half*7 push',
+        stab: 'hB none hA none hB none hA hA', arp: 'arpB*8',
+        p2: { dbl: 'brass-12', arp: 'bellMoon*8' },
+      },
+      C: {
+        chords: 'Bm Bm F#m F#m G G C# C#', leadV: 'brass', padV: 'choir', pad: 1,
+        lead: 'b4:8 d5:4 f#5:4 | e5:6 d5:2 c#5:4 b4:4 | c#5:8 f#5:4 a5:4 | g#5:12 f#5:4 |' +
+              'g5:8 b5:4 d6:4 | d6:6 b5:2 g5:4 b5:4 | e#5:4 g#5:4 c#6:4 e#6:4 | e#6:4 d6:2 c#6:2 b5:2 a5:2 g#5:2 e#5:2',
+        bass: 'halves*4 pump*3 build', drums: 'moonH*3 fT milB*3 fD', crash: [0, 4], rise: 2,
+        gtr: 'brk*4 ch16*2 hold*2', stab: 'hC none hC none none*4', arp: 'bellSlow*4 bellA*4',
+        p2: { harm: 1 },
+      },
+      D: {
+        chords: 'D E F#m F#m D E C# C#', lead: LUNAR_CHORUS, harm: 1,
+        bass: 'oct16*6 p16 build', drums: 'bD*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
+        gtr: 'half*6 ch16 hold', stab: 'hB none hA none hB none hD none', arp: 'arpC*8',
+        p2: { dbl: 'bell+12' },
+      },
+    },
+  },
+
+  // SELENE, the lunar fortress. B minor (the stage's key a fourth up; harmonic: A# over F#,
+  // the Neapolitan C major for the dark cadence), 174 BPM: galloping kick, bass and guitars,
+  // the driven lead on a 3+3+2 riff-melody, brass hits on the downbeats, a machine arpeggio;
+  // a breakdown of crash stabs under crater-echo bells and a choir before the double-kick
+  // climb. 2-bar intro, 32-bar loop: A B C(breakdown → build) A2.
+  boss5: {
     bpm: 174, key: 11, minor: true, delay: 0.5, intro: ['I'], loop: ['A', 'B', 'C', 'A2'],
     S: {
       I: {
         chords: 'Bm Bm', bass: 'gallop*2', drums: 'bG fD', crash: [0], rise: 1,
-        gtr: 'hold gal', stab: 'hA none', arp: 'bellIce*2',
+        gtr: 'hold gal', stab: 'hA none', arp: 'bellMoon*2',
       },
       A: {
         chords: 'Bm Bm G A Bm Bm C F#', leadV: 'dlead',
-        lead: POLAR_A + 'b5:3 a5:3 f#5:2 d6:3 c#6:3 b5:2 | c#6:3 b5:3 a5:2 f#5:8 |' +
+        lead: SELENE_A + 'b5:3 a5:3 f#5:2 d6:3 c#6:3 b5:2 | c#6:3 b5:3 a5:2 f#5:8 |' +
               'g5:3 e5:3 c5:2 e5:3 g5:3 c6:2 | a#5:4 c#6:4 e6:8',
         bass: 'gallop*8', drums: 'bG*3 bD bG*3 fS', crash: [0],
         gtr: 'gal*2 half*2 gal*2 half push', stab: 'hA none hA hA hA none hA hA', arp: 'arpM*8',
@@ -2295,117 +2410,18 @@ const SONGDEF = {
         p2: { dbl: 'brass-12' },
       },
       C: {
-        chords: 'Bm Bm C C Bm Bm F# F#', leadV: 'dlead',
+        chords: 'Bm Bm C C Bm Bm F# F#', leadV: 'dlead', padV: 'choir', pad: 0.8,
         lead: 'r:64 b5:8 a5:4 f#5:4 | d6:8 c#6:4 b5:4 | a#5:4 b5:4 c#6:4 e6:4 | f#6:16',
         bass: 'grind*4 gallop*2 build*2', drums: 'brkY*3 fS bD*3 fD', crash: [4], rise: 2,
-        gtr: 'brkM*4 gal*2 ch16 hold', stab: 'hC*4 hB*2 hD hA', arp: 'bellIce*4 arpC*4', pad: 0.8, padV: 'choir',
+        gtr: 'brkM*4 gal*2 ch16 hold', stab: 'hC*4 hB*2 hD hA', arp: 'bellMoon*4 arpC*4',
       },
       A2: {
         chords: 'Bm Bm G A Bm Bm C F#', leadV: 'dlead',
-        lead: POLAR_A + 'd6:3 c#6:3 b5:2 f#6:3 e6:3 d6:2 | e6:3 d6:3 c#6:2 b5:8 |' +
+        lead: SELENE_A + 'd6:3 c#6:3 b5:2 f#6:3 e6:3 d6:2 | e6:3 d6:3 c#6:2 b5:8 |' +
               'c6:3 b5:3 g5:2 e5:3 g5:3 b5:2 | a#5:2 c#6:2 e6:2 f#6:2 e6:2 c#6:2 a#5:2 c#6:2',
         bass: 'gallop*7 build', drums: 'bD*6 fR fD', crash: [0, 4], rise: 2,
         gtr: 'gal*6 ch16 hold', stab: 'hB*8', arp: 'arpC*8',
         p2: { harm: 1 },
-      },
-    },
-  },
-
-  // ORBITAL FINALE — the last stage, the most epic. G minor, 168 BPM: the finale's rising
-  // call, a choir under the chorus, brass hits, a guitar wall, bells for the starfield; a
-  // Neapolitan (A-flat) bridge in half time building to the chorus. 4-bar intro, 40-bar loop:
-  // A1 A2 B(chorus) C(bridge) D(chorus').
-  stage5: {
-    bpm: 168, key: 7, minor: true, delay: 0.75, intro: ['I'], loop: ['A1', 'A2', 'B', 'C', 'D'],
-    S: {
-      I: {
-        chords: 'Gm Gm Eb D', lead: 'r:48 a4:2 d5:2 f#5:2 a5:2 d6:4 r:4', padV: 'choir', pad: 0.8,
-        bass: 'hold ped16 p16 build', drums: 'bI bI2 bB fD', crash: [0], rise: 2,
-        gtr: 'none ch16*2 hold', arp: 'bellSky*4',
-      },
-      A1: {
-        chords: 'Gm Eb F Dm Gm Eb Cm D',
-        lead: ORBIT_A + 'g5:2 a5:2 bb5:4 d6:6 c6:2 | bb5:4 g5:2 eb5:2 g5:4 bb5:4 |' +
-              'c6:6 bb5:2 a5:2 g5:2 f#5:4 | a5:4 f#5:4 d5:6 r:2',
-        bass: 'pump*7 build', drums: 'bA*3 bB bA*3 fS', crash: [0],
-        gtr: 'ch8*3 syn ch8*3 push', stab: 'hA none*3 hA none*3', arp: 'arpB*8',
-        p2: { dbl: 'bell+12', drums: 'bB*3 bC bB*3 fS', gtr: 'gal*3 syn gal*3 push', arp: 'arpC*8' },
-      },
-      A2: {
-        chords: 'Gm Eb F Dm Gm Eb D Gm',
-        lead: ORBIT_A + 'd6:2 c6:2 bb5:4 d6:6 f6:2 | eb6:4 d6:2 bb5:2 g5:4 bb5:4 |' +
-              'a5:3 bb5:1 a5:2 f#5:2 d5:4 f#5:4 | g5:8 r:2 d5:2 eb5:2 f5:2',
-        bass: 'pump*7 build', drums: 'bA*3 bB bA*3 fT', crash: [0, 4],
-        gtr: 'ch8*3 syn ch8*2 push hit', arp: 'arpB*8',
-        p2: { harm: 1, drums: 'bB*3 bC bB*3 fT', gtr: 'gal*3 syn gal*2 push hit', arp: 'bellA*8' },
-      },
-      B: {
-        chords: 'Eb Bb F Gm Eb Bb Cm D', lead: ORBIT_CHORUS, padV: 'choir', pad: 0.7,
-        bass: 'oct16*7 build', drums: 'bC*7 fS', crash: [0, 4], gtr: 'half*7 push',
-        stab: 'hB none hA none hB none hA hA', arp: 'bellA*8',
-        p2: { dbl: 'brass-12' },
-      },
-      C: {
-        chords: 'Cm Cm Gm Gm Ab Ab D D', leadV: 'brass', padV: 'choir', pad: 1,
-        lead: 'c5:8 eb5:4 g5:4 | f5:6 eb5:2 d5:4 c5:4 | d5:8 g5:4 bb5:4 | a5:12 g5:4 |' +
-              'ab5:8 c6:4 eb6:4 | eb6:6 c6:2 ab5:4 c6:4 | f#5:4 a5:4 d6:4 f#6:4 | f#6:4 e6:2 d6:2 c6:2 bb5:2 a5:2 f#5:2',
-        bass: 'halves*4 pump*3 build', drums: 'bH*4 milB*3 fD', crash: [0, 4], rise: 2,
-        gtr: 'hold*4 ch16*2 hold*2', arp: 'bellSlow*4 arpB*4',
-        p2: { harm: 1 },
-      },
-      D: {
-        chords: 'Eb Bb F Gm Eb Bb Cm D', lead: ORBIT_CHORUS, harm: 1, padV: 'choir', pad: 0.7,
-        bass: 'oct16*6 p16 build', drums: 'bD*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
-        gtr: 'half*6 ch16 hold', stab: 'hB none hA none hB none hD none', arp: 'arpC*8',
-        p2: { dbl: 'bell+12' },
-      },
-    },
-  },
-
-  // OMEGA, the final boss — the most urgent cue. C minor, 176 BPM: the hero call "da-da DAAA"
-  // down the Andalusian cadence on the driven lead, 16th double-kick blasts, galloping bass
-  // and guitars, brass hits on every downbeat, a choir from the intro on, a half-time choir
-  // hymn before the last climb to the leading tone. 4-bar intro, 32-bar loop: A B C A2.
-  boss5: {
-    bpm: 176, key: 0, minor: true, delay: 0.75, intro: ['I'], loop: ['A', 'B', 'C', 'A2'],
-    S: {
-      I: {
-        chords: 'Cm Cm Ab G', leadV: 'brass', padV: 'choir', pad: 1,
-        lead: 'r:32 ab4:8 c5:4 eb5:4 | d5:4 f5:4 g5:4 b5:4',
-        bass: 'hold*2 halves build', drums: 'finI*2 milT fD', crash: [0], rise: 2,
-        gtr: 'hold*2 half ch16', stab: 'hA none hA hC',
-      },
-      A: {
-        chords: 'Cm Bb Ab G Cm Bb Db G', leadV: 'dlead',
-        lead: OMEGA_A + 'g5:3 g5:1 c6:4 d6:2 eb6:2 d6:2 c6:2 | bb5:3 bb5:1 f6:4 eb6:2 d6:2 c6:2 bb5:2 |' +
-              'ab5:3 ab5:1 db6:4 c6:2 bb5:2 ab5:2 f5:2 | g5:4 b5:4 d6:4 f6:4',
-        bass: 'gallop*8', drums: 'bD*3 bG bD*3 fX', crash: [0, 4],
-        gtr: 'gal*3 half gal*3 push', stab: 'hA hA hA hB hA hA hA hB', arp: 'arpC*8',
-        p2: { harm: 1, drums: 'bD*7 fX' },
-      },
-      B: {
-        chords: 'Fm Fm Cm Cm Db Eb G G', dbl: 'brass-12', padV: 'choir', pad: 0.7,
-        lead: 'ab5:8 c6:4 f6:4 | eb6:6 db6:2 c6:4 ab5:4 | g5:8 c6:4 eb6:4 | d6:6 c6:2 g5:8 |' +
-              'f5:4 ab5:4 db6:6 c6:2 | bb5:4 eb6:4 g6:6 f6:2 | f6:4 d6:2 b5:2 g5:4 b5:4 | d6:2 eb6:2 d6:2 c6:2 b5:2 c6:2 d6:2 f6:2',
-        bass: 'pump*6 build*2', drums: 'bG*3 bD bG*3 fS', crash: [0, 4],
-        gtr: 'half*6 ch16 hold', stab: 'hB*8', arp: 'bellA*8',
-        p2: { harm: 1, dbl: null },
-      },
-      C: {
-        chords: 'Ab Eb Bb Cm Ab Eb Fm G', leadV: 'brass', padV: 'choir', pad: 1,
-        lead: 'c5:12 eb5:4 | bb4:8 eb5:4 g5:4 | f5:12 d5:4 | eb5:8 g5:4 c6:4 |' +
-              'c6:12 bb5:4 | g5:8 bb5:4 eb6:4 | ab5:4 c6:4 f6:4 eb6:4 | d6:4 b5:4 g5:2 b5:2 d6:2 f6:2',
-        bass: 'halves*4 pump*3 build', drums: 'bH*4 milB*3 fR', crash: [0, 4],
-        gtr: 'hold*4 half*3 hold', stab: 'hA none*3 hA none hA hB', arp: 'bellSlow*4 bellA*4',
-        p2: { dbl: 'bell+12', harm: 1 },
-      },
-      A2: {
-        chords: 'Cm Bb Ab G Cm Bb Db G', leadV: 'dlead', dbl: 'bell+12',
-        lead: OMEGA_A + 'c6:3 c6:1 g6:4 f6:2 eb6:2 d6:2 eb6:2 | d6:3 d6:1 bb5:4 f5:4 bb5:4 |' +
-              'db6:3 db6:1 f6:4 eb6:2 db6:2 c6:2 ab5:2 | b5:2 c6:2 d6:2 f6:2 g6:8',
-        bass: 'gallop*7 build', drums: 'bD*6 fR fD', crash: [0, 4, 6], rise: 2,
-        gtr: 'gal*6 ch16 hold', stab: 'hB*8', arp: 'arpC*8', padV: 'choir', pad: 0.6,
-        p2: { harm: 1, dbl: null },
       },
     },
   },
@@ -2783,6 +2799,7 @@ class Track {
     this.step = 0;
     this.ei = 0;
     this.next = when;
+    this.t0 = when;                 // the first step's time (sync checks)
     this.loops = 0;
     this.done = false;
     this.endAt = Infinity;
@@ -3391,13 +3408,13 @@ async function renderOffline(name, seconds, o) {
       X.tracks[0] = tr;
       X.cur = tr;
     } else X.music(name, PRE - MUSIC_LEAD);
-  } else if (name === 'stressRaw' || /^stress[2-5]?$/.test(name)) {
+  } else if (name === 'stressRaw' || /^stress[2-9]?$/.test(name)) {
     kind = 'stress';
     stressCues(X, PRE, seconds, name === 'stressRaw', cues, name === 'stressRaw' ? 'boss' : 'boss' + name.slice(6));
   } else if (Object.prototype.hasOwnProperty.call(GAMEPLAY_SCN, name)) {
     kind = 'stress';
     gameplayCues(X, PRE, seconds, cues, GAMEPLAY_SCN[name]);
-  } else if (/^runStart[2-5]?$/.test(name)) {
+  } else if (/^runStart[2-9]?$/.test(name)) {
     // what main.js startGame() does: play(stage.startSfx) and music(stage.music) in the same frame
     kind = 'music';
     const n = name.slice(8);
@@ -3579,14 +3596,28 @@ function weaponCues(X, P, seconds, w, cues) {
   }
 }
 
+// The scenario names __renderForTest understands for the tracks this module has (the lab's
+// auto test runs them all).
+export function __scenarios() {
+  const out = ['runStart'];
+  for (let n = 2; n <= 9; n++) if (getSong('stage' + n) && SFX['stageStart' + n]) out.push('runStart' + n);
+  for (const k in WEAPON_SCN) out.push(k);
+  out.push('hitStream', 'armorStream');
+  for (const k in GAMEPLAY_SCN) if (!GAMEPLAY_SCN[k].track || getSong(GAMEPLAY_SCN[k].track)) out.push(k);
+  out.push('stress');
+  for (let n = 2; n <= 9; n++) if (getSong('boss' + n)) out.push('stress' + n);
+  out.push('stressRaw');
+  return out;
+}
+
 // Resolves { peak, rms, nan, durationMs, prePeak, msPerSec, ... } for an SFX name, a music
 // track, or a scenario: 'stress' (30 explosions + bomb + shot spam over boss music via
-// play(); 'stress2' … 'stress5' over boss2 … boss5), 'stressRaw' (same, bypassing voice
+// play(); 'stress2' … 'stress9' over boss2 … boss9), 'stressRaw' (same, bypassing voice
 // limiting), 'gameplay' / 'gameplayLaser' / 'gameplay2' … 'gameplay5' (stage music + a
 // firefight exactly as game.js calls it, see GAMEPLAY_SCN), 'firefight' (the same without
 // music), 'vulcan' / 'laserBeam' / 'plasmaBeam' / 'waveGun' / 'multiSalvo' / 'coinTally' (one
 // weapon alone, see WEAPON_SCN), 'hitStream' / 'armorStream' (29 hits/s into a boss at the
-// game's volumes), 'runStart' / 'runStart2' … 'runStart5' (a stage's fanfare + its music, as at
+// game's volumes), 'runStart' / 'runStart2' … 'runStart9' (a stage's fanfare + its music, as at
 // the start of that stage), 'note:<voice>:<midi>[:<sec>]' (one instrument note on the music
 // bus, for level calibration), 'calib' (small-signal gain of the master chain).
 export async function __renderForTest(nameOrTrack, seconds, opts) {
@@ -3620,6 +3651,35 @@ export async function __bakeStats(upfront) {
   return { ms, seconds: BAKE.reduce((a, e) => a + e[2] + 0.05, 0), entries };
 }
 
+// Live sync probe (harness, in the running game): the current track (name, context time of
+// its first step, BPM, key) and the context time each SFX name last started. A stage fanfare
+// fired together with its track starts MUSIC_LEAD after that time, i.e. on the track's first
+// step. null before init().
+export function __liveSync() {
+  if (!E) return null;
+  const tr = E.cur;
+  return {
+    now: ctx.currentTime, lead: MUSIC_LEAD,
+    track: tr ? { name: tr.name, t0: tr.t0, bpm: tr.song.bpm, key: tr.song.key, minor: tr.song.minor } : null,
+    last: Object.assign({}, E.last),
+  };
+}
+
+// Every stage fanfare: its theme, that theme's BPM / key / first-bar kick steps, and the
+// fanfare's hit steps, melody notes and final chord (sync / key checks).
+const FANFARE_OF = { stageStart: FANFARE1, stageStart2: FANFARE2, stageStart3: FANFARE3, stageStart4: FANFARE4, stageStart5: FANFARE5 };
+export function __fanfareInfo() {
+  const out = {};
+  for (const k in FANFARE_OF) {
+    const F = FANFARE_OF[k], song = getSong(F.song), steps = [], mel = [], kicks = [];
+    for (let i = 0; i < F.seq.length; i += 4) { steps.push(F.seq[i]); mel.push(F.seq[i + 1], F.seq[i + 2]); }
+    const ev = song.bars[0].ev;
+    for (let i = 0; i < ev.length; i++) if (ev[i].fn === dKick) kicks.push(ev[i].s);
+    out[k] = { song: F.song, bpm: song.bpm, key: song.key, minor: song.minor, firstChord: song.bars[0].chord, steps, mel, pad: F.pad.slice(), kicks };
+  }
+  return out;
+}
+
 // Loop lengths, bar counts and notation warnings of every song, plus the section map
 // (name, ' = second pass, first bar, bar count, start / end in seconds from the song's start).
 export function __songInfo() {
@@ -3630,7 +3690,8 @@ export function __songInfo() {
     for (let b = 0; b < s.bars.length; b++) events += s.bars[b].ev.length;
     const barSec = s.sps * STEPS;
     out[s.name] = {
-      bpm: s.bpm, key: s.key, minor: s.minor, snap: s.snap, vol: s.vol, introBars: s.introBars, loopBars: s.loopBars,
+      bpm: s.bpm, key: s.key, minor: s.minor, scale: SONGDEF[s.name].scale || null, snap: s.snap, vol: s.vol,
+      introBars: s.introBars, loopBars: s.loopBars,
       introSec: +s.introSec.toFixed(2),
       loopSec: s.loopFrom >= 0 ? +s.loopSec.toFixed(2) : null,
       variationCycleSec: s.loopFrom >= 0 ? +(s.loopSec * 2).toFixed(2) : null,

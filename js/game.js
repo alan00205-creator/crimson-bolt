@@ -301,6 +301,7 @@ export class Game {
     for (const it of this.items) this.pools['item_' + it.kind].put(it.o);
     this.items.length = 0;
     this.eb.n = 0; this.ps.n = 0;
+    this.nTargets = 0; // the old field's targets (weapons read the list before the next collide)
     this.timers.length = 0;
     this.fx.clear();
     this.ui.boss(false);
@@ -945,6 +946,7 @@ export class Game {
     let i = 0;
     while (i < ps.n) {
       const x = ps.x[i], z = ps.z[i], r = ps.r[i], pierce = ps.pierce[i];
+      const test = WP.SHOT[ps.kind[i]].test; // optional narrow phase (WAVE: its crescent band)
       let hit = null;
       for (let k = 0; k < this.nTargets; k++) {
         const t = T[k];
@@ -952,6 +954,7 @@ export class Game {
         const dx = t.x - x, dz = t.z - z;
         if (dx * dx + dz * dz < rr * rr) {
           if (pierce && WP.wasHit(ps, i, t.uid)) continue; // a piercing shot hits each target once
+          if (test && !test(this, i, t)) continue;
           hit = t; break;
         }
       }

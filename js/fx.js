@@ -4,10 +4,13 @@
 import * as THREE from 'three';
 
 // ---------------------------------------------------------------------------
-// Procedural sprite atlas (4 x 2 frames, 128 px each).
+// Procedural sprite atlas (4 x 4 cells of 128 px; frames 0-9 used, 10-15 free).
 // Channel meaning: R = coloured body, G = white-hot core, A = coverage (normal blend).
+// Frame space: u = quad x, v = -1 at the quad's +Y edge, i.e. the direction of travel of a
+// flat quad rotated with flatRot (ARC's apex points that way).
 // ---------------------------------------------------------------------------
-export const F = { GLOW: 0, ORB: 1, STREAK: 2, SMOKE: 3, RING: 4, FLARE: 5, FIRE: 6, SHARD: 7 };
+export const F = { GLOW: 0, ORB: 1, STREAK: 2, SMOKE: 3, RING: 4, FLARE: 5, FIRE: 6, SHARD: 7, ARC: 8, RETICLE: 9 };
+const ATLAS_S = 128, ATLAS_C = 4, ATLAS_R = 4;
 
 function hash(x, y) {
   let h = (x * 374761393 + y * 668265263) | 0;
@@ -61,6 +64,30 @@ function frameFn(i, u, v) {
       const b = smooth(0.95, 0.75, d);
       return [b, smooth(0.55, 0.2, d), b];
     }
+    case F.ARC: {
+      // crescent (WAVE): the band inside a leading circle and outside a trailing one, apex at
+      // v -0.5 (front), 0.14 thick there, tapering to points at (±0.82, 0); a narrow glow around
+      // it and a white-hot leading edge that fades toward the tips
+      const d1 = Math.hypot(u, v - 0.4224) - 0.9224; // < 0 inside the leading circle
+      const d2 = Math.hypot(u, v - 0.754) - 1.114;   // > 0 outside the trailing circle
+      const sd = Math.max(d1, -d2);                  // < 0 inside the crescent
+      const span = sat(1 - (u * u) / 0.64);          // 1 at the apex … 0 at the tips
+      const body = sd < 0 ? 1 : Math.exp(-sd * sd * 260) * 0.8;
+      const halo = Math.exp(-Math.max(sd, 0) * 16) * 0.12 * span;
+      const edge = Math.exp(-(d1 + 0.03) * (d1 + 0.03) * 1600) * Math.sqrt(span);
+      return [sat(body * (0.45 + 0.55 * Math.sqrt(span)) + halo), sat(edge * (sd < 0.02 ? 1 : 0.3)), sat(body * (0.35 + 0.65 * span) + halo)];
+    }
+    case F.RETICLE: {
+      // lock-on reticle: a thin ring broken into four corner arcs, four short ticks pointing in
+      const a = Math.atan2(v, u);
+      const d = r - 0.72;
+      const arcs = smooth(0.35, 0.6, Math.abs(Math.sin(a * 2)));
+      const ring = (Math.exp(-d * d * 2600) + Math.exp(-d * d * 140) * 0.22) * arcs;
+      const inTick = (s) => smooth(0.36, 0.42, s) * smooth(0.64, 0.58, s);
+      const tick = Math.exp(-v * v * 2200) * inTick(Math.abs(u)) + Math.exp(-u * u * 2200) * inTick(Math.abs(v));
+      const dot = Math.exp(-r * r * 900) * 0.8;
+      return [sat(ring + tick + dot), sat(Math.exp(-d * d * 9000) * arcs * 0.7 + tick * 0.5), sat(ring + tick + dot)];
+    }
     default: return [0, 0, 0];
   }
 }
@@ -68,12 +95,13 @@ function frameFn(i, u, v) {
 let atlasTexture = null;
 function getAtlas() {
   if (atlasTexture) return atlasTexture;
-  const S = 128, C = 4, R = 2;
+  const S = ATLAS_S, C = ATLAS_C, R = ATLAS_R;
   const cv = document.createElement('canvas');
   cv.width = S * C; cv.height = S * R;
   const g = cv.getContext('2d');
-  const img = g.createImageData(cv.width, cv.height);
-  for (let f = 0; f < C * R; f++) {
+  const img = g.createImageData(cv.width, cv.height); // starts transparent: free cells stay empty
+  const used = Object.keys(F).length;
+  for (let f = 0; f < used; f++) {
     const ox = (f % C) * S, oy = Math.floor(f / C) * S;
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
@@ -185,7 +213,7 @@ export class SpriteBatch {
     this.geo = geo;
     this.attrs = [[this.aPos, 3], [this.aScale, 2], [this.aColor, 4], [this.aMisc, 4]];
     const uniforms = THREE.UniformsUtils.merge([fog ? THREE.UniformsLib.fog : {}, {
-      uMap: { value: getAtlas() }, uGrid: { value: new THREE.Vector2(4, 2) }, uCore: { value: core },
+      uMap: { value: getAtlas() }, uGrid: { value: new THREE.Vector2(ATLAS_C, ATLAS_R) }, uCore: { value: core },
     }]);
     uniforms.uMap.value = getAtlas();
     this.mat = new THREE.ShaderMaterial({
@@ -396,6 +424,9 @@ const FIRE_A = [1.3, 0.38, 0.07, 1];
 const FIRE_B = [0.5, 0.07, 0.02, 0];
 const SMOKE_A = [0.10, 0.09, 0.085, 0.9];
 const SMOKE_B = [0.09, 0.085, 0.08, 0];
+const ROCKET_SMOKE_A = [0.62, 0.64, 0.7, 0.34];
+const ROCKET_SMOKE_B = [0.5, 0.5, 0.55, 0];
+const rgba = (a, r, g, b, al) => { a[0] = r; a[1] = g; a[2] = b; a[3] = al; return a; };
 
 export class FX {
   constructor(scene) {
@@ -403,19 +434,26 @@ export class FX {
     this.smoke = new SpriteBatch(900, { additive: false, depthTest: true, renderOrder: 2, fog: false });
     this.addGround = new SpriteBatch(1200, { additive: true, depthTest: true, renderOrder: 3, core: 0.7 });
     this.addAir = new SpriteBatch(2400, { additive: true, depthTest: false, renderOrder: 8, core: 0.7 });
+    // player beams / waves / rockets (weapons.js): own batch so a screen full of beam segments
+    // can never crowd enemy bullets out of `bullets`; drawn under the enemy-bullet underlay so
+    // the bullets' dark halos stay readable on top of a plasma beam
+    this.beams = new SpriteBatch(900, { additive: true, depthTest: false, renderOrder: 8.5, core: 1.6 });
     this.underlay = new SpriteBatch(900, { additive: false, depthTest: false, renderOrder: 9 });
     this.bullets = new SpriteBatch(1400, { additive: true, depthTest: false, renderOrder: 10, core: 1.6 });
-    for (const b of [this.smoke, this.addGround, this.addAir, this.underlay, this.bullets]) scene.add(b.mesh);
+    for (const b of [this.smoke, this.addGround, this.addAir, this.beams, this.underlay, this.bullets]) scene.add(b.mesh);
     this.p = new Particles();
     this.debris = new Debris(scene);
     this.lowQuality = false;
+    // scratch colour / option objects for recipes called many times a frame (emit copies them)
+    this._c0 = [0, 0, 0, 0]; this._c1 = [0, 0, 0, 0];
+    this._o = { drag: 0, vrot: 0 }; this._os = { drag: 6, stretch: 0.04 };
   }
   clear() { this.p.clear(); this.debris.clear(); }
   setQuality(q) { this.lowQuality = q === 'low'; }
 
   // Begin a frame: clear batches that game code pushes into directly.
   begin() {
-    this.smoke.begin(); this.addGround.begin(); this.addAir.begin(); this.underlay.begin(); this.bullets.begin();
+    this.smoke.begin(); this.addGround.begin(); this.addAir.begin(); this.beams.begin(); this.underlay.begin(); this.bullets.begin();
   }
   update(dt, groundY, groundScroll) {
     this.p.update(dt, groundScroll);
@@ -423,7 +461,7 @@ export class FX {
   }
   end() {
     this.p.draw(this.addAir, this.addGround, this.smoke);
-    this.smoke.end(); this.addGround.end(); this.addAir.end(); this.underlay.end(); this.bullets.end();
+    this.smoke.end(); this.addGround.end(); this.addAir.end(); this.beams.end(); this.underlay.end(); this.bullets.end();
   }
 
   // --- recipes -------------------------------------------------------------
@@ -501,6 +539,29 @@ export class FX {
   missileTrail(x, z, r, g, b) {
     this.p.emit(x, 0.02, z, rnd(-0.2, 0.2), 0, rnd(0.3, 0.8), 0.42, 0.5, 1.15, [0.6, 0.6, 0.66, 0.42], [0.45, 0.45, 0.5, 0], F.SMOKE, 2, { drag: 1.5, vrot: rnd(-2, 2) });
     this.p.emit(x, 0.05, z, 0, 0, 0, 0.14, 0.42, 0.18, [r, g, b, 0.9], [r * 0.4, g * 0.4, b * 0.4, 0], F.GLOW, 0, { drag: 0 });
+  }
+  // MULTI rocket: a thinner, shorter smoke thread than the missiles' plus an exhaust spark
+  // (emitted many times a second: colours go through scratch arrays, emit() copies them)
+  rocketTrail(x, z, r, g, b) {
+    const p = this.p, o = this._o;
+    o.drag = 1.5; o.vrot = rnd(-2, 2);
+    p.emit(x, 0.02, z, rnd(-0.15, 0.15), 0, rnd(0.2, 0.6), 0.3, 0.3, 0.72, ROCKET_SMOKE_A, ROCKET_SMOKE_B, F.SMOKE, 2, o);
+    o.drag = 0; o.vrot = 0;
+    p.emit(x, 0.05, z, 0, 0, 0, 0.1, 0.34, 0.12, rgba(this._c0, r, g, b, 0.9), rgba(this._c1, r * 0.4, g * 0.4, b * 0.4, 0), F.GLOW, 0, o);
+  }
+  // Small impact pop (rockets, waves): flash, a short flare and a few sparks — no smoke or debris.
+  pop(x, y, z, s, r, g, b) {
+    const p = this.p, o = this._o, c0 = this._c0, c1 = this._c1;
+    o.drag = 0; o.vrot = 5;
+    p.emit(x, y, z, 0, 0, 0, 0.1, 0.6 * s, 1.5 * s, rgba(c0, r * 2.2, g * 2.2, b * 2.2, 1), rgba(c1, r, g * 0.5, b * 0.3, 0), F.GLOW, 0, o);
+    p.emit(x, y, z, 0, 0, 0, 0.14, 0.5 * s, 1.8 * s, rgba(c0, 1.6, 1.2, 0.8, 0.8), rgba(c1, r * 0.5, g * 0.3, b * 0.2, 0), F.FLARE, 0, o);
+    const n = this.lowQuality ? 2 : 4;
+    rgba(c0, r * 3, g * 3, b * 3, 1); rgba(c1, r, g * 0.4, 0, 0);
+    const os = this._os;
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * 6.283, sp = rnd(5, 12);
+      p.emit(x, y, z, Math.cos(a) * sp, 0, Math.sin(a) * sp - 3, rnd(0.12, 0.26), 0.16, 0.05, c0, c1, F.STREAK, 0, os);
+    }
   }
   smokePuff(x, y, z, s = 0.5, life = 0.7) {
     this.p.emit(x, y, z, rnd(-0.4, 0.4), 0.3, rnd(0.8, 1.6), life, s, s * 2.6, [0.3, 0.3, 0.32, 0.45], [0.2, 0.2, 0.2, 0], F.SMOKE, 2, { drag: 1, vrot: rnd(-1, 1) });

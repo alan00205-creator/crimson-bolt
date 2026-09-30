@@ -63,7 +63,7 @@ import {
 // =============================================================================
 const K = {
   obs: lit('#1a1c27'), obsLt: lit('#2a2e3d'), obsDk: lit('#101119'), obsXDk: lit('#07080c'),
-  cloak: lit('#1d1a2e'), cloakLt: lit('#2c2742'),                                      // the wraiths' indigo-black
+  cloak: lit('#221e34'), cloakLt: lit('#363152'),                                      // the wraiths' indigo-black
   plat: lit('#98a0b0'), platLt: lit('#c0c6d2'), platDk: lit('#667085'),
   gilt: lit('#a8844c'), giltDk: lit('#6e5530'),                                        // gilded rims (albedo only)
   glass: S(lin('#0e1119'), rgb(0.03, 0.035, 0.07)),
@@ -147,32 +147,37 @@ function haloGeo(r0, r1, c0, c1, n, r2 = 0, c2 = null) {
 // =============================================================================
 // S8_WRAITH — void wraith (≈ 2.7 across the cloak, 2.3 long with its tatters)
 // =============================================================================
-// right half of the cloak's outline, front centre → back centre: the shoulders, the wing tip, then the
-// tattered hem (three points trailing back)
-const WR_CLOAK = [[0.0, -0.64], [0.3, -0.56], [0.76, -0.32], [1.16, -0.02], [1.34, 0.16], [1.04, 0.3], [1.02, 0.72], [0.76, 0.46],
-  [0.64, 0.98], [0.42, 0.58], [0.24, 1.1], [0.0, 0.66]];
+// right half of the cloak's outline, front centre → back centre: the shoulders, the sleeve out to its hanging point,
+// then the ragged hem (the rags longest in the middle)
+const WR_CLOAK = [[0.0, -0.5], [0.42, -0.46], [0.86, -0.18], [1.2, 0.2], [1.3, 0.62], [1.02, 0.5], [0.9, 0.9], [0.66, 0.68],
+  [0.52, 1.12], [0.3, 0.84], [0.16, 1.3], [0.0, 0.96]];
 function buildWraith() {
   const b = new GB();
   const R = WR_CLOAK, outline = [...R, ...R.slice(1, -1).reverse().map(([x, z]) => [-x, z])];
   b.plate(outline, -0.03, 0.03, K.cloak, K.obsDk, K.obsXDk);
-  // hood: a pointed cowl over the front (8 facets: j = 1 on top), a platinum crest along its top
-  b.lathe([0, 0.08, -1.02], [0, 0, 1], [[0, 0.0], [0.1, 0.16], [0.3, 0.27], [0.55, 0.27], [0.74, 0.15]], 8, (i, j) => {
+  // hood: a deep cowl over the front (8 facets: j = 1 on top), a platinum crest along its top
+  b.lathe([0, 0.08, -0.98], [0, 0, 1], [[0, 0.0], [0.1, 0.2], [0.32, 0.34], [0.6, 0.34], [0.86, 0.2]], 8, (i, j) => {
     if (j === 1) return i === 0 ? K.obs : i < 3 ? K.plat : K.platDk;
-    if (j === 0 || j === 2) return i === 0 ? K.obsDk : K.obsLt;
+    if (j === 0 || j === 2) return i === 0 ? K.obsDk : K.cloakLt;
     return K.obsXDk;
   }, null, K.obsDk, { phase: Math.PI / 8, sy: 0.72 });
-  // spine ridge down the back
-  b.lathe([0, 0.03, -0.42], [0, 0, 1], [[0, 0.12], [0.5, 0.1], [1.05, 0.02]], 6, (i, j) => (j === 1 ? (i ? K.obs : K.platDk) : K.obsDk), null, null, { phase: Math.PI / 6, sy: 0.6 });
+  // the spine of the cloak and its folds: dark ridges running back from the shoulders
+  b.lathe([0, 0.03, -0.3], [0, 0, 1], [[0, 0.13], [0.6, 0.1], [1.2, 0.02]], 6, (i, j) => (j === 1 ? K.cloakLt : K.obsDk), null, null, { phase: Math.PI / 6, sy: 0.6 });
   const f0 = b.n;
-  // eyes: two ghost-light slits high on the hood
-  b.spike([[0.05, 0.25, -0.8], [0.15, 0.22, -0.74], [0.13, 0.22, -0.66]], [0.12, 0.29, -0.75], G_GHOST);
-  // cloak ribs (pale, like the fingers of a bat's wing) out to the points; a ghost-lit hem along the tatters
-  strip(b, 0.12, -0.36, 1.26, 0.12, 0.034, 0.03, K.platDk, 0.012);
-  strip(b, 0.12, -0.1, 0.99, 0.66, 0.034, 0.028, K.platDk, 0.01);
-  strip(b, 0.1, 0.14, 0.62, 0.92, 0.034, 0.026, K.platDk, 0.01);
-  strip(b, 0.06, 0.34, 0.23, 1.04, 0.034, 0.022, K.platDk, 0.008);
-  for (let k = 4; k < R.length - 1; k++) strip(b, R[k][0], R[k][1], R[k + 1][0], R[k + 1][1], 0.038, 0.016, G_GHOSTD);
-  strip(b, R[1][0], R[1][1], R[3][0], R[3][1], 0.036, 0.014, G_GHOSTD);
+  // eyes: two ghost-light slits in the cowl, a faint glow of a face under it
+  b.spike([[0.06, 0.33, -0.86], [0.17, 0.3, -0.8], [0.15, 0.3, -0.7]], [0.13, 0.38, -0.8], G_GHOST);
+  strip(b, 0.02, -1.0, 0.16, -0.9, 0.02, 0.05, G_GHOSTD, 0.02);
+  strip(b, 0.34, -0.3, 0.52, 0.9, 0.034, 0.05, K.cloakLt, 0.02);
+  strip(b, 0.72, -0.08, 1.0, 0.72, 0.034, 0.045, K.cloakLt, 0.015);
+  // claws: bone fingers reaching out ahead of the sleeves, ghost-lit at the tips
+  const hand = [0.66, 0.0, -0.46];
+  for (const [dx, dz, L] of [[0.12, -0.7, 0.62], [0.28, -0.6, 0.56], [-0.04, -0.72, 0.52]]) {
+    const tip = [hand[0] + dx * L * 1.6, 0.02, hand[2] + dz * L * 1.6];
+    b.spike([[hand[0] - 0.05, 0.05, hand[2] + 0.02], [hand[0] + 0.05, 0.05, hand[2] + 0.02], [hand[0], -0.02, hand[2]]], tip, K.platLt);
+    b.spike([[tip[0] - 0.03, 0.03, tip[2] + 0.06], [tip[0] + 0.03, 0.03, tip[2] + 0.06], [tip[0], 0.0, tip[2] + 0.04]], [tip[0] + dx * 0.25, 0.02, tip[2] + dz * 0.25], G_GHOST);
+  }
+  // a ghost-lit hem along the rags' points only
+  for (const k of [4, 6, 8, 10]) strip(b, R[k][0], R[k][1] - 0.18, R[k][0], R[k][1], 0.036, 0.02, G_GHOSTD, 0.005);
   b.mirrorX(f0);
   return b;
 }
@@ -194,7 +199,7 @@ function createWraith() {
   const mat = bodyMat(0.5, 0.3);
   pivot.add(new THREE.Mesh(GG('ext:s8:wraith', buildWraith), mat));
   const tat = new THREE.Mesh(GG('ext:s8:wraith.tatters', buildWraithTatters), mat);
-  tat.position.set(0, 0.0, 0.52);
+  tat.position.set(0, 0.0, 0.8);
   pivot.add(tat);
   ud.muzzles = [V3(0, 0.05, -1.0)];
   let phase = 0;
@@ -209,7 +214,7 @@ function createWraith() {
     tat.rotation.y = Math.sin(t * 4.1 + seed) * 0.14;
     tat.scale.set(1, 1, 1 + Math.sin(t * 6.3 + seed) * 0.12);
     pivot.position.y = Math.sin(t * 2.2 + seed) * 0.08;
-    mat.uEmitScale.value = 0.6 + Math.sin(t * 9 + seed) * 0.1 + phase * 1.8;
+    mat.uEmitScale.value = 0.75 + Math.sin(t * 9 + seed) * 0.12 + phase * 1.8;
   };
   ud.dispose = () => mat.dispose();
   ud.setPhase(0);

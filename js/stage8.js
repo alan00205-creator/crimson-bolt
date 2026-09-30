@@ -33,11 +33,11 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 
 // Enemy definitions (see the field list at the top of stage.js).
 export const ENEMY = {
-  s8_wraith: { hp: 7, score: 600, radius: 0.85, air: true, explode: 1.0, debris: 6, medal: 0.35, noRevenge: true, prewarm: 12 },
-  s8_watcher: { hp: 60, score: 3000, radius: 1.3, air: true, explode: 1.9, debris: 12, medal: 2, prewarm: 4 },
+  s8_wraith: { hp: 9, score: 600, radius: 0.85, air: true, explode: 1.0, debris: 6, medal: 0.35, prewarm: 12 },
+  s8_watcher: { hp: 90, score: 3000, radius: 1.3, air: true, explode: 1.9, debris: 12, medal: 2, prewarm: 4 },
   // a fractal construct splits when it dies (its AI plays the split, see fractalAI): three sizes, one model; the
   // splits are the answer to a kill, so none of them fires revenge shots
-  s8_fractal: { hp: 38, score: 2000, radius: 1.35, air: true, explode: 1.8, debris: 10, medal: 1, noRevenge: true, prewarm: 3 },
+  s8_fractal: { hp: 60, score: 2000, radius: 1.35, air: true, explode: 1.8, debris: 10, medal: 1, noRevenge: true, prewarm: 3 },
   s8_frag: { hp: 7, score: 400, radius: 0.75, air: true, explode: 1.1, debris: 5, medal: 0.3, noRevenge: true, model: 's8_fractal', prewarm: 9 },
   s8_shard: { hp: 1.5, score: 100, radius: 0.45, air: true, explode: 0.6, debris: 3, medal: 0.12, noRevenge: true, noHpSeg: true, model: 's8_fractal', prewarm: 18 },
   // a mine that is shot pops (no revenge: it would fire from where the implosion would have been)
@@ -116,7 +116,7 @@ const GH_A = [1.1, 2.0, 2.4, 0.9], GH_B = [0.15, 0.4, 0.7, 0];            // gho
 const ST_A = [2.6, 2.1, 1.3, 1], ST_B = [0.8, 0.45, 0.15, 0];             // starlight
 const WH_A = [2.8, 2.7, 2.6, 1], WH_B = [0.9, 0.7, 0.5, 0];
 const LENS_A = [0.9, 1.3, 2.2, 0.85], LENS_B = [0.5, 0.8, 1.6, 0.4];      // a mine's horizon motes
-const RIM_A = [0.12, 0.2, 0.4, 0.25], RIM_B = [0.3, 0.5, 1.0, 0.5];        // … and its ring (faint: the motes mark the spots)
+const RIM_A = [0.05, 0.08, 0.16, 0.2], RIM_B = [0.16, 0.27, 0.55, 0.35];   // … and its ring (faint: the motes mark the spots)
 const OPT_FLAT = { flat: true, rot: 0, drag: 0 }, NO_DRAG = { drag: 0 }, OPT_SPARK = { drag: 3, stretch: 0.05 };
 const OPT_IN = { drag: 0, stretch: 0.08 };
 /** ghost-light shimmer where a wraith condenses (or will): a flat ring closing in, a soft glow, a few motes */
@@ -155,7 +155,7 @@ function starBurst(g, x, z, n, sp = 1) {
 // shimmer where it will come out), blinks there and unfolds, and fires again. Then it folds back into the void.
 // Blinks always land well clear of the jet and in the upper half of the screen.
 const WR_FORM = 0.55, WR_FOLD = 0.22;
-function wraithAI(x0, zf = 0.24, hops = 2, glide = 0.95) {
+function wraithAI(x0, zf = 0.24, hops = 2, glide = 0.9) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData, p = g.player;
     const top = zAtRow(v, HUD_ROW) + 1.2, low = v.zTop + (v.zBottom - v.zTop) * 0.46;
@@ -230,7 +230,7 @@ function watcherAI(x0, zf = 0.24, stay = 8) {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (s.z0 === undefined) {
       s.z0 = v.zTop - 3; s.tz = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + 1.8);
-      s.fixedYaw = true; s.yaw = Math.PI; s.st = 'idle'; s.ct = 1.3; s.mt = 0; s.spin = 0.6; s.q = 0;
+      s.fixedYaw = true; s.yaw = Math.PI; s.st = 'idle'; s.ct = 0.5; s.mt = 0; s.spin = 0.6; s.q = 0;
       if (ud.setCharge) ud.setCharge(0);
     }
     const dir = Math.sign(x0) || 1;
@@ -264,7 +264,7 @@ function watcherAI(x0, zf = 0.24, stay = 8) {
           const m = g.muzzlePos(e.mesh), mx = m.x, mz = m.z, a = g.aim(mx, mz);
           for (let q = 0; q < 3; q++) g.shoot(mx, mz, a, 7.8 + q * 1.1, g.BK.NEEDLE);
         }
-        s.st = 'idle'; s.ct = 2.7 / g.diff.fr;
+        s.st = 'idle'; s.ct = 2.4 / g.diff.fr;
       }
     }
   };
@@ -311,7 +311,7 @@ function fractalAI(x0, zf = 0.24, stay = 10) {
     if (fractalHit(e)) { fractalSplit(e, g); return; }
     if (s.z0 === undefined) {
       s.z0 = v.zTop - 3; s.tz = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + 2.0); s.fixedYaw = true; s.yaw = Math.PI;
-      s.st = 'idle'; s.ct = 1.2; s.mt = 0;
+      s.st = 'idle'; s.ct = 0.5; s.mt = 0;
       e.mesh.scale.setScalar(1);
       if (ud.setTint) { ud.setTint(0); ud.setCharge(0); }
     }
@@ -322,12 +322,12 @@ function fractalAI(x0, zf = 0.24, stay = 10) {
     s.mt += dt;
     if (s.st === 'idle') {
       if (ud.setCharge) ud.setCharge(0);
-      if (e.t > 2.6 && e.t < 3 + stay) s.ct -= dt;
+      if (e.t > 2.0 && e.t < 3 + stay) s.ct -= dt;
       if (s.ct <= 0 && g.canFire(e)) { s.st = 'charge'; s.mt = 0; g.audio.play('lock', { vol: 0.25, pitch: 9 }); }
     } else if (s.mt < 0.45) {
       if (ud.setCharge) ud.setCharge(s.mt / 0.45);
     } else {
-      s.st = 'idle'; s.ct = 2.2 / g.diff.fr;
+      s.st = 'idle'; s.ct = 2.0 / g.diff.fr;
       if (ud.setCharge) ud.setCharge(0);
       if (g.canFire(e)) {
         for (let k = 0; k < 3; k++) {
@@ -508,14 +508,14 @@ function sentinelAI() {
         starBurst(g, mx, mz, 4, 0.6);
       }
     }
-    // the halo's wheel: every ray throws an orb straight out, 0.42 s apart for 2.4 s, then 2.2 s of rest; the halo turns
+    // the halo's wheel: every ray throws an orb straight out, 0.48 s apart for 2.4 s, then 2.2 s of rest; the halo turns
     // between volleys, so the wheel winds into eight spiral arms
     if (halo) {
       s.hon = (s.hon + dt) % 4.6;
       if (s.hon < 2.4) {
         s.ht -= dt;
         if (s.ht <= 0) {
-          s.ht = 0.42 / fr;
+          s.ht = 0.48 / fr;
           const hx = halo.x, hz = halo.z;
           for (let k = 0; k < 8; k++) { const m = g.muzzlePos(halo.obj, k), mx = m.x, mz = m.z; g.shoot(mx, mz, Math.atan2(mx - hx, mz - hz), 4.0); }
         }
@@ -1024,7 +1024,7 @@ const TIMELINE = makeTimeline((at) => {
   at(58, (g) => W.carrier(g, 2, ['P']));
   at(72, (g) => { W8.watcher(g, 0, null, 7); g.later(2.5, () => W8.wraiths(g, [-5.5, 5.5], 0.3, 1)); });
   at(98, (g) => W8.mineRow(g, [-6, -2, 2, 6], 2.0, 5.0, 0.25));
-  at(118, (g) => { W8.wraiths(g, [-5, -1.5, 1.5, 5], 0.2, 3, 0.3); });
+  at(118, (g) => { W8.wraiths(g, [-5, -1.5, 1.5, 5], 0.2, 3, 0.3); g.later(2.6, () => W8.mineSweep(g, -1, 3, 0.3)); });
   at(140, (g) => W8.fractal(g, 0, null, 9));
   at(162, (g) => { W8.watcher(g, -4, null, 7); g.later(1.2, () => W8.watcher(g, 4, null, 7, 0.3)); });
   at(186, (g) => W8.ambush(g, 4, 1));
@@ -1034,7 +1034,7 @@ const TIMELINE = makeTimeline((at) => {
   at(264, (g) => { W8.watcher(g, 0, ['P'], 8, 0.2); g.later(2, () => W8.wraiths(g, [-5.5, 5.5, -2.5, 2.5], 0.3, 2, 0.25)); });
   at(290, (g) => { W8.mineRow(g, [-6, -3, 0, 3, 6], 1.8, 5.5, 0.15); g.later(2.8, () => W8.mineRow(g, [-4.5, -1.5, 1.5, 4.5], 1.8, 5.5, 0.15)); });
   at(316, (g) => { W8.ambush(g, 5, 1); g.later(2.4, () => W8.fractal(g, 0, null, 8, 0.2)); });
-  at(340, (g) => { W8.watcher(g, -5, null, 7); W8.watcher(g, 0, null, 7, 0.3); W8.watcher(g, 5, null, 7); });
+  at(340, (g) => { W8.watcher(g, -5, null, 7); W8.watcher(g, 0, null, 7, 0.3); W8.watcher(g, 5, null, 7); g.later(3, () => W8.wraiths(g, [-2.5, 2.5], 0.2, 2)); });
   // (rest beat)
   at(368, (g) => W.carrier(g, 0, ['B']));
   at(382, (g) => W8.wraiths(g, [-6, -3, 0, 3, 6], 0.22, 2, 0.28));
@@ -1057,23 +1057,23 @@ const TIMELINE = makeTimeline((at) => {
   at(768, (g) => { W.carrier(g, 2, ['P']); g.later(1.5, () => W8.mineRow(g, [-6, -2, 2, 6], 2.0, 5.0)); });
   at(788, (g) => W8.ambush(g, 4, 2));
   // WARPED SPACE ───────────────────────────────────────
-  at(808, (g) => { W8.watcher(g, 0, ['S'], 9, 0.2); g.later(1.8, () => { W8.fractal(g, -5, null, 8, 0.32); W8.fractal(g, 5, null, 8, 0.32); }); });
-  at(836, (g) => { W8.mineRow(g, [-6, -3, 0, 3, 6], 2.0, 4.5, 0.15); g.later(2, () => W8.ambush(g, 4, 1)); });
+  at(808, (g) => { W8.watcher(g, 0, ['S'], 9, 0.2); g.later(1.8, () => { W8.fractal(g, -5, null, 8, 0.32); W8.fractal(g, 5, null, 8, 0.32); }); g.later(4, () => W8.wraiths(g, [-6, 6], 0.4, 2)); });
+  at(836, (g) => { W8.mineRow(g, [-6, -3, 0, 3, 6], 2.0, 4.5, 0.15); g.later(2, () => W8.ambush(g, 5, 2)); });
   at(862, (g) => { W8.watcher(g, -5.5, null, 8); W8.watcher(g, -1.8, null, 8, 0.3); W8.watcher(g, 1.8, null, 8, 0.3); W8.watcher(g, 5.5, null, 8); });
-  at(892, (g) => { W8.fractal(g, 0, ['P'], 10, 0.18); g.later(2.2, () => W8.wraiths(g, [-6, -3, 3, 6], 0.3, 2, 0.3)); });
+  at(892, (g) => { W8.fractal(g, 0, ['P'], 10, 0.18); g.later(2.2, () => W8.wraiths(g, [-6, -3, 3, 6], 0.3, 3, 0.3)); g.later(4.2, () => W8.mineSweep(g, 1, 3, 0.34)); });
   at(918, (g) => { W8.mineSweep(g, 1, 5, 0.2, 0.8); g.later(2.2, () => W8.mineSweep(g, -1, 5, 0.36, 0.8)); });
-  at(942, (g) => W8.ambush(g, 6, 1));
+  at(942, (g) => { W8.ambush(g, 6, 2); g.later(2.6, () => { W8.watcher(g, -4.5, null, 7, 0.26); W8.watcher(g, 4.5, null, 7, 0.26); }); });
   at(962, (g) => W.carrier(g, 0, ['1UP']));
   // (rest beat)
   at(990, (g) => { W8.fractal(g, -4.5, null, 9); W8.fractal(g, 4.5, null, 9, 0.3); g.later(2.6, () => W8.watcher(g, 0, null, 8, 0.22)); });
-  at(1016, (g) => W8.wraiths(g, [-6, -3, 0, 3, 6], 0.2, 3, 0.2));
+  at(1016, (g) => { W8.wraiths(g, [-6, -3, 0, 3, 6], 0.2, 3, 0.2); g.later(2.4, () => W8.mineRow(g, [-4.5, 0, 4.5], 2.2, 4.0)); });
   at(1038, (g) => W.carrier(g, -2, ['P', 'S']));
   at(1052, (g) => { W8.mineRow(g, [-6, -3, 0, 3, 6], 2.2, 4.0, 0.12); g.later(1.6, () => { W8.watcher(g, -4.5, null, 8, 0.24); W8.watcher(g, 4.5, null, 8, 0.24); }); });
   at(1080, (g) => { W8.fractal(g, -5, ['B'], 9); W8.fractal(g, 0, null, 9, 0.3); W8.fractal(g, 5, null, 9); });
   at(1108, (g) => { W8.ambush(g, 5, 2); g.later(2.6, () => W8.mineSweep(g, -1, 4, 0.24)); });
-  at(1134, (g) => { W8.watcher(g, -5, null, 8); W8.watcher(g, 5, null, 8); g.later(1.4, () => W8.wraiths(g, [-2, 2], 0.3, 3)); });
+  at(1134, (g) => { W8.watcher(g, -5, null, 8); W8.watcher(g, 0, null, 8, 0.32); W8.watcher(g, 5, null, 8); g.later(1.4, () => W8.wraiths(g, [-2, 2], 0.3, 3)); });
   at(1160, (g) => { W8.fractal(g, 0, null, 8, 0.2); g.later(1.8, () => W8.mineRow(g, [-5.5, 5.5], 2.0, 4.0)); g.later(2.4, () => W8.ambush(g, 4, 1)); });
-  at(1188, (g) => W8.wraiths(g, [-6, -3.5, -1, 1.5, 4, 6.5], 0.22, 2, 0.2));
+  at(1188, (g) => { W8.wraiths(g, [-6, -3.5, -1, 1.5, 4, 6.5], 0.22, 2, 0.2); g.later(1.8, () => W8.fractal(g, 0, null, 7, 0.3)); });
   at(1210, (g) => W.carrier(g, 0, ['B']));
   at(1224, (g) => W8.mineSweep(g, 1, 3, 0.26));
 });

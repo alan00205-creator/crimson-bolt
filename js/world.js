@@ -1624,13 +1624,14 @@ vec2 crater(vec2 p, vec2 sl, float keep, float aa) {
 #ifdef SP_GAS
 // one layer of glowing gas (p: the layer's lookup; its scales on the stage axis are whole multiples of
 // 1/LAYER_SPAN, so the layer's drift wraps seamlessly): billows, and bright fronts where they thin out
-vec3 gasLayer(vec2 p, vec2 gx, vec2 gy, vec3 c, out float dens) {
-  vec4 a = textureGrad(uNoise, p, gx, gy);
-#ifndef LOW
-  vec4 e = textureGrad(uNoise, p * 2.0 + (a.rb - 0.5) * 0.25, gx * 2.0, gy * 2.0);
-  float v = a.g * 0.64 + e.g * 0.36, fine = e.b;
-#else
+vec3 gasLayer(vec2 p, vec2 gx, vec2 gy, vec3 c, bool two, out float dens, out vec4 a) {
+  a = textureGrad(uNoise, p, gx, gy);
   float v = a.g * 0.8 + a.b * 0.2, fine = a.b;
+#ifndef LOW
+  if (two) {                                        // (a second octave: the nearer layers)
+    vec4 e = textureGrad(uNoise, p * 2.0 + (a.rb - 0.5) * 0.25, gx * 2.0, gy * 2.0);
+    v = a.g * 0.64 + e.g * 0.36; fine = e.b;
+  }
 #endif
   float body = smoothstep(0.5, 0.86, v);
   float front = 1.0 - smoothstep(0.0, 0.06, abs(v - 0.53));
@@ -1886,21 +1887,21 @@ void main() {
       vec2 gX = dFdx(P.xz) * ${(1 / LAYER_SPAN).toFixed(8)}, gY = dFdy(P.xz) * ${(1 / LAYER_SPAN).toFixed(8)};
       vec2 l1 = vec2(P.x, P.z - uScroll2.x) * ${(1 / LAYER_SPAN).toFixed(8)}, l2 = vec2(P.x, P.z - uScroll2.y) * ${(1 / LAYER_SPAN).toFixed(8)}, l3 = vec2(P.x, P.z - uScroll2.z) * ${(1 / LAYER_SPAN).toFixed(8)};
       float v1, v2, v3;
-      col += gasLayer(l1 + vec2(0.13, 0.41), gX, gY, uNeb, v1) * uMix.x;
+      vec4 a1, a2, a3;
+      col += gasLayer(l1 + vec2(0.13, 0.41), gX, gY, uNeb, false, v1, a1) * uMix.x;
       // star clouds (uMix2.w): the far gas crowded with small stars where it is thick
       if (uMix2.w > 0.001) {
         float sc = smoothstep(0.42, 0.8, v1) * uMix2.w;
-        col += crowd(q * 4.8 + 1.7, 5.0, mix(0.99, 0.72, sc), 0.1, aa * 4.8) * sc * 1.2;
-#ifndef LOW
-        col += crowd(q * 8.0 + 5.3, 7.0, mix(0.995, 0.7, sc), 0.1, aa * 8.0) * sc;
-#endif
+        col += crowd(q * 6.4 + 1.7, 5.0, mix(0.99, 0.62, sc), 0.11, aa * 6.4) * sc * 1.3;
       }
-      col += gasLayer(l2 * 2.0 + vec2(0.57, 0.23), gX * 2.0, gY * 2.0, uGas, v2) * uMix.y;
+      col += gasLayer(l2 * 2.0 + vec2(0.57, 0.23), gX * 2.0, gY * 2.0, uGas, true, v2, a2) * uMix.y;
 #ifndef LOW
-      col += gasLayer(l3 * 2.0 + vec2(0.31, 0.77), gX * 2.0, gY * 2.0, uGas2, v3) * uMix.z;
-#endif
+      col += gasLayer(l3 * 2.0 + vec2(0.31, 0.77), gX * 2.0, gY * 2.0, uGas2, true, v3, a3) * uMix.z;
       vec4 dl = textureGrad(uNoise, l3 + vec2(0.71, 0.09), gX, gY);
       float dv = dl.g * 0.85 + dl.b * 0.15;
+#else
+      float dv = 1.0 - a1.g * 0.85 - a2.r * 0.15;    // (LOW: from the far layer's lookup, where its gas is thin)
+#endif
       float dust = smoothstep(0.52, 0.66, dv) * uMix.w;
       col = col * (1.0 - 0.9 * dust) + uDust * (1.0 - smoothstep(0.0, 0.08, abs(dv - 0.51))) * uMix.w * 0.25;
 #ifndef LOW
@@ -1916,8 +1917,10 @@ void main() {
       vec2 w1 = webLayer(vec2(P.x, P.z - uScroll2.x) * ${(1 / LAYER_SPAN).toFixed(8)} + vec2(0.3, 0.6), gX, gY);
       col += (uNeb * w1.x + uHot * w1.y * 0.7) * uMix.x;
 #ifndef LOW
-      vec2 w2 = webLayer(vec2(P.x, P.z - uScroll2.y) * ${(2 / LAYER_SPAN).toFixed(8)} + vec2(0.1, 0.2), gX * 2.0, gY * 2.0);
-      col += (uGas * w2.x + uHot * w2.y) * uMix.y;
+      if (uMix.y > 0.001) {
+        vec2 w2 = webLayer(vec2(P.x, P.z - uScroll2.y) * ${(2 / LAYER_SPAN).toFixed(8)} + vec2(0.1, 0.2), gX * 2.0, gY * 2.0);
+        col += (uGas * w2.x + uHot * w2.y) * uMix.y;
+      }
 #endif
     }
 #endif
@@ -1932,10 +1935,12 @@ void main() {
       vec2 fw = fwidth(gq) * 1.3 + 1e-4;
       vec2 ln = (1.0 - smoothstep(vec2(0.0), fw, abs(fract(gq + 0.5) - 0.5))) * (1.0 - smoothstep(vec2(0.07), vec2(0.3), fw));
       col += uGas * max(ln.x, ln.y) * uMix.w * 0.22;
+#ifndef LOW
       if (uMix2.w > 0.001) for (int i = 0; i < 3; i++) {
         float lr = length(P0 - uLens[i].xy), e = uLens[i].z;
         col += uGas2 * exp(-(lr - e) * (lr - e) / (0.02 + 0.05 * e * e)) * 0.16 * step(0.01, e);
       }
+#endif
     }
 #endif
   }
@@ -2008,7 +2013,11 @@ void main() {
     vec2 ga = vec2((lq.x * dx.y - lq.y * dx.x), (lq.x * dy.y - lq.y * dy.x)) / lr2 * 1.9098593;
     float ah = max(alt, 0.0);             // (alt < 0 inside the disc: exp would overflow, and ∞ · 0 is NaN)
     float st = textureGrad(uNoise, vec2(ang, ah * 0.8 + 0.3), vec2(ga.x, dFdx(ah) * 0.8), vec2(ga.y, dFdy(ah) * 0.8)).g;
+#ifndef LOW
     vec4 pr = textureGrad(uNoise, vec2(ang * 1.5, ah * 24.0 - uScroll.x * 0.004), vec2(ga.x * 1.5, dFdx(ah) * 24.0), vec2(ga.y * 1.5, dFdy(ah) * 24.0));
+#else
+    vec4 pr = vec4(st, st * st, 0.5, 0.0) * (1.0 - smoothstep(0.0, 0.05, ah));   // (LOW: from the streamers)
+#endif
     float corona = (exp(-ah / uAtmW) * 0.85 + exp(-ah / (uAtmW * 3.5)) * 0.12) * (0.35 + 1.3 * st * st);
     float prom = smoothstep(0.55, 0.75, pr.g * (0.45 + 0.9 * st) + pr.r * 0.2) * exp(-ah / 0.014) * (0.6 + 0.8 * pr.b);
     col += (uAtmos * corona + uGlow * prom * 3.2) * (1.0 - onDisc);
@@ -2100,7 +2109,7 @@ void main() {
       vec4 gr = mix(textureGrad(uNoise, gq + vec2(0.012, 0.007) * fp.x, gx * 24.0, gy * 24.0),
         textureGrad(uNoise, gq + vec2(0.012, 0.007) * fp.y + 0.37, gx * 24.0, gy * 24.0), fp.z);
 #else
-      vec4 gr = textureGrad(uNoise, gq, gx * 24.0, gy * 24.0);
+      vec4 gr = vec4(0.0);                                  // (LOW: no granulation, the lanes vanish)
 #endif
       float lane = pow(1.0 - abs(gr.r * 2.0 - 1.0), 5.0);
       vec4 ms = textureGrad(uNoise, uv * 3.0, gx * 3.0, gy * 3.0);
@@ -2131,12 +2140,16 @@ void main() {
     float rr = length(RP.xz);
     float grx = dFdx(rr), gry = dFdy(rr), ew = abs(grx) + abs(gry) + 1e-4;
     vec4 rl = textureGrad(uNoise, vec2(rr * 5.0, 0.83), vec2(grx * 5.0, 0.0), vec2(gry * 5.0, 0.0));
+#ifndef LOW
     vec4 rl2 = textureGrad(uNoise, vec2(rr * 1.3, 0.21), vec2(grx * 1.3, 0.0), vec2(gry * 1.3, 0.0));
     vec2 rq = RP.xz, rdx = dFdx(rq), rdy = dFdy(rq);
     float rq2 = max(dot(rq, rq), 1e-6);
     float az = (atan(rq.y, rq.x) - uKit.w) * 3.8197186;                    // 24 noise periods round
     vec2 gaz = vec2(rq.x * rdx.y - rq.y * rdx.x, rq.x * rdy.y - rq.y * rdy.x) / rq2 * 3.8197186;
     vec4 ck = textureGrad(uNoise, vec2(az, rr * 2.0), vec2(gaz.x, grx * 2.0), vec2(gaz.y, gry * 2.0));
+#else
+    vec4 rl2 = rl.gbra, ck = rl;
+#endif
     float Cr = smoothstep(1.235 - ew, 1.25 + ew, rr) * (1.0 - smoothstep(1.51 - ew, 1.53 + ew, rr));
     float Br = smoothstep(1.52 - ew, 1.54 + ew, rr) * (1.0 - smoothstep(1.935 - ew, 1.95 + ew, rr));
     float Ar = smoothstep(2.02 - ew, 2.035 + ew, rr) * (1.0 - smoothstep(2.265 - ew, 2.275 + ew, rr));
@@ -8572,10 +8585,10 @@ const COSMOS_TOD_SRC = [
   cosmosKey(380, { pStar: 0.45, pClus: 1.0, pHot: 0xffe2b0, pGas2: 0x6a8ad8, pNeb: 0x3a2a8a, pGas: 0x3a6ad0 }),
   cosmosKey(470, { pStar: 0.5, pClus: 0.6, pL1: 0.75, pL2: 0.45, pHot: 0xd8e4ff, pGas2: 0x6a8ad8, pNeb: 0x3a2a8a, pGas: 0x3a5ab8, pSpace: 0x020106 }),
   cosmosKey(760, { pStar: 0.5, pClus: 0.6, pL1: 0.75, pL2: 0.45, pHot: 0xd8e4ff, pGas2: 0x6a8ad8, pNeb: 0x3a2a8a, pGas: 0x3a5ab8, pSpace: 0x020106 }),
-  cosmosKey(850, { sky: 0x1a2a40, pStar: 0.7, pClus: 0.7, pL1: 0.55, pL2: 0.4, pDustI: 0.7, pSpark: 1.0, pHot: 0xd8e4ff, pGas2: 0x9ab4ff, pNeb: 0x3a2a8a, pGas: 0x2a9ac0, pSpace: 0x010208 }),
-  cosmosKey(1180, { sky: 0x1a2a40, pStar: 0.7, pClus: 0.6, pL1: 0.5, pL2: 0.35, pDustI: 0.6, pSpark: 1.0, pHot: 0xd8e4ff, pGas2: 0x9ab4ff, pNeb: 0x3a2a8a, pGas: 0x2a9ac0, pSpace: 0x010208,
+  cosmosKey(850, { sky: 0x1a2a40, pStar: 0.7, pClus: 0.7, pL1: 0.7, pL2: 0, pDustI: 0.7, pSpark: 1.0, pHot: 0xd8e4ff, pGas2: 0x9ab4ff, pNeb: 0x2a78a8, pGas: 0x2a9ac0, pSpace: 0x010208 }),
+  cosmosKey(1180, { sky: 0x1a2a40, pStar: 0.7, pClus: 0.6, pL1: 0.6, pL2: 0, pDustI: 0.6, pSpark: 1.0, pHot: 0xd8e4ff, pGas2: 0x9ab4ff, pNeb: 0x2a78a8, pGas: 0x2a9ac0, pSpace: 0x010208,
     pGlowI: 0.0, pCx: 0, pCz: -70, pCr: 1.0, pTilt: 1.47 }),
-  cosmosKey(1275, { sun: 0xd8ecff, sunI: 2.4, sky: 0x283a60, gnd: 0x3a3070, hemiI: 1.15, pStar: 0.8, pClus: 0.4, pL1: 0.35, pL2: 0.2, pDustI: 0.15, pSpark: 0.0, pHot: 0xa8dcff, pGas2: 0x5a36c0, pNeb: 0x3a2a8a, pGas: 0x2a9ac0, pSpace: 0x000000,
+  cosmosKey(1275, { sun: 0xd8ecff, sunI: 2.4, sky: 0x283a60, gnd: 0x3a3070, hemiI: 1.15, pStar: 0.8, pClus: 0.4, pL1: 0.45, pL2: 0, pDustI: 0.15, pSpark: 0.0, pHot: 0xa8dcff, pGas2: 0x5a36c0, pNeb: 0x2a5a98, pGas: 0x2a9ac0, pSpace: 0x000000,
     pGlowI: 1.0, pCx: 0, pCz: -14, pCr: 3.0, pTilt: 1.47 }),
 ];
 const COSMOS_CLOUD = { void: 0, web: 0, warp: 0, horizon: 0 };

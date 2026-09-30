@@ -2371,7 +2371,7 @@ const SONGDEF = {
         chords: 'D E F#m F#m D E C# C#', lead: LUNAR_CHORUS,
         bass: 'oct16*7 build', drums: 'bC*7 fS', crash: [0, 4], gtr: 'half*7 push',
         stab: 'hB none hA none hB none hA hA', arp: 'arpB*8',
-        p2: { dbl: 'brass-12', arp: 'bellMoon*8' },
+        p2: { harm: 1, arp: 'bellMoon*8' },
       },
       C: {
         chords: 'Bm Bm F#m F#m G G C# C#', leadV: 'brass', padV: 'choir', pad: 1,
@@ -2385,7 +2385,7 @@ const SONGDEF = {
         chords: 'D E F#m F#m D E C# C#', lead: LUNAR_CHORUS, harm: 1,
         bass: 'oct16*6 p16 build', drums: 'bD*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
         gtr: 'half*6 ch16 hold', stab: 'hB none hA none hB none hD none', arp: 'arpC*8',
-        p2: { dbl: 'bell+12' },
+        p2: { arp: 'bellMoon*6 arpC*2' },
       },
     },
   },

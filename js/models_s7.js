@@ -956,12 +956,16 @@ function createNemesis() {
   const rimGeo = GG('ext:s7:nemesis.bayRim', buildNemesisBayRim);
   const rimWreck = wreckGeo('ext:s7:nemesis.bayRim', buildNemesisBayRim, { keep: (x, y, z) => x * 0.8 + z * 0.6 + 0.3, crumple: 0.12, seed: 87, dir: [0, 1, 0], shards: 10, shardSize: 0.22, band: 0.4 });
   const irisGeo = GG('ext:s7:nemesis.iris', buildNemesisIris);
+  // a destroyed bay: its petals scorched and slumped shut over the mouth (so the lit mouth under them is covered)
+  const irisWreck = wreckGeo('ext:s7:nemesis.iris', buildNemesisIris, { keep: () => 1, crumple: 0.1, scorch: 0.3, seed: 89, shards: 0 });
   const bays = [];
   for (const sx of [-1, 1]) {
     const m = mat();
     const rim = new THREE.Mesh(rimGeo, m), iris = new THREE.Mesh(irisGeo, m);
-    const part = makePart(sx < 0 ? 'bay0' : 'bay1', 0.95, [{ mesh: rim, intact: rimGeo, wreck: rimWreck }, { mesh: iris, hideOnDestroy: true }],
-      [new THREE.Vector3(0, 0.4, 0)]);
+    const part = makePart(sx < 0 ? 'bay0' : 'bay1', 0.95, [{ mesh: rim, intact: rimGeo, wreck: rimWreck }, { mesh: iris, intact: irisGeo, wreck: irisWreck }],
+      [new THREE.Vector3(0, 0.4, 0)], { onDestroyed: (d) => {
+        if (d) { iris.scale.set(1, 0.7, 1); iris.rotation.y = 0.3; iris.position.y = -0.08; } else part.userData.setOpen(part.userData.open || 0);
+      } });
     part.position.set(NM_BAY[0] * sx, NM_BAY[1], NM_BAY[2]);
     part.userData.open = 0;
     part.userData.setOpen = (v) => {

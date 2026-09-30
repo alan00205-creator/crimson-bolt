@@ -129,7 +129,7 @@ function applyLoadout() {
 
 // Local leaderboard (this device only): store 'ranking' → up to RANK_MAX runs, best first:
 // { score, name, ac, paint, stage (1..STAGE_COUNT reached), loop, clear (the final stage cleared in
-// the run — stage 3 for rows saved before stages 4 and 5 existed), cont (continues used), date
+// the run — stage 3 for rows saved by the three-stage version), cont (continues used), date
 // ('yyyy-mm-dd'), t (ms when recorded; the newest row is highlighted) }.
 // Sanitised on every read like the wallet (malformed rows dropped, names trimmed to NAME_MAX);
 // works in memory when storage fails. Names are player text: the UI shows them with textContent.
@@ -296,7 +296,7 @@ async function boot() {
 }
 
 // Compile every pooled material once so the first enemy of each type doesn't hitch, for every
-// stage world (stages 2–5 too) at both qualities; stage 1 is restored afterwards. Programs
+// stage world (stages 2–8 too) at both qualities; stage 1 is restored afterwards. Programs
 // differ by render target (the bloom path renders the scene into the composer's linear target,
 // low quality straight to the canvas), and compile() also walks hidden objects (e.g. a stage's
 // cloud deck), so compile for both targets rather than relying on the render() at the end.
@@ -705,7 +705,11 @@ function gameOver() {
   const isNew = saveHi();
   bankMoney();
   const st = game.stage;
-  $('go-stage').textContent = `STAGE ${st.n}${game.loop > 1 ? ' · LOOP ' + game.loop : ''} ${st.zh}`;
+  // (the stage name never breaks: on a phone '太陽系航線' moves to its own line whole)
+  const goSt = $('go-stage'), goZh = document.createElement('span');
+  goZh.textContent = st.zh;
+  goSt.textContent = `STAGE ${st.n}${game.loop > 1 ? ' · LOOP ' + game.loop : ''} `;
+  goSt.append(goZh);
   $('go-score').textContent = fmt(game.score);
   $('go-hi').textContent = fmt(hiScore);
   // this stage's CR, like the results screen: CR from earlier stages was shown (and banked) there
@@ -1297,7 +1301,7 @@ function exposeDebug() {
     get state() { return state; },
     get fps() { return fpsAvg; },
     get quality() { return qualityLevel; },
-    // start({ stage, loop }) — stage is the stage NUMBER (1..5, like STAGE_META.n); start(2) = loop 2
+    // start({ stage, loop }) — stage is the stage NUMBER (1..8, like STAGE_META.n); start(2) = loop 2
     start(o = {}) {
       if (typeof o === 'number') o = { loop: o };
       startGame({ loop: Math.max(1, o.loop | 0 || 1), stage: Math.max(1, o.stage | 0 || 1) - 1, keepScore: !!o.keepScore });
@@ -1308,6 +1312,8 @@ function exposeDebug() {
       startGame({ loop: game.loop || 1, stage: Math.max(1, n | 0) - 1, keepScore: inRun });
       return game.stage.n;
     },
+    // every stage in play order (placeholder: still the framework's stand-in)
+    get stages() { return gameMod.STAGES.map((s) => ({ n: s.n, name: s.name, zh: s.zh, theme: s.theme, world: s.world, boss: s.boss, placeholder: !!s.placeholder })); },
     // money(n): set the wallet balance; ship(id, paint): own + equip an aircraft (and a paint of it);
     // paint(pid): own + equip a paint of the equipped aircraft; upgrades({ id: level }): set the
     // levels (all persisted; upgrades count from the next run)
@@ -1350,12 +1356,15 @@ function exposeDebug() {
       game.skipTo(d);
       ui.warning(false); ui.danger(false);
     },
+    // toMidboss() / toBoss(): jump to just before the current stage's mid-boss / boss warning
+    toMidboss() { this.jump(game.stage.midbossAt - 16); },
+    toBoss() { this.jump(game.stage.bossAt - 44); },
     power(level = 8, main = 'red', sub = 'H', subLevel = 4) { Object.assign(game.player, { level, main, sub, subLevel }); },
     killAll() { for (const e of game.enemies) { if (e.parts) for (const p of e.parts) game.damagePart(e, p, 1e6); game.damageEnemy(e, 1e6); } },
     info() {
       return { state, fps: Math.round(fpsAvg), d: Math.round(world.distance), phase: game.phase, enemies: game.enemies.length,
         bullets: game.eb.n, shots: game.ps.n, particles: fx.p.n, score: game.score, lives: game.lives, bombs: game.bombs,
-        stage: game.stage.n, stageIdx: game.stageIdx, loop: game.loop, aircraft: game.ac.id, paint: game.paint, continues: game.continues,
+        stage: game.stage.n, stageIdx: game.stageIdx, loop: game.loop, world: world.stage, level: game.diff.level, aircraft: game.ac.id, paint: game.paint, continues: game.continues,
         up: { ...game.up }, shield: game.shield,
         runMoney: Math.floor(game.runMoney), banked: runBanked, money: walletMem.money,
         calls: renderer.info.render.calls, tris: renderer.info.render.triangles, quality: qualityLevel };

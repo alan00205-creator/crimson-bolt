@@ -1,5 +1,5 @@
 // ui.js — DOM HUD, banners, popups and menu screens (incl. the hangar, the ranking board and item legends).
-import { AIRCRAFT, AIRCRAFT_BY_ID, MAIN_WEAPONS, MAIN_ORDER, SUB_WEAPONS, SUB_ORDER, MAX_LEVEL, MONEY, PAINTS, DEFAULT_PAINT, paintOf, UPGRADES } from './defs.js';
+import { AIRCRAFT, AIRCRAFT_BY_ID, MAIN_WEAPONS, MAIN_ORDER, SUB_WEAPONS, SUB_ORDER, MAX_LEVEL, MONEY, PAINTS, DEFAULT_PAINT, paintOf, UPGRADES, STAGE_META } from './defs.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.floor(n).toLocaleString('en-US');
@@ -20,6 +20,9 @@ const RANK_NOTE = '「2-3」＝第 2 輪第 3 關。紀錄只存在這台裝置�
 const boardDate = (d) => { if (!d) return ''; const [y, m, day] = d.split('-'); return y === String(new Date().getFullYear()) ? `${m}/${day}` : `${y}/${m}/${day}`; };
 const WARN_DEFAULT = { e: 'HUGE FORTRESS APPROACHING', s: '巨大要塞 接近中' };
 const ZH_NUM = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+// each stage's setting chip in the how-to stage list (by stage number): sea, land, air, Earth orbit,
+// the Moon, the Solar System, the Galaxy, the Universe
+const THEME_COL = ['', '#4aa8ff', '#e0a25a', '#9fd8ff', '#46d6c4', '#c9ced8', '#ff9a4a', '#c08cff', '#f0e6ff'];
 
 export class UI {
   constructor() {
@@ -91,13 +94,14 @@ export class UI {
   }
   // The CR bonus upgrade on a CR line: '（+20%）', hidden without it.
   setBonus(el, pct) { el.hidden = !(pct > 0); el.textContent = pct > 0 ? `（+${pct}%）` : ''; }
-  // Side-panel mission block and the how-to route line. stages: STAGES / STAGE_META entries.
+  // Side-panel mission block: the stage, its mission and the route by setting (海 › 陸 › 空 › 地球 …,
+  // each with its stage name as a tooltip). stages: STAGES / STAGE_META entries.
   setMission(stages, idx, loop = 1) {
     const st = stages[idx] || stages[0];
     this.set('mission', `${idx}:${loop}`, () => {
       $('side-stage').textContent = `STAGE ${st.n}${loop > 1 ? ' · LOOP ' + loop : ''} · ${st.zh}`;
       $('side-mission').textContent = st.mission;
-      $('side-route').innerHTML = stages.map((s, i) => `<span class="${i < idx ? 'done' : i === idx ? 'on' : ''}">${esc(s.zh)}</span>`).join('<i>›</i>');
+      $('side-route').innerHTML = stages.map((s, i) => `<span class="${i < idx ? 'done' : i === idx ? 'on' : ''}" title="${esc(`${s.n} ${s.zh}`)}">${esc(s.theme || s.zh)}</span>`).join('<i>›</i>');
     });
   }
   setLives(n) {
@@ -269,13 +273,29 @@ export class UI {
         + `<li>S 副武器：同樣循環變換，吃同字母升級。</li>${grid(SUB_ORDER, SUB_WEAPONS)}`);
     }
   }
-  // The how-to route line and each stage's clear reward (MONEY.stageClear, before the bonus upgrade).
+  // The how-to route line (the settings in order), the stage list (number, setting, name and clear
+  // reward — MONEY.stageClear, before the bonus upgrade; the final stage marked) and the reward
+  // range on the CR line.
   setRoute(stages) {
-    const el = $('howto-route');
     const n = stages.length, zh = ZH_NUM[n] || String(n);
-    if (el) el.textContent = `共${zh}關：${stages.map((s) => s.zh).join(' → ')}。第${zh}關是最終決戰，全破後進入下一輪（難度提升）。`;
+    const el = $('howto-route');
+    if (el) el.innerHTML = `共${zh}關：${stages.map((s) => `<span>${esc(s.theme || s.zh)}</span>`).join(' → ')}。第${zh}關是最終決戰，全破後進入下一輪（難度提升）。`;
+    const ol = $('howto-stages');
+    if (ol) {
+      ol.textContent = '';
+      for (const s of stages) {
+        const li = node('li', s === stages[n - 1] ? 'final' : '');
+        const th = node('span', 'sth', s.theme || '');
+        th.style.background = THEME_COL[s.n] || '#9ba6bf';
+        const cr = node('span', 'scr');
+        cr.append(node('i', 'coin'), fmt(MONEY.stageClear[s.n] || 0));
+        li.append(node('b', 'sn', String(s.n)), th, node('span', 'szh', s.zh), cr);
+        ol.append(li);
+      }
+    }
     const cr = $('howto-clearcr');
-    if (cr) cr.textContent = `（各關依序 ${stages.map((s) => fmt(MONEY.stageClear[s.n] || 0)).join('／')}）`;
+    const v = stages.map((s) => MONEY.stageClear[s.n] || 0);
+    if (cr) cr.textContent = `（每關 ${fmt(Math.min(...v))}～${fmt(Math.max(...v))}，見上方關卡表）`;
   }
 
   // --- hangar ---------------------------------------------------------------------
@@ -436,7 +456,9 @@ export class UI {
     const m = node('span', 'rmeta'), sw = node('i', 'swatch'), n = node('span', 'rac', ac.zh);
     sw.style.background = swatchBg(pt);
     n.style.color = pt.col;
-    m.append(sw, n, node('span', 'rst', `${r.loop}-${r.stage}`));
+    const st = node('span', 'rst', `${r.loop}-${r.stage}`), sm = STAGE_META[r.stage - 1];
+    st.title = `第 ${r.loop} 輪第 ${r.stage} 關${sm ? ' ' + sm.zh : ''}`;
+    m.append(sw, n, st);
     if (r.clear) m.append(node('em', 'rclear', 'ALL CLEAR'));
     if (r.cont > 0) m.append(node('span', 'rcont', `接關×${r.cont}`));
     return m;

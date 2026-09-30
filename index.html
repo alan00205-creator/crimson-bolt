@@ -260,6 +260,16 @@ body.sides #keys { display: none; } /* the side panel already lists the keys (ma
 .legend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
 .legend-grid > span { display: flex; align-items: center; white-space: nowrap; font: 500 13px var(--f-cjk); }
 .panel .note { font: 500 12px/1.6 var(--f-cjk); color: var(--ink-dim); }
+/* how-to stage list: number, setting chip, name and clear CR per stage (the final stage in amber) */
+#howto-route span { white-space: nowrap; }  /* a setting (太陽系) never breaks across lines */
+.stage-list { margin: 2px 0 0; padding: 0; list-style: none; display: grid; }
+.panel .stage-list li { display: grid; grid-template-columns: 14px 50px minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  padding: 3px 0; line-height: 1.45; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.stage-list .sn { font: 700 12px var(--f-display); color: var(--ink-dim); text-align: right; }
+.stage-list .sth { justify-self: start; padding: 0 6px; border-radius: 3px; font: 700 11px/18px var(--f-cjk); letter-spacing: 0.08em; color: #111; white-space: nowrap; }
+.stage-list .szh { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0.06em; }
+.stage-list .scr { display: flex; align-items: center; gap: 5px; font: 600 12px var(--f-display); color: var(--gold); font-variant-numeric: tabular-nums; }
+.stage-list .final .sn, .stage-list .final .szh { color: var(--amber); }
 .setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .setting label { font: 500 13px var(--f-cjk); }
 .seg { display: flex; border: 1px solid var(--panel-line); }
@@ -272,6 +282,7 @@ body.sides #keys { display: none; } /* the side panel already lists the keys (ma
 .panel-foot { position: sticky; bottom: calc(-1 * var(--pb)); z-index: 1; display: grid; margin: 0 calc(-1 * var(--px)) calc(-1 * var(--pb));
   padding: 8px var(--px) var(--pb); background: linear-gradient(rgba(10,12,21,0), #0a0c15 8px); }
 .tally .ln small { white-space: nowrap; }
+#go-stage { text-align: right; } #go-stage span { white-space: nowrap; }
 @media (max-height: 640px) {
   .screen { gap: 12px; }
   .h-title { font-size: 28px; }
@@ -563,7 +574,8 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
           <li><span class="chip b">B</span>炸彈 +1。<span class="chip medal">★</span>勳章：連續拾取分數遞增，漏接一枚就歸零。</li>
         </ul></div>
         <div><h4>STAGES 關卡</h4><ul>
-          <li id="howto-route">共五關，全破後進入下一輪（難度提升）。</li>
+          <li id="howto-route">共八關：海 → 陸 → 空 → 地球 → 月球 → <span>太陽系</span> → <span>銀河系</span> → 宇宙。第八關是最終決戰，全破後進入下一輪（難度提升）。</li>
+          <li><ol class="stage-list" id="howto-stages" aria-label="各關卡與過關 CR"></ol></li>
           <li>接關會從目前關卡繼續：分數歸零，已賺到的 CR 保留。</li>
         </ul></div>
         <div><h4>HANGAR 機庫</h4><ul>

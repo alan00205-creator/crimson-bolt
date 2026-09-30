@@ -39,8 +39,8 @@
     font: inherit; cursor: pointer; }
   button:hover, select:hover { border-color: #3a4456; }
   button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .seg { display: inline-flex; }
-  .seg button + button { border-left: 0; }
+  .seg { display: inline-flex; flex-wrap: wrap; }    /* long rows (eight stages, ten grounds) wrap inside the panel */
+  .seg button { margin: 0 -1px -1px 0; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
   th, td { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); }
   th { color: var(--ink-soft); font-weight: 500; }
@@ -70,17 +70,17 @@
 <button id="toggle">☰ controls</button>
 <aside id="panel">
   <h1>CRIMSON BOLT <b>赤電</b> · models</h1>
-  <p class="sub">Preview for <code>js/models.js</code> and its extension files (<code>models_ships / models_s2 … models_s5</code>). Gameplay view uses the game camera and lights at true scale.</p>
+  <p class="sub">Preview for <code>js/models.js</code> and its extension files (<code>models_ships / models_s2 … models_s8</code>). Gameplay view uses the game camera and lights at true scale.</p>
   <div class="row"><span class="seg" id="modeSeg"><button data-mode="game">Gameplay view</button><button data-mode="inspect">Inspect</button></span></div>
 
   <div id="gameCtl">
     <h2>Layout</h2>
-    <div class="row"><span class="seg" id="layoutSeg"><button data-l="s1">Stage 1</button><button data-l="s2">Stage 2</button><button data-l="s3">Stage 3</button><button data-l="s4">Stage 4</button><button data-l="s5">Stage 5</button><button data-l="hangar">Hangar</button><button data-l="paints">Paints</button></span></div>
+    <div class="row"><span class="seg" id="layoutSeg"><button data-l="s1" title="Stage 1">S1</button><button data-l="s2" title="Stage 2">S2</button><button data-l="s3" title="Stage 3">S3</button><button data-l="s4" title="Stage 4">S4</button><button data-l="s5" title="Stage 5">S5</button><button data-l="s6" title="Stage 6">S6</button><button data-l="s7" title="Stage 7">S7</button><button data-l="s8" title="Stage 8">S8</button><button data-l="hangar">Hangar</button><button data-l="paints">Paints</button></span></div>
     <h2>Aircraft &amp; paint</h2>
     <div class="row"><span class="k">stages</span><select id="gPilot"></select></div>
     <div id="paintRows"></div>
     <h2>Ground (y = −6)</h2>
-    <div class="row"><span class="seg" id="groundSeg"><button data-g="sea">Sea</button><button data-g="country">Country</button><button data-g="city">City</button><button data-g="dusk">Dusk sea</button><button data-g="desert">Desert</button><button data-g="clouds">Clouds</button><button data-g="ice">Ice</button><button data-g="space">Space</button></span></div>
+    <div class="row"><span class="seg" id="groundSeg"><button data-g="sea">Sea</button><button data-g="country">Country</button><button data-g="city">City</button><button data-g="dusk">Dusk sea</button><button data-g="desert">Desert</button><button data-g="clouds">Clouds</button><button data-g="space">Orbit</button><button data-g="moon">Moon</button><button data-g="solar">Solar</button><button data-g="nebula">Nebula</button><button data-g="void">Void</button></span></div>
     <h2>Show</h2>
     <div class="row">
       <label><input type="checkbox" id="gBoss"> Boss</label>
@@ -146,7 +146,7 @@
   <h2>Budgets</h2>
   <table id="stats"><thead><tr><th>model</th><th class="n">meshes</th><th class="n">tris</th><th class="n">budget</th></tr></thead><tbody></tbody></table>
   <p class="sub" style="margin-top:8px">⚠ = userData contract problem (hover, or see the console). Budgets: player 4/1500 · option 3/500 · enemy 4/700 · mid-boss 6/2500 · boss 24/8000 · item 4/700.</p>
-  <p class="sub" style="margin-top:8px">Drag to orbit in Inspect. URL params: <code>mode, model (e.g. player:gale:dusk), layout (s1 s2 s3 s4 s5 hangar paints), ground (sea country city dusk desert clouds ice space), ac (aircraft in the stage layouts), paints (e.g. bolt:raven,gale:dusk), boss, bossId, flip, open, destroy, flash, bank, thrust, aim, view, color, kind, bloom, ui</code>.</p>
+  <p class="sub" style="margin-top:8px">Drag to orbit in Inspect. URL params: <code>mode, model (e.g. player:gale:dusk), layout (s1 … s8 hangar paints), ground (sea country city dusk desert clouds space moon solar nebula void), ac (aircraft in the stage layouts), paints (e.g. bolt:raven,gale:dusk), boss, bossId, flip, open, destroy, flash, bank, thrust, aim, view, color, kind, bloom, ui</code>.</p>
 </aside>
 
 <script type="module">
@@ -166,6 +166,9 @@ import * as S2 from '../js/models_s2.js';
 import * as S3 from '../js/models_s3.js';
 import * as S4 from '../js/models_s4.js';
 import * as S5 from '../js/models_s5.js';
+import * as S6 from '../js/models_s6.js';
+import * as S7 from '../js/models_s7.js';
+import * as S8 from '../js/models_s8.js';
 
 const GROUND_Y = -6;
 const SUN_POS = new THREE.Vector3(-14, 30, 10);
@@ -256,18 +259,36 @@ function makeGroundTex(kind) {
         g.fillStyle = gr; g.beginPath(); g.arc(px, py, r, 0, 7); g.fill();
       });
     }
-  } else if (kind === 'ice') {
-    g.fillStyle = '#16303f'; g.fillRect(0, 0, S, S);          // dark open water between the floes
-    for (let i = 0; i < 90; i++) {                            // ice floes: pale polygons with a blue rim
-      const x = rnd() * S, y = rnd() * S, r = 14 + rnd() * 46, n = 5 + Math.floor(rnd() * 4), a0 = rnd() * 7;
-      const pts = [];
-      for (let k = 0; k < n; k++) { const a = a0 + (k / n) * Math.PI * 2, rr = r * (0.65 + rnd() * 0.35); pts.push([Math.cos(a) * rr, Math.sin(a) * rr]); }
-      const v = 212 + Math.floor(rnd() * 34);
-      wrap(x, y, r, (px, py) => {
-        g.beginPath(); pts.forEach(([dx, dy], k) => (k ? g.lineTo(px + dx, py + dy) : g.moveTo(px + dx, py + dy))); g.closePath();
-        g.fillStyle = `rgb(${v - 14},${v - 4},${Math.min(255, v + 8)})`; g.fill();
-        g.strokeStyle = 'rgba(120,170,205,0.7)'; g.lineWidth = 2; g.stroke();
+  } else if (kind === 'moon') {
+    g.fillStyle = '#6d6e72'; g.fillRect(0, 0, S, S);          // grey regolith
+    for (let i = 0; i < 1400; i++) {                          // grain
+      const v = 90 + Math.floor(rnd() * 40);
+      g.fillStyle = `rgba(${v},${v},${v + 3},0.35)`; g.fillRect(rnd() * S, rnd() * S, 2, 2);
+    }
+    for (let i = 0; i < 30; i++) {                            // craters: dark floor, bright sunward rim, black shadow
+      const x = rnd() * S, y = rnd() * S, r = 6 + rnd() * rnd() * 46;
+      wrap(x, y, r + 3, (px, py) => {
+        g.fillStyle = 'rgba(58,58,62,0.9)'; g.beginPath(); g.arc(px, py, r, 0, 7); g.fill();
+        g.strokeStyle = 'rgba(190,190,196,0.8)'; g.lineWidth = Math.max(1.5, r * 0.14);
+        g.beginPath(); g.arc(px, py, r, Math.PI * 0.8, Math.PI * 1.8); g.stroke();
+        g.fillStyle = 'rgba(8,8,10,0.45)'; g.beginPath(); g.arc(px + r * 0.22, py + r * 0.22, r * 0.7, 0, 7); g.fill();
       });
+    }
+  } else if (kind === 'solar' || kind === 'nebula' || kind === 'void') {
+    // dark space with a tinted glow: solar = warm (Mars, the Sun), nebula = violet / teal gas, void = near black
+    g.fillStyle = kind === 'void' ? '#020205' : kind === 'solar' ? '#0a0605' : '#07051a'; g.fillRect(0, 0, S, S);
+    const tints = kind === 'solar' ? ['200,90,40', '255,170,70'] : kind === 'nebula' ? ['150,60,220', '40,170,200', '230,70,150'] : ['60,50,110'];
+    for (let i = 0; i < (kind === 'void' ? 8 : 26); i++) {
+      const x = rnd() * S, y = rnd() * S, r = 40 + rnd() * 110, c = tints[Math.floor(rnd() * tints.length)];
+      wrap(x, y, r, (px, py) => {
+        const gr = g.createRadialGradient(px, py, 0, px, py, r);
+        gr.addColorStop(0, `rgba(${c},${kind === 'void' ? 0.12 : 0.3})`); gr.addColorStop(1, `rgba(${c},0)`);
+        g.fillStyle = gr; g.beginPath(); g.arc(px, py, r, 0, 7); g.fill();
+      });
+    }
+    for (let i = 0; i < 600; i++) {
+      const v = 140 + Math.floor(rnd() * 115), r = rnd() < 0.93 ? 0.8 : 1.5;
+      g.fillStyle = `rgb(${v},${v},${Math.min(255, v + 25)})`; g.beginPath(); g.arc(rnd() * S, rnd() * S, r, 0, 7); g.fill();
     }
   } else if (kind === 'space') {
     g.fillStyle = '#05070f'; g.fillRect(0, 0, S, S);          // deep space with a faint earth-lit haze
@@ -305,15 +326,18 @@ const groundMat = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 160), groundMat);
 ground.rotation.x = -Math.PI / 2; ground.position.set(0, GROUND_Y, -10);
 scene.add(ground);
-const SKY = { sea: 0x8fb4cf, country: 0xa7bfd0, city: 0x9aa7b4, dusk: 0x4a3a58, desert: 0xd9bd8f, clouds: 0xa9c9ea, ice: 0xc6d6e2, space: 0x04060c };
+const SKY = { sea: 0x8fb4cf, country: 0xa7bfd0, city: 0x9aa7b4, dusk: 0x4a3a58, desert: 0xd9bd8f, clouds: 0xa9c9ea, space: 0x04060c,
+  moon: 0x000000, solar: 0x0a0503, nebula: 0x0a0618, void: 0x010103 };
 function setGround(kind) {
   if (!GROUND_TEX[kind]) GROUND_TEX[kind] = makeGroundTex(kind);
   groundMat.map = GROUND_TEX[kind]; groundMat.needsUpdate = true;
   scene.background = new THREE.Color(SKY[kind]);
   state.ground = kind;
   if (kind === 'dusk') { hemi.color.set(0xb89ad0); hemi.intensity = 0.8; sun.color.set(0xffa070); sun.intensity = 1.8; }
-  else if (kind === 'space') { hemi.color.set(0x7f9fd8); hemi.intensity = 0.7; sun.color.set(0xffffff); sun.intensity = 2.6; }
-  else if (kind === 'ice') { hemi.color.set(0xd8e8ff); hemi.intensity = 1.2; sun.color.set(0xeef2ff); sun.intensity = 2.1; }
+  else if (kind === 'space' || kind === 'void') { hemi.color.set(0x7f9fd8); hemi.intensity = 0.7; sun.color.set(0xffffff); sun.intensity = 2.6; }
+  else if (kind === 'moon') { hemi.color.set(0x9aa0ac); hemi.intensity = 0.5; sun.color.set(0xffffff); sun.intensity = 3.0; }
+  else if (kind === 'solar') { hemi.color.set(0xd89a7a); hemi.intensity = 0.7; sun.color.set(0xffe2b8); sun.intensity = 2.8; }
+  else if (kind === 'nebula') { hemi.color.set(0xb08cff); hemi.intensity = 0.8; sun.color.set(0xf0e8ff); sun.intensity = 2.5; }
   else { hemi.color.set(0xcfe3ff); hemi.intensity = 1.1; sun.color.set(0xfff1dc); sun.intensity = 2.4; }
   seg('groundSeg', 'g', kind);
 }
@@ -322,8 +346,11 @@ function setGround(kind) {
 // Every registered model: aircraft + option drones, each stage's enemies and boss, items.
 const BUDGET = { player: [4, 1500], option: [3, 500], enemy: [4, 700], midboss: [6, 2500], boss: [24, 8000], item: [4, 700] };
 // the extension stage files, LAST first: the registry lets a later file win a name clash
-const EXT_SRC = [['s5', S5], ['s4', S4], ['s3', S3], ['s2', S2]].map(([src, m]) => ({ src, E: m.ENEMIES || {}, B: m.BOSSES || {} }));
-const S2B = S2.BOSSES || {}, S3B = S3.BOSSES || {}, S4B = S4.BOSSES || {}, S5B = S5.BOSSES || {};
+const EXT_MODS = { s2: S2, s3: S3, s4: S4, s5: S5, s6: S6, s7: S7, s8: S8 };
+const EXT_SRC = Object.entries(EXT_MODS).reverse().map(([src, m]) => ({ src, E: m.ENEMIES || {}, B: m.BOSSES || {} }));
+const BOSSES_OF = Object.fromEntries(Object.entries(EXT_MODS).map(([src, m]) => [src, m.BOSSES || {}]));
+// stages without ground units (their models must not set userData.ground)
+const NO_GROUND = ['s3', 's4', 's6', 's7', 's8'];
 const S1_TYPES = ['dart', 'hornet', 'tank', 'turret', 'gunboat', 'carrier', 'bomber', 'crawler'];
 // same precedence as the registry: stage-1 names win, then the latest stage file
 const extOf = (t, boss) => EXT_SRC.find((x) => own(boss ? x.B : x.E, t)) || null;
@@ -331,7 +358,8 @@ const srcOf = (t) => (S1_TYPES.includes(t) ? 's1' : (extOf(t, false) || { src: '
 const bossSrc = (id) => (id === 'arclight' ? 's1' : (extOf(id, true) || { src: 's2' }).src);
 const OPTION_IDS = [...new Set([...AIRCRAFT.filter((a) => a.options > 0).map((a) => a.id), ...OPTION_TYPES])];
 const SECTIONS = [['ships', 'Aircraft · models_ships.js'], ['s1', 'Stage 1 · models.js'], ['s2', 'Stage 2 · models_s2.js'], ['s3', 'Stage 3 · models_s3.js'],
-  ['s4', 'Stage 4 · models_s4.js'], ['s5', 'Stage 5 · models_s5.js'], ['items', 'Items']];
+  ['s4', 'Stage 4 · models_s4.js'], ['s5', 'Stage 5 · models_s5.js'], ['s6', 'Stage 6 · models_s6.js'], ['s7', 'Stage 7 · models_s7.js'],
+  ['s8', 'Stage 8 · models_s8.js'], ['items', 'Items']];
 /** paints of an aircraft ('std' first); defs.js PAINTS (the hangar's list) may name them in Chinese */
 const paintsOf = (id) => PAINT_IDS[id] || ['std'];
 const paintZh = (id, pt) => { const l = DEFS.PAINTS && DEFS.PAINTS[id]; const e = Array.isArray(l) && l.find((x) => x && x.id === pt); return e && e.zh ? e.zh : ''; };
@@ -386,7 +414,7 @@ function contractIssues(c, m) {
   }
   if (c.paint && c.paint !== 'std') issues.push(...paintIssues(c, m));
   for (const [k, p] of partList(src)) for (const f of ['radius', 'muzzles', 'setFlash', 'setDestroyed']) if (p.userData[f] === undefined) issues.push(`part ${k}: missing ${f}`);
-  if ((c.src === 's3' || c.src === 's5') && ud.ground) issues.push(`stage ${c.src[1]} has no ground (userData.ground)`);
+  if (NO_GROUND.includes(c.src) && ud.ground) issues.push(`stage ${c.src[1]} has no ground (userData.ground)`);
   if (c.group !== 'item') {
     src.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(src);
@@ -535,8 +563,9 @@ function packUnits(src) {
   flush();
   return specs.length;
 }
-const LAYOUT_GROUND = { s1: 'sea', s2: 'desert', s3: 'clouds', s4: 'ice', s5: 'space', hangar: 'city' };
-const LAYOUT_BOSS = { s1: 'arclight', s2: Object.keys(S2B)[0], s3: Object.keys(S3B)[0], s4: Object.keys(S4B)[0], s5: Object.keys(S5B)[0], hangar: null };
+const LAYOUT_GROUND = { s1: 'sea', s2: 'desert', s3: 'clouds', s4: 'space', s5: 'moon', s6: 'solar', s7: 'nebula', s8: 'void', hangar: 'city' };
+const LAYOUT_BOSS = { s1: 'arclight', hangar: null };
+for (const [src, B] of Object.entries(BOSSES_OF)) LAYOUT_BOSS[src] = Object.keys(B)[0];
 const LAYOUTS = {
   s1() {
     // air units on the gameplay plane (y=0), ground units on the ground (y=−6)
@@ -555,26 +584,6 @@ const LAYOUTS = {
     ITEMS_ROW.forEach(([k, f], i) => place(k === 'P' ? (i ? 'P blue' : 'P red') : k === 'S' ? (i === 2 ? 'S·H' : 'S·N') : k,
       () => { const m = createItem(k); if (f) f(m); return m; }, -6.0 + i * 2.0, 0, 1.2));
     return '';
-  },
-  s2() {
-    place(pilotId(), pilotMake, 0, 0, 5.2);
-    const n = packUnits('s2');
-    return n || Object.keys(S2B).length ? '' : 'No stage-2 models registered yet — fill ENEMIES / BOSSES in js/models_s2.js';
-  },
-  s3() {
-    place(pilotId(), pilotMake, 0, 0, 5.2);
-    const n = packUnits('s3');
-    return n || Object.keys(S3B).length ? '' : 'No stage-3 models registered yet — fill ENEMIES / BOSSES in js/models_s3.js';
-  },
-  s4() {
-    place(pilotId(), pilotMake, 0, 0, 5.2);
-    const n = packUnits('s4');
-    return n || Object.keys(S4B).length ? '' : 'No stage-4 models registered yet — fill ENEMIES / BOSSES in js/models_s4.js';
-  },
-  s5() {
-    place(pilotId(), pilotMake, 0, 0, 5.2);
-    const n = packUnits('s5');
-    return n || Object.keys(S5B).length ? '' : 'No stage-5 models registered yet — fill ENEMIES / BOSSES in js/models_s5.js';
   },
   hangar() {
     // every aircraft in defs.js (bolt stands in for any without a model yet) with its option drones,
@@ -621,6 +630,14 @@ LAYOUTS.paints = () => {
   });
   return rows > 1 ? '' : 'No paints registered (PAINT_IDS in js/models.js)';
 };
+// stages 2–8: the pilot, then every extension enemy of that stage packed in rows (the boss via the boss toggle)
+for (const src of Object.keys(EXT_MODS)) {
+  LAYOUTS[src] = () => {
+    place(pilotId(), pilotMake, 0, 0, 5.2);
+    const n = packUnits(src);
+    return n || Object.keys(BOSSES_OF[src]).length ? '' : `No stage-${src[1]} models registered yet — fill ENEMIES / BOSSES in js/models_${src}.js`;
+  };
+}
 LAYOUT_GROUND.paints = 'sea'; LAYOUT_BOSS.paints = null;
 function setLayout(name, keepGround = false) {
   if (!LAYOUTS[name]) name = 's1';

@@ -3,8 +3,7 @@
 瀏覽器 3D 縱向捲軸射擊遊戲，致敬 1990 年代的經典街機射擊：三個關卡、四種主武器與三種副武器、清場炸彈、勳章連鎖、用 CR（信用點數）購買機型／塗裝／永久強化的機庫，以及本機排行榜。
 名稱、美術、音樂全部原創；3D 模型、地形、音效與配樂都是程式即時產生，沒有任何圖檔或音檔。
 
-> 這個資料夾與 mi-buddy 的其他部分（`bot/`、`site/`、`web/`）**完全無關、零相依**。
-> 放在 `site/` 以外是刻意的：推 master 不會把它部署到 stockmibuddy.com，也不會碰到官網的 CSP 檢查。
+**線上遊玩：https://alan00205-creator.github.io/crimson-bolt/** （手機、電腦都能直接開）
 
 ## 怎麼玩
 
@@ -104,7 +103,7 @@ ES modules 不能用 `file://` 直接開，兩種方式擇一：
 
 ```bash
 # A. 開發用：任何靜態伺服器
-cd game/crimson-bolt && python3 -m http.server 8000
+python3 -m http.server 8000     # 在倉庫根目錄執行
 # 瀏覽器開 http://localhost:8000/        （加 #debug 會掛上除錯指令 window.__cb）
 
 # B. 單一檔案版：打包成一個 HTML，可直接雙擊開啟

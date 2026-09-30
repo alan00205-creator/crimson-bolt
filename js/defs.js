@@ -34,7 +34,7 @@ export const AIRCRAFT = [
   {
     id: 'phantom', name: 'PHANTOM', zh: '幻影', price: 30000, color: '#b98cff', hex: 0xb98cff,
     speed: 13.5, slow: 6.5, hitR: 0.28, grazeR: 1.05, bombs: 3, bombCap: 5, dmg: 0.95, startLevel: 1, options: 2,
-    desc: '僚機指揮機。兩架小僚機跟隨射擊；按住慢速時僚機收攏、集中火力。',
+    desc: '僚機指揮機。兩架小僚機跟隨射擊；按住慢速或集中鍵時僚機收攏、集中火力。',
     stats: { speed: 3, power: 4, bombs: 3, hitbox: 3 },
   },
 ];

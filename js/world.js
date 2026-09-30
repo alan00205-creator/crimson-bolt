@@ -5042,19 +5042,22 @@ function crackEdge(ax, ad, bx, bd, w, c, lay) {
   const L = Math.hypot(bx - ax, bd - ad) || 1, nx = -(bd - ad) / L * w, nd = (bx - ax) / L * w;
   flat4(ax - nx, ad - nd, bx - nx, bd - nd, bx + nx, bd + nd, ax + nx, ad + nd, lay, c, 0.92);
 }
+// the boss's own track gauge: BEHEMOTH runs 1.62-wide tracks at x = ±3.94 from its hull axis
+const LAKE_TREAD_X = [-3.94, 3.94], LAKE_TREAD_W = 0.75;
 function cyLake(ch, k, a, b) {
   frameId();
   // the treads of something enormous running on up the pan: two wide compacted bands with cleat
-  // marks (stateless in d, so they run on across chunks)
-  const tread = (d) => 3.2 * Math.sin(d * 0.021 + 0.8) + 1.3 * Math.sin(d * 0.057 + 2.0);
+  // marks (stateless in d, so they run on across chunks). The line wanders ±2.2 about the arena
+  // centre, where the boss sways, so the bands stay inside |x| < 7
+  const tread = (d) => 1.6 * Math.sin(d * 0.021 + 0.8) + 0.6 * Math.sin(d * 0.057 + 2.0);
   const step = LOWQ ? 2 : 1;
   for (let d = a; d < b - 0.01; d += step) {
     const e = Math.min(b, d + step), xa = tread(d), xb = tread(e);
-    for (const o of [-1.8, 1.8]) crackEdge(xa + o, d, xb + o, e, 0.42, CP.tread, L_ROAD);
+    for (const o of LAKE_TREAD_X) crackEdge(xa + o, d, xb + o, e, LAKE_TREAD_W, CP.tread, L_ROAD);
   }
   if (!LOWQ) for (let d = Math.ceil(a / 0.75) * 0.75; d < b - 0.2; d += 0.75) {
     const xc = tread(d + 0.08);
-    for (const o of [-1.8, 1.8]) flat(xc + o - 0.4, d, xc + o + 0.4, d + 0.18, L_WALK, CP.crack, 0.95);
+    for (const o of LAKE_TREAD_X) flat(xc + o - 0.66, d, xc + o + 0.66, d + 0.18, L_WALK, CP.crack, 0.95);
   }
   // hollows of polygonal mud cracks (a jittered lattice clipped to a disc), low contrast
   for (let p = 0, np = LOWQ ? 1 : 2 + ((rand() * 2) | 0); p < np; p++) {

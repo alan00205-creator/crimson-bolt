@@ -552,7 +552,7 @@ export class FX {
     o.drag = 0; o.vrot = 0;
     p.emit(x, 0.05, z, 0, 0, 0, 0.1, 0.34, 0.12, rgba(this._c0, r, g, b, 0.9), rgba(this._c1, r * 0.4, g * 0.4, b * 0.4, 0), F.GLOW, 0, o);
   }
-  // Small impact pop (rockets, waves): flash, a short flare and a few sparks — no smoke or debris.
+  // Small impact pop (MULTI rockets): flash, a short flare and a few sparks — no smoke or debris.
   pop(x, y, z, s, r, g, b) {
     const p = this.p, o = this._o, c0 = this._c0, c1 = this._c1;
     o.drag = 0; o.vrot = 5;

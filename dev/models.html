@@ -268,7 +268,7 @@ function makeGroundTex(kind) {
     for (let i = 0; i < 30; i++) {                            // craters: dark floor, bright sunward rim, black shadow
       const x = rnd() * S, y = rnd() * S, r = 6 + rnd() * rnd() * 46;
       wrap(x, y, r + 3, (px, py) => {
-        g.fillStyle = 'rgba(58,58,62,0.9)'; g.beginPath(); g.arc(px, py, r, 0, 7); g.fill();
+        g.fillStyle = 'rgba(84,84,90,0.8)'; g.beginPath(); g.arc(px, py, r, 0, 7); g.fill();
         g.strokeStyle = 'rgba(190,190,196,0.8)'; g.lineWidth = Math.max(1.5, r * 0.14);
         g.beginPath(); g.arc(px, py, r, Math.PI * 0.8, Math.PI * 1.8); g.stroke();
         g.fillStyle = 'rgba(8,8,10,0.45)'; g.beginPath(); g.arc(px + r * 0.22, py + r * 0.22, r * 0.7, 0, 7); g.fill();

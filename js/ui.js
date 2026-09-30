@@ -275,7 +275,7 @@ export class UI {
     const n = stages.length, zh = ZH_NUM[n] || String(n);
     if (el) el.textContent = `共${zh}關：${stages.map((s) => s.zh).join(' → ')}。第${zh}關是最終決戰，全破後進入下一輪（難度提升）。`;
     const cr = $('howto-clearcr');
-    if (cr) cr.textContent = `（第 1～${n} 關依序 ${stages.map((s) => fmt(MONEY.stageClear[s.n] || 0)).join('／')}）`;
+    if (cr) cr.textContent = `（各關依序 ${stages.map((s) => fmt(MONEY.stageClear[s.n] || 0)).join('／')}）`;
   }
 
   // --- hangar ---------------------------------------------------------------------

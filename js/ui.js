@@ -292,7 +292,9 @@ export class UI {
 
   // --- results tally --------------------------------------------------------------
   // Lay out every row first (invisible) so the screen never jumps, then reveal them in turn.
-  // money: { earned, wallet } adds a counting "CR 獲得" row and the wallet balance after TOTAL.
+  // lines: [label, sub, value, cls?]; sound('line', cls) plays as each row shows (an 'extend' row
+  // always sounds, even when the tally is sped up). money: { earned, wallet } adds a counting
+  // "CR 獲得" row and the wallet balance after TOTAL.
   async tally(lines, total, rank, isNew, speedUp, sound = () => {}, money = null) {
     const box = $('tally');
     box.innerHTML = '';
@@ -300,12 +302,12 @@ export class UI {
     r.classList.remove('on'); r.textContent = rank;
     $('res-new').hidden = false; $('res-new').classList.add('reserve');
     $('res-menu').hidden = false; $('res-menu').classList.add('reserve');
-    const rows = lines.map(([label, sub, value]) => {
+    const rows = lines.map(([label, sub, value, cls = '']) => {
       const ln = document.createElement('div');
-      ln.className = 'ln';
+      ln.className = cls ? 'ln ' + cls : 'ln';
       ln.innerHTML = `<span>${label}<small>${sub}</small></span><span>${value}</span>`;
       box.appendChild(ln);
-      return ln;
+      return { ln, cls };
     });
     const tl = document.createElement('div');
     tl.className = 'ln total';
@@ -322,7 +324,7 @@ export class UI {
       box.append(cr, wal);
     }
     const wait = (ms) => new Promise((res) => setTimeout(res, speedUp() ? 0 : ms));
-    for (const ln of rows) { await wait(60); ln.classList.add('on'); if (!speedUp()) sound('line'); await wait(360); }
+    for (const { ln, cls } of rows) { await wait(60); ln.classList.add('on'); if (cls === 'extend' || !speedUp()) sound('line', cls); await wait(360); }
     await wait(40); tl.classList.add('on'); sound('total');
     if (cr) {
       await wait(380);

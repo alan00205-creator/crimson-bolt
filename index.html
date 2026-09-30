@@ -274,6 +274,7 @@ body.touch #keys { display: none; }
 .tally .ln.wallet { border-bottom: 0; font-size: 13px; padding-bottom: 0; }
 .tally .ln.wallet span:last-child { color: var(--gold); }
 .tally .ln.stage span:last-child { font: 700 13px var(--f-cjk); letter-spacing: 0.1em; }
+.tally .ln.extend, .tally .ln.extend span:first-child { color: var(--lime); }
 .rank { font: 700 64px/1 var(--f-display); color: var(--crimson); text-shadow: 0 0 30px rgba(255,46,72,0.7); opacity: 0; transform: scale(2.4); transition: all 0.35s cubic-bezier(.2,1.4,.3,1); }
 .rank.on { opacity: 1; transform: none; }
 .reserve { visibility: hidden; }
@@ -518,7 +519,7 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
       <div class="tally"><div class="ln on stage"><span>REACHED<small>到達關卡</small></span><span id="go-stage">STAGE 1</span></div>
         <div class="ln on total"><span>SCORE</span><span id="go-score">0</span></div>
         <div class="ln on"><span>HI-SCORE</span><span id="go-hi">0</span></div>
-        <div class="ln on cr"><span><i class="coin"></i>CR<small>獲得</small></span><span id="go-cr">+0</span></div>
+        <div class="ln on cr"><span><i class="coin"></i>CR<small>本關獲得</small></span><span id="go-cr">+0</span></div>
         <div class="ln on wallet"><span>WALLET<small>持有</small></span><span id="go-wallet">CR 0</span></div></div>
       <div class="badge" id="go-new" hidden>NEW RECORD</div>
       <div class="menu">

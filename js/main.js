@@ -525,7 +525,8 @@ function gameOver() {
   $('go-stage').textContent = `STAGE ${st.n}${game.loop > 1 ? ' · LOOP ' + game.loop : ''} ${st.zh}`;
   $('go-score').textContent = fmt(game.score);
   $('go-hi').textContent = fmt(hiScore);
-  $('go-cr').textContent = '+' + fmt(Math.max(0, game.runMoney));
+  // this stage's CR, like the results screen: CR from earlier stages was shown (and banked) there
+  $('go-cr').textContent = '+' + fmt(Math.max(0, Math.floor(game.runMoney) - Math.floor(game.stats.moneyStart)));
   $('go-wallet').textContent = `${MONEY.label} ${fmt(readWallet().money)}`;
   $('go-new').hidden = !isNew;
   ui.only('gameover');
@@ -545,6 +546,7 @@ function saveHi() {
   const isNew = game.score > best;
   if (cand > best) store.set('hi', cand);
   hiScore = Math.max(cand, best);
+  ui.setHi(hiScore); // updateHud only shows a HI that the score passes during play
   return isNew;
 }
 let speedTally = false;
@@ -561,6 +563,9 @@ async function showResults() {
   const chainBonus = g.medalMaxChain * 1000;
   const total = clearBonus + noMiss + bombBonus + destroy + chainBonus;
   g.addScore(total); // bonus points earn CR like any other points
+  // an extra life the bonus crosses into is awarded here and shown in the tally (in-play extends
+  // show a banner, which would only ghost through this screen)
+  const ext = g.checkExtends(true);
   const pts = pct * 100 + (st.deaths === 0 ? 30 : Math.max(0, 18 - st.deaths * 8)) + Math.min(20, g.medalMaxChain * 1.2);
   const rank = pts >= 128 ? 'S' : pts >= 108 ? 'A' : pts >= 88 ? 'B' : 'C';
   const isNew = saveHi();
@@ -568,6 +573,7 @@ async function showResults() {
   bankMoney();
   updateHud();
   ui.hud(false);
+  ui.clearBanner();
   ui.only('results');
   speedTally = false;
   const lines = [
@@ -578,6 +584,7 @@ async function showResults() {
     ['BOMB × ' + g.bombs, '剩餘炸彈', '+' + fmt(bombBonus)],
     ['CHAIN × ' + g.medalMaxChain, '勳章連鎖', '+' + fmt(chainBonus)],
   ];
+  if (ext) lines.push(['EXTEND', '戰機增加', '+' + ext, 'extend']);
   const zh = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
   $('res-title').textContent = last ? 'ALL CLEAR' : `STAGE ${meta.n} CLEAR`;
   $('res-title').classList.toggle('all', last);
@@ -594,12 +601,12 @@ async function showResults() {
   }
   audio.setMusicDuck(1);
   await ui.tally(lines, g.score, rank, isNew, () => speedTally, (kind, k) => {
-    if (kind === 'line') audio.play('select', { vol: 0.5 });
+    if (kind === 'line') { if (k === 'extend') audio.play('oneup'); else audio.play('select', { vol: 0.5 }); }
     else if (kind === 'total') audio.play('confirm');
     else if (kind === 'coin') audio.play('coin', { vol: 0.5, pitch: Math.round(k * 6) * 2 });
     else if (kind === 'coinEnd') audio.play('coin', { vol: 0.7, pitch: 12 });
     else if (kind === 'rank') audio.play('powerup');
-    else if (kind === 'record') audio.play('oneup');
+    else if (kind === 'record') audio.play('oneup', ext ? { pitch: 5 } : undefined); // pitched up after an EXTEND row's own 1UP
   }, { earned, wallet: readWallet().money });
   if (state === 'results') focusFirst('results');
 }

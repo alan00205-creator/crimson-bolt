@@ -1099,13 +1099,13 @@ export class Game {
   // --- scoring -------------------------------------------------------------------
   // Every point also earns CR (runMoney, banked by main.js); a continue zeroes the score, not the CR.
   addScore(n) { this.score += n; this.runMoney += n * MONEY.perScore; }
-  checkExtends() {
-    if (this.extendIdx < EXTENDS.length && this.score >= EXTENDS[this.extendIdx]) {
-      this.extendIdx++;
-      this.lives++;
-      this.audio.play('oneup');
-      this.onEvent('extend');
-    }
+  // Extra lives at the EXTENDS scores; returns how many were awarded. quiet: no sound and no
+  // 'extend' event (the results screen reports a life its bonus earned in the tally instead).
+  checkExtends(quiet = false) {
+    let n = 0;
+    while (this.extendIdx < EXTENDS.length && this.score >= EXTENDS[this.extendIdx]) { this.extendIdx++; this.lives++; n++; }
+    if (n && !quiet) { this.audio.play('oneup'); this.onEvent('extend'); }
+    return n;
   }
   popupAt(x, z, text, cls) {
     const s = this.view.toScreen(x, 0, z, this.tmpS);

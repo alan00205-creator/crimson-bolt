@@ -699,7 +699,7 @@ function iDLead(E, b, t, m, dur, vel, pan) {
   ws.curve = driveCurve();
   const lp = E.filt('lowpass', 3300, 1.6, t);
   const a = E.gain(0);
-  adsr(a.gain, t, 0.004, 0.17 * vel, 0.18, 0.82, end, 0.045);
+  adsr(a.gain, t, 0.004, 0.19 * vel, 0.18, 0.82, end, 0.045);
   o1.connect(pre); o2.connect(s2); s2.connect(pre); pre.connect(ws); ws.connect(lp); lp.connect(a);
   if (dur > 0.24) E.vibrato(t, stop, 0.16, 18, [o1.detune, o2.detune]);
   E.fin(o1, a, dst(E, b, a, pan));

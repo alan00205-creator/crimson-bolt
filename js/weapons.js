@@ -99,7 +99,7 @@ export const WAVE = {
   dmg: (lv) => 2.38 + 0.68 * lv, // per target per wave
   hw0: 0.45, grow: 0.42,         // half-width at the gun; seconds to full width
   th: 0.36,                      // half-thickness of the hit band
-  depth: (hw) => 0.8 + 0.42 * hw, // height of its ARC quad; the tips trail the apex by 0.6 × it
+  depth: (hw) => 0.75 + 0.36 * hw, // height of its ARC quad; the tips trail the apex by 0.6 × it
 };
 const DRONE_WAVE = { interval: 0.24, speed: 25, hw: (lv) => 0.7 + 0.05 * lv, dmg: (lv) => 1.1 + 0.12 * lv };
 
@@ -380,9 +380,9 @@ function firePlasma(g, p, dt) {
   nBeams = n;
   g.audio.play('plasma'); // every step while the beams are on; audio.js holds one sustained voice
 }
-// One flat, flickering beam: overlapping streaks along the quadratic curve (a hot core inside a
-// soft sheath) with glow joints, a travelling pulse, an impact flare and a lock reticle
-// (reticle: false for a doubled-up beam).
+// One flat, flickering beam: overlapping streaks along the quadratic curve (white-hot centre line,
+// pink body; bloom supplies the halo) with glow joints, a travelling pulse, an impact flare and a
+// lock reticle (reticle: false for a doubled-up beam).
 function drawBeam(fx, b, k, W, A, t, reticle) {
   if (!b.on) return;
   const B = fx.beams, lowQ = fx.lowQuality;
@@ -396,15 +396,13 @@ function drawBeam(fx, b, k, W, A, t, reticle) {
   for (let j = 1; j <= n; j++) {
     const s = j / n, u = 1 - s;
     const qx = u * u * x0 + 2 * u * s * x1 + s * s * x2, qz = u * u * z0 + 2 * u * s * z1 + s * s * z2;
-    const dx = qx - px, dz = qz - pz, l = Math.sqrt(dx * dx + dz * dz), rot = flatRot(dx, dz);
+    const dx = qx - px, dz = qz - pz, l = Math.sqrt(dx * dx + dz * dz);
     const sm = s - 0.5 / n, dp = (sm - ph) * 7;
     const tip = idle ? 1 - sm * sm * 0.85 : 1;              // an idle beam fades toward its tip
     const a = A * (1 + 0.7 * Math.exp(-dp * dp)) * tip;     // travelling pulse
     const w = W * (0.84 + 0.16 * Math.sin(t * 53 + sm * 13 + k * 2.1)) * (0.78 + 0.22 * sm);
-    const mx = (px + qx) * 0.5, mz = (pz + qz) * 0.5, len = l * 1.55 + w * 0.35;
-    if (!lowQ) B.push(mx, 0.1, mz, w * 1.6, len, rot, F.STREAK, 1, cr * 0.42 * a, cg * 0.36 * a, cb * 0.42 * a, 1, 0); // sheath
-    B.push(mx, 0.1, mz, lowQ ? w * 1.35 : w, len, rot, F.STREAK, 1, cr * a, cg * a, cb * a, 1, 0.55);                // core (no sheath / bloom on low: wider)
-    if (!lowQ && j < n && j % 3 === 0) B.push(qx, 0.1, qz, w * 1.8, w * 1.8, 0, F.GLOW, 0, cr * 0.3 * a, cg * 0.26 * a, cb * 0.3 * a, 0.5, 0.4); // joint
+    B.push((px + qx) * 0.5, 0.1, (pz + qz) * 0.5, w * 1.3, l * 1.55 + w * 0.35, flatRot(dx, dz), F.STREAK, 1, cr * a, cg * a, cb * a, 1, 0.4); // body
+    if (!lowQ && j < n && j % 3 === 0) B.push(qx, 0.1, qz, w * 1.35, w * 1.35, 0, F.GLOW, 0, cr * 0.4 * a, cg * 0.34 * a, cb * 0.4 * a, 0.6, 0.4); // joint
     px = qx; pz = qz;
   }
   if (idle) { // a soft spark where the beam gives out
@@ -416,7 +414,7 @@ function drawBeam(fx, b, k, W, A, t, reticle) {
   const f = (0.95 + 0.2 * Math.sin(t * 31 + k * 1.7)) * (b.arrived ? 1 : 0.6) * (0.7 + 0.3 * A);
   B.push(x2, 0.1, z2, f, f, t * 7 + k, F.FLARE, 0, cr * 0.75 * A, cg * 0.75 * A, cb * 0.75 * A, 1);
   const lk = Math.min(1, b.lockT / 0.18);                    // lock-in: shrinks onto the target
-  const rs = Math.max(1.4, b.tr * 3.1) * (1 + 1.3 * (1 - lk) * (1 - lk) + 0.05 * Math.sin(t * 12 + k)) * (0.75 + 0.25 * A);
+  const rs = clamp(b.tr * 3.0, 1.3, 3.1) * (1 + 1.1 * (1 - lk) * (1 - lk) + 0.05 * Math.sin(t * 12 + k)) * (0.75 + 0.25 * A);
   B.push(b.tx, 0.12, b.tz, rs, rs, t * 1.6 + k * 0.8, F.RETICLE, 1, cr * 1.1, cg * 1.1, cb * 1.1, 0.6 + 0.4 * lk, 0.5);
 }
 function drawPlasma(g, p, fx, t) {

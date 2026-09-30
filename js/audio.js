@@ -2857,8 +2857,8 @@ const SONGDEF = {
   // returns — stage 1's call on the pulse lead, harmonised, over 16th double kick; the hymn
   // (brass and choir on the Dies irae in rising sequence, half time with timpani, a hammer blast
   // under its second half); and the final ascent in E minor on the pulse lead over blasts and
-  // gallop, pivoting home through B-flat and A. 4-bar intro, 32-bar loop: A B(the hero) C(hymn)
-  // D(ascent, E minor).
+  // gallop (harmonised the second time), pivoting home through B-flat and A. 4-bar intro,
+  // 32-bar loop: A B(the hero) C(hymn) D(ascent, E minor).
   boss8: {
     bpm: 175, key: 2, minor: true, delay: 0.75, intro: ['I'], loop: ['A', 'B', 'C', 'D'],
     S: {
@@ -2893,12 +2893,12 @@ const SONGDEF = {
         gtr: 'hold*4 ch16*2 half hold', stab: 'none*4 hB hB hA hA', arp: 'bellSlow*4 arpC*4',
       },
       D: {
-        chords: 'Em C D B Em C Bb A', key: 4, minor: true, harm: 1,
+        chords: 'Em C D B Em C Bb A', key: 4, minor: true,
         lead: 'b5:4 e6:4 g6:6 f#6:2 | e6:6 d6:2 c6:4 g5:4 | a5:4 d6:4 f#6:6 e6:2 | f#6:4 d#6:4 b5:4 d#6:4 |' +
               'g6:6 f#6:2 e6:4 b5:4 | c6:4 e6:4 g6:8 | f6:4 d6:4 bb5:4 d6:4 | a5:2 c#6:2 e6:2 g6:2 e6:2 c#6:2 a5:2 c#6:2',
         bass: 'gallop*6 p16 build', drums: 'blA*3 bD blA*2 fR fD', crash: [0, 2, 4, 6], rise: 2,
         gtr: 'gal*6 ch16 hold', stab: 'hB*8', arp: 'arpC*8',
-        p2: { drums: 'blA*6 fR fD' },
+        p2: { harm: 1, drums: 'blA*6 fR fD' },
       },
     },
   },

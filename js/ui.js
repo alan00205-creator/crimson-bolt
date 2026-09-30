@@ -5,7 +5,8 @@ const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.floor(n).toLocaleString('en-US');
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const rgba = (hex, a) => `rgba(${(hex >> 16) & 255}, ${(hex >> 8) & 255}, ${hex & 255}, ${a})`;
-const STAT_ROWS = [['speed', '速度'], ['power', '火力'], ['bombs', '炸彈'], ['hitbox', '判定']];
+// every bar reads "more is more": the hitbox bar counts how SMALL the hitbox is (5 = smallest)
+const STAT_ROWS = [['speed', '速度'], ['power', '火力'], ['bombs', '炸彈'], ['hitbox', '判定小']];
 const WARN_DEFAULT = { e: 'HUGE FORTRESS APPROACHING', s: '巨大要塞 接近中' };
 
 export class UI {
@@ -218,7 +219,7 @@ export class UI {
   }
 
   // --- hangar ---------------------------------------------------------------------
-  // One .btn row per aircraft: name, one-line description, 4 stat bars and a price / owned tag.
+  // One .btn row per aircraft: name, a two-line description, 4 stat bars and a price / owned tag.
   buildHangar() {
     const box = $('ships');
     box.innerHTML = '';
@@ -242,6 +243,8 @@ export class UI {
   }
   // w: the wallet { money, owned, equipped }; sel: the aircraft being previewed.
   renderHangar(w, sel) {
+    // once every jet is bought, say so: CR then simply keeps counting
+    $('hangar-sub').textContent = AIRCRAFT.every((a) => w.owned.includes(a.id)) ? '機庫・全機已入手' : '機庫・選擇出擊戰機';
     for (const id in this.ships) {
       const r = this.ships[id], ac = r.ac, owned = w.owned.includes(id);
       let key, html;

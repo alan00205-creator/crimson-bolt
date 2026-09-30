@@ -318,9 +318,10 @@ body.touch #keys { display: none; }
 .sh-tag.price.poor { color: #8f97aa; border-color: rgba(255,255,255,0.12); }
 .sh-tag.price.poor .coin { filter: grayscale(1) brightness(0.7); }
 .sh-tag .coin { width: 10px; height: 10px; }
-/* row heights never depend on the selection (a second tap must land on the same row) */
+/* row heights never depend on the selection or a message (a second tap must land on the same
+   row): the description is always a two-line box, whatever text (or one-line message) is in it */
 .sh-desc { font: 500 12px/1.45 var(--f-cjk); letter-spacing: 0.02em; color: var(--ink-dim); min-width: 0; overflow: hidden; text-wrap: pretty;
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; min-height: calc(2 * 1.45em); }
 .btn.ship.sel .sh-desc { color: #c9d1e2; }
 .btn.ship .sh-desc.msg { color: var(--amber); font-weight: 700; }
 .btn.ship .sh-desc.bad { color: #ff7a7a; font-weight: 700; }
@@ -341,14 +342,22 @@ body.touch #keys { display: none; }
 body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
 @keyframes shake { 20% { transform: translateX(-6px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(2px); } }
 @keyframes bump { 40% { transform: scale(1.12); } }
+/* phone browsers (≈640-700 px tall): tighter rows and a lower preview edge keep the full
+   two-line descriptions on screen */
 @media (max-height: 700px) {
+  .screen.hangar { padding-bottom: calc(16vh + var(--safe-b)); }
   .hpanel { --px: 10px; --pb: 10px; gap: 7px; padding: 10px var(--px) var(--pb); }
   .ships { gap: 5px; }
   .btn.ship { gap: 3px; padding: 6px 10px 7px 13px; }
-  .sh-desc { display: block; white-space: nowrap; text-overflow: ellipsis; }
-  .btn.ship .sh-desc.msg, .btn.ship .sh-desc.bad, .btn.ship .sh-desc.good { white-space: normal; }
   .hhelp { display: none; }
   .hpanel h2 { font-size: 17px; }
+}
+@media (max-height: 600px) {
+  .screen.hangar { padding-top: calc(10px + var(--safe-t)); }
+  .hpanel h2 small, .hwallet small { display: none; }
+  .ships { gap: 4px; }
+  .btn.ship { padding-block: 4px 5px; }
+  .hpanel .panel-foot .btn { padding-block: 9px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .blink, .warn .w, .warn .stripe, .badge, .btn.ship.deny, .hwallet.bump div { animation: none; }
@@ -473,7 +482,7 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
     <section class="screen hangar" id="hangar" hidden>
       <div class="panel hpanel">
         <div class="hhead">
-          <h2>HANGAR<small>機庫・選擇出擊戰機</small></h2>
+          <h2>HANGAR<small id="hangar-sub">機庫・選擇出擊戰機</small></h2>
           <div class="hwallet" id="hangar-wallet"><small>持有</small><div><i class="coin"></i><span id="hangar-cr">0</span></div></div>
         </div>
         <div class="ships" id="ships"></div>

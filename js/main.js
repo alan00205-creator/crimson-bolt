@@ -57,12 +57,14 @@ let hiScore = Number(store.get('hi', 0)) || 0;
 // every change re-reads storage first so two tabs can't overwrite each other's CR. If storage
 // is unavailable (or a write fails) the wallet keeps working in memory for this session.
 const MONEY_MAX = 999999999;
+// Own-property lookup, so a hand-edited save naming 'constructor' or 'toString' is not an aircraft.
+const shipDef = (id) => (Object.prototype.hasOwnProperty.call(AIRCRAFT_BY_ID, id) ? AIRCRAFT_BY_ID[id] : null);
 function cleanWallet(w) {
   const out = { money: 0, owned: [DEFAULT_AIRCRAFT], equipped: DEFAULT_AIRCRAFT };
   if (!w || typeof w !== 'object') return out;
   const m = Math.floor(Number(w.money));
   if (Number.isFinite(m) && m > 0) out.money = Math.min(m, MONEY_MAX);
-  if (Array.isArray(w.owned)) for (const id of w.owned) if (AIRCRAFT_BY_ID[id] && !out.owned.includes(id)) out.owned.push(id);
+  if (Array.isArray(w.owned)) for (const id of w.owned) if (shipDef(id) && !out.owned.includes(id)) out.owned.push(id);
   if (out.owned.includes(w.equipped)) out.equipped = w.equipped;
   return out;
 }
@@ -708,7 +710,7 @@ function openHangar(opener) {
 }
 // Show a jet on the fly-by and highlight its row (focus, hover or tap).
 function previewShip(id) {
-  if (!AIRCRAFT_BY_ID[id] || $('hangar').hidden || state !== 'title') return;
+  if (!shipDef(id) || $('hangar').hidden || state !== 'title') return;
   if (id === hangarSel) return;
   for (const k in ui.ships) if (k !== id) disarm(ui.ships[k].b);
   hangarSel = id;
@@ -718,7 +720,7 @@ function previewShip(id) {
 }
 // Enter / click / tap on a row: owned → equip; affordable → confirm, then buy; else refuse.
 function activateShip(btn) {
-  const id = btn.dataset.ship, ac = AIRCRAFT_BY_ID[id];
+  const id = btn.dataset.ship, ac = shipDef(id);
   if (!ac) return;
   previewShip(id);
   const w = readWallet();
@@ -879,7 +881,7 @@ function exposeDebug() {
     // money(n): set the wallet balance; ship(id): own + equip an aircraft (both persisted)
     money(n) { const w = readWallet(); w.money = n; writeWallet(w); return walletMem.money; },
     ship(id) {
-      if (!AIRCRAFT_BY_ID[id]) return null;
+      if (!shipDef(id)) return null;
       const w = readWallet();
       if (!w.owned.includes(id)) w.owned.push(id);
       w.equipped = id;

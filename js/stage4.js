@@ -30,7 +30,7 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 // Enemy definitions (see the field list at the top of stage.js).
 export const ENEMY = {
   s4_drone: { hp: 5, score: 350, radius: 0.75, air: true, explode: 0.9, debris: 6, medal: 0.2, prewarm: 16 },
-  s4_laser: { hp: 52, score: 2500, radius: 1.25, air: true, explode: 1.7, debris: 12, medal: 1, prewarm: 4 },
+  s4_laser: { hp: 76, score: 2500, radius: 1.3, air: true, explode: 1.7, debris: 12, medal: 1, prewarm: 4 },
   s4_frigate: { hp: 170, score: 5000, radius: 1.8, air: true, explode: 2.4, debris: 20, medal: 2, prewarm: 3 },
   s4_mine: { hp: 3, score: 250, radius: 0.7, air: true, explode: 0.8, debris: 5, noHpSeg: true, prewarm: 16 },
   // mid-boss: three heads on necks, then the core (armoured under its lid until two heads are gone or
@@ -90,6 +90,7 @@ const FIRE_A = [2.4, 1.1, 0.35, 0.9], FIRE_B = [0.9, 0.2, 0.05, 0];       // re-
 const HOT_A = [2.8, 2.2, 1.6, 1], HOT_B = [1.2, 0.4, 0.15, 0];
 const SMOKE_A = [0.22, 0.2, 0.22, 0.55], SMOKE_B = [0.12, 0.11, 0.12, 0];
 const OPT_ION = { drag: 1.2 }, OPT_FIRE = { drag: 0.6, vrot: 0 }, OPT_FLAT = { flat: true, rot: 0, drag: 0 }, OPT_SMOKE = { drag: 0.5, vrot: 0 };
+const OPT_SHARD = { drag: 3, stretch: 0.05 };
 /** a puff of ion exhaust behind a unit (x, z on the plane; dz = the exhaust direction on the plane) */
 function ionPuff(g, x, z, dx, dz, s = 0.35) {
   g.fx.p.emit(x + rnd(-0.08, 0.08), 0.02, z + rnd(-0.08, 0.08), dx * rnd(1, 2.5), 0, dz * rnd(1, 2.5), rnd(0.2, 0.35), s, s * 0.3, ION_A, ION_B, F.GLOW, 0, OPT_ION);
@@ -393,8 +394,8 @@ function hydraAI() {
     const fr = g.diff.fr, rage = 1 + (3 - alive) * 0.22;
     // outer heads: rear back (jaws lit), snap forward and fire a needle burst down the locked line, then a
     // short fan; they take turns
-    for (const k of [0, 2]) {
-      const pt = live(H[k]), hs = s.hs[k];
+    for (let q = 0; q < 2; q++) {
+      const k = q * 2, pt = live(H[k]), hs = s.hs[k];
       if (!pt) continue;
       hs.mt += dt;
       if (hs.st === 'idle') {
@@ -738,7 +739,7 @@ function shieldBreak(e, g) {
   const p = g.fx.p;
   for (let i = 0; i < 26; i++) {
     const a = (i / 26) * TAU + rnd(-0.1, 0.1), r = 3.2, sp = rnd(5, 11), ca = Math.cos(a), sa = Math.sin(a);
-    p.emit(e.x + ca * r, 0.6, e.z + sa * r, ca * sp, rnd(0, 3), sa * sp, rnd(0.35, 0.6), rnd(0.4, 0.7), 0.1, GRN_A, GRN_B, F.SHARD, 0, { drag: 3, stretch: 0.05 });
+    p.emit(e.x + ca * r, 0.6, e.z + sa * r, ca * sp, rnd(0, 3), sa * sp, rnd(0.35, 0.6), rnd(0.4, 0.7), 0.1, GRN_A, GRN_B, F.SHARD, 0, OPT_SHARD);
   }
   p.emit(e.x, 0.3, e.z, 0, 0, 0, 0.5, 3, 12, [0.6, 2.4, 1.4, 1], [0.1, 0.5, 0.3, 0], F.RING, 0, OPT_FLAT);
   g.audio.play('shield'); g.audio.play('explodeM', { vol: 0.6 });

@@ -15,9 +15,17 @@
 //   moon     grey regolith under a hard sun: cratered highlands (0–300) → rilles (300–560)
 //            → the great crater (560–780) → lunar base (780–1000) → mass driver (1000–1240)
 //            → the mare (1240–∞); space shows through wherever the ground falls away
+//   solar    no ground, the solar system's bodies below one at a time: Mars (0–320) → the asteroid
+//            belt (320–700) → Jupiter's cloud tops (700–1000) → Saturn's ring plane (1000–1240)
+//            → the Sun's corona (1240–∞)
+//   galaxy   no ground, layered light: glowing nebula gas (0–420) → star clusters (420–800) → star
+//            clouds and dust rifts (800–1240) → the galactic core (1240–∞); alien structures drift
+//   cosmos   no ground: the void and its old galaxies (0–420) → the cosmic web (420–800) → warped
+//            space, lenses and a spacetime grid (800–1240) → a black hole's event horizon (1240–∞)
 // Worlds without a sky share the SPACE KIT (see its two sections): the backdrop shader (stars,
-// gas, galactic band, a planet), instanced drift props (tumbling, turning, running on rails; a deep
-// layer below GROUND_Y) and the hardware pieces they are built from.
+// gas, galactic band, planets and the Sun, nebula layers, the web, lenses, a black hole), instanced
+// drift props (tumbling, turning, running on rails; a deep layer below GROUND_Y) and the hardware
+// pieces they are built from.
 // Stage data lives in one table per stage (see "stage table" at the end); the hot free
 // functions read it through the module pointer S, so switching stages allocates nothing.
 //
@@ -57,7 +65,8 @@
 //   • the moon keeps its lanes flat and clear at every distance (rover tracks) and its cross roads
 //     over 300–1240, the crater floor (|x| < 5.5, d 560–780) and the mare arena (|x| < 9,
 //     d ≥ 1240) flat and clear; the orbit keeps tall props out of |x| < 4.6 (to the station) and
-//     |x| < 7.5 (the arena, d ≥ 1234);
+//     |x| < 7.5 (the arena, d ≥ 1234); solar, galaxy and cosmos keep them out of |x| < 5 and of
+//     |x| < 7.5 from d 1234 (their arenas), and their deep drift layers out of |x| < 5.3;
 //   • ≤ 5 generated textures (atlas 512², noise 256², waves 256², mask 128×512, clouds 256²);
 //     the sky stage's cloud deck and the space kit's backdrop reuse the noise texture.
 // =============================================================================
@@ -1571,7 +1580,7 @@ uniform vec3 uOcean, uLand, uLand2, uCloud, uAtmos, uGlow, uCity, uSpace, uNeb;
 uniform vec4 uScroll2;            // the parallax layers' drifts (layers 1–3, the lens field), each wrapped at LAYER_SPAN
 uniform vec4 uKit;                // SP_BODY 2: (which body, Saturn's rings, the camera's side offset (radii), surface turn)
 uniform vec4 uMix;                // layer strengths: gas / web layers 1–3; dust lanes (galaxy) or the spacetime grid (cosmos)
-uniform vec4 uMix2;               // (star clusters / old galaxies, the core / the black hole, young stars, the lenses)
+uniform vec4 uMix2;               // (star clusters / old galaxies, the core / the black hole, young stars, star clouds / the lenses)
 uniform vec4 uPos;                // the core / the black hole on the virtual plane: (x, z, radius, arm twist / disk tilt)
 uniform vec3 uLens[3];            // SP_WARP: point lenses on the virtual plane (x, z, Einstein radius)
 uniform vec3 uHot, uGas, uGas2, uDust;
@@ -1615,7 +1624,7 @@ vec2 crater(vec2 p, vec2 sl, float keep, float aa) {
 #ifdef SP_GAS
 // one layer of glowing gas (p: the layer's lookup; its scales on the stage axis are whole multiples of
 // 1/LAYER_SPAN, so the layer's drift wraps seamlessly): billows, and bright fronts where they thin out
-vec3 gasLayer(vec2 p, vec2 gx, vec2 gy, vec3 c) {
+vec3 gasLayer(vec2 p, vec2 gx, vec2 gy, vec3 c, out float dens) {
   vec4 a = textureGrad(uNoise, p, gx, gy);
 #ifndef LOW
   vec4 e = textureGrad(uNoise, p * 2.0 + (a.rb - 0.5) * 0.25, gx * 2.0, gy * 2.0);
@@ -1625,6 +1634,7 @@ vec3 gasLayer(vec2 p, vec2 gx, vec2 gy, vec3 c) {
 #endif
   float body = smoothstep(0.5, 0.86, v);
   float front = 1.0 - smoothstep(0.0, 0.06, abs(v - 0.53));
+  dens = v;
   return c * (body * body * (1.2 + 0.5 * fine) + front * 0.22 * (0.4 + fine) + smoothstep(0.3, 0.62, v) * 0.08);
 }
 // a young star at most per cell (p in cells of 8 units of the nearest layer; the texel stride keeps its
@@ -1642,6 +1652,21 @@ vec3 youngStar(vec2 p, float px) {
   return mix(vec3(0.72, 0.88, 1.4), vec3(1.3, 1.12, 0.85), h2.g) * (core * 2.4 + spk * 0.8 + halo * 0.3) * s;
 }
 #endif
+#if defined(SP_CLUS) || defined(SP_GAS)
+// a crowd of small stars (clusters, star clouds): one at most per cell but anywhere in it, and every other row
+// shifted half a cell, so no square lattice catches the eye (the row parity keeps the drift's wrap seamless:
+// the spans hold an even number of rows)
+vec3 crowd(vec2 q, float stride, float keep, float size, float aa) {
+  q.x += 0.5 * mod(floor(q.y), 2.0);
+  vec2 ci = floor(q), cf = fract(q);
+  vec4 h = textureLod(uNoise, (ci * stride + 0.5) / 256.0, 0.0);
+  vec4 h2 = textureLod(uNoise, (ci * stride + vec2(3.5, 2.5)) / 256.0, 0.0);
+  float on = smoothstep(keep, keep + 0.02, h.r);
+  float rad = size * (0.5 + h2.b);
+  float s = on * (1.0 - smoothstep(rad, rad + aa, length(cf - (0.12 + 0.76 * vec2(h.b, h2.r)))));
+  return s * mix(vec3(0.75, 0.86, 1.25), vec3(1.25, 1.04, 0.8), h2.g) * (0.5 + 0.9 * h2.b);
+}
+#endif
 #ifdef SP_CLUS
 // star clusters (one at most per 20-unit cell of the star layer, so they drift with their stars): globular
 // balls of old stars — a golden unresolved glow, and stars crowding in toward the centre
@@ -1656,9 +1681,9 @@ vec3 cluster(vec2 q, float aa) {
   if (r2 > 4.4) return vec3(0.0);
   vec3 tint = mix(uHot, vec3(0.8, 0.9, 1.25), h2.g * h2.g);
   float dn = exp(-r2 * 1.2);
-  vec3 s = stars(q * 4.8 + 7.0, 5.0, mix(0.99, 0.62, dn), 0.12, aa * 4.8);
+  vec3 s = crowd(q * 4.8 + 7.0, 5.0, mix(0.99, 0.66, dn), 0.12, aa * 4.8);
 #ifndef LOW
-  s += stars(q * 8.0 + 3.0, 7.0, mix(0.995, 0.55, dn), 0.12, aa * 8.0) * 0.8;
+  s += crowd(q * 8.0 + 3.0, 7.0, mix(0.995, 0.6, dn), 0.12, aa * 8.0) * 0.8;
 #endif
   return tint * (exp(-r2 * 2.2) * 0.45 + exp(-r2 * 0.6) * 0.08) + s * (0.55 + 0.45 * tint) * 1.1;
 }
@@ -1847,9 +1872,10 @@ void main() {
       // spiral arms wound out of it (log spirals), behind the gas and its dust
       vec2 cv = (P.xz - uPos.xy) / uPos.z;
       float cr = length(cv), ca = atan(cv.y, cv.x);
-      float bulge = exp(-cr * cr * 2.4) * 1.5 + exp(-cr * 1.2) * 0.45;
-      float arm = pow(0.5 + 0.5 * cos(2.0 * ca - uPos.w * log(cr + 0.1)), 4.0) * smoothstep(0.2, 0.9, cr) * exp(-cr * 0.4);
-      col += (uHot * bulge + uGas * arm * 0.5) * uMix2.y;
+      vec2 bv = vec2(0.8 * cv.x + 0.6 * cv.y, -0.6 * cv.x + 0.8 * cv.y) * vec2(0.62, 1.6);   // the bar, turned 37°
+      float bulge = exp(-cr * cr * 3.0) * 0.95 + exp(-dot(bv, bv) * 1.6) * 0.42 + exp(-cr * 1.3) * 0.22;
+      float arm = pow(0.5 + 0.5 * cos(2.0 * ca - uPos.w * log(cr + 0.1)), 5.0) * smoothstep(0.25, 0.8, cr) * exp(-cr * 0.45);
+      col += (uHot * bulge + uGas * arm * 0.6 + uHot * arm * arm * 0.12) * uMix2.y;
     }
 #endif
 #ifdef SP_GAS
@@ -1859,10 +1885,19 @@ void main() {
       // everything behind them, their edges glowing uDust; young stars in front
       vec2 gX = dFdx(P.xz) * ${(1 / LAYER_SPAN).toFixed(8)}, gY = dFdy(P.xz) * ${(1 / LAYER_SPAN).toFixed(8)};
       vec2 l1 = vec2(P.x, P.z - uScroll2.x) * ${(1 / LAYER_SPAN).toFixed(8)}, l2 = vec2(P.x, P.z - uScroll2.y) * ${(1 / LAYER_SPAN).toFixed(8)}, l3 = vec2(P.x, P.z - uScroll2.z) * ${(1 / LAYER_SPAN).toFixed(8)};
-      col += gasLayer(l1 + vec2(0.13, 0.41), gX, gY, uNeb) * uMix.x;
-      col += gasLayer(l2 * 2.0 + vec2(0.57, 0.23), gX * 2.0, gY * 2.0, uGas) * uMix.y;
+      float v1, v2, v3;
+      col += gasLayer(l1 + vec2(0.13, 0.41), gX, gY, uNeb, v1) * uMix.x;
+      // star clouds (uMix2.w): the far gas crowded with small stars where it is thick
+      if (uMix2.w > 0.001) {
+        float sc = smoothstep(0.42, 0.8, v1) * uMix2.w;
+        col += crowd(q * 4.8 + 1.7, 5.0, mix(0.99, 0.72, sc), 0.1, aa * 4.8) * sc * 1.2;
 #ifndef LOW
-      col += gasLayer(l3 * 2.0 + vec2(0.31, 0.77), gX * 2.0, gY * 2.0, uGas2) * uMix.z;
+        col += crowd(q * 8.0 + 5.3, 7.0, mix(0.995, 0.7, sc), 0.1, aa * 8.0) * sc;
+#endif
+      }
+      col += gasLayer(l2 * 2.0 + vec2(0.57, 0.23), gX * 2.0, gY * 2.0, uGas, v2) * uMix.y;
+#ifndef LOW
+      col += gasLayer(l3 * 2.0 + vec2(0.31, 0.77), gX * 2.0, gY * 2.0, uGas2, v3) * uMix.z;
 #endif
       vec4 dl = textureGrad(uNoise, l3 + vec2(0.71, 0.09), gX, gY);
       float dv = dl.g * 0.85 + dl.b * 0.15;
@@ -2188,20 +2223,21 @@ const TOD_SRC = [
 // pKind (which solar body: 0 Mars, 1 Jupiter, 2 Saturn, 3 the Sun), pRing (Saturn's rings), pSide (the
 // camera's side offset from the body, radii), pL1–pL3 (gas / web layer strengths, far to near), pDustI (dust
 // lanes, or the spacetime grid), pClus (clusters, or old galaxies), pGlowI (the core, or the black hole),
-// pSpark (young stars), and pCx / pCz / pCr / pTilt (the core's or the hole's place relative to the view
-// centre, its radius, the arms' twist or the disk's tilt)
+// pSpark (young stars, or the lenses' strength), pStarC (star clouds in the far gas), and pCx / pCz / pCr /
+// pTilt (the core's or the hole's place relative to the view centre, its radius, the arms' twist or the disk's
+// tilt)
 const TOD_COLS = ['sun', 'sky', 'gnd', 'fog', 'deep', 'shallow', 'wsky', 'foam', 'inland', 'glint', 'cLit', 'cShade', 'shadow',
   'dLit', 'dShade', 'dAbyss', 'dRim', 'pOcean', 'pLand', 'pLand2', 'pCloud', 'pAtmos', 'pGlow', 'pCity', 'pSpace', 'pNeb',
   'pHot', 'pGas', 'pGas2', 'pDust'];
 const TOD_NUMS = ['sunI', 'hemiI', 'near', 'far', 'glintI', 'shA', 'shK', 'caps', 'cloud', 'relief', 'spark', 'sheen', 'cover', 'flash',
   'pX', 'pZ', 'pF', 'pH', 'pCover', 'pAtmW', 'pNebI', 'pStar', 'pCityI',
-  'pKind', 'pRing', 'pSide', 'pL1', 'pL2', 'pL3', 'pDustI', 'pClus', 'pGlowI', 'pSpark', 'pCx', 'pCz', 'pCr', 'pTilt'];
+  'pKind', 'pRing', 'pSide', 'pL1', 'pL2', 'pL3', 'pDustI', 'pClus', 'pGlowI', 'pSpark', 'pCx', 'pCz', 'pCr', 'pTilt', 'pStarC'];
 // indices into the interpolated numeric array (order of TOD_NUMS)
 const N_SUNI = 0, N_HEMII = 1, N_NEAR = 2, N_FAR = 3, N_GLINTI = 4, N_SHA = 5, N_CAPS = 7, N_CLOUD = 8,
   N_RELIEF = 9, N_SPARK = 10, N_SHEEN = 11, N_COVER = 12, N_FLASH = 13,
   N_PX = 14, N_PZ = 15, N_PF = 16, N_PH = 17, N_PCOVER = 18, N_PATMW = 19, N_PNEB = 20, N_PSTAR = 21, N_PCITY = 22,
   N_PKIND = 23, N_PRING = 24, N_PSIDE = 25, N_PL1 = 26, N_PL2 = 27, N_PL3 = 28, N_PDUST = 29, N_PCLUS = 30, N_PGLOW = 31,
-  N_PSPARK = 32, N_PCX = 33, N_PCZ = 34, N_PCR = 35, N_PTILT = 36;
+  N_PSPARK = 32, N_PCX = 33, N_PCZ = 34, N_PCR = 35, N_PTILT = 36, N_PSTARC = 37;
 // fields a stage's keys may leave out (water on dry stages, the deck on non-sky stages, the backdrop
 // on worlds without space)
 const TOD_DEFAULTS = {
@@ -2211,7 +2247,7 @@ const TOD_DEFAULTS = {
   pOcean: 0x0c2a55, pLand: 0x3a5836, pLand2: 0x86744e, pCloud: 0xdce4ee, pAtmos: 0x4a9cff, pGlow: 0xff9a6a, pCity: 0xffc070,
   pSpace: 0x02040a, pNeb: 0x2a3a78, pX: 0, pZ: 26, pF: 17, pH: 0.07, pCover: 0.5, pAtmW: 0.007, pNebI: 0, pStar: 1, pCityI: 0, psun: [0.35, 0.85, 0.4],
   pHot: 0xffd8a0, pGas: 0x2a8a9a, pGas2: 0x8a6a3a, pDust: 0x3a2014, pKind: 0, pRing: 0, pSide: 0, pL1: 0, pL2: 0, pL3: 0, pDustI: 0,
-  pClus: 0, pGlowI: 0, pSpark: 0, pCx: 0, pCz: -30, pCr: 10, pTilt: 0,
+  pClus: 0, pGlowI: 0, pSpark: 0, pCx: 0, pCz: -30, pCr: 10, pTilt: 0, pStarC: 0,
 };
 function makeTod(src) {
   return src.map((k0) => {
@@ -3122,7 +3158,7 @@ export class World {
       // the later parts (the surface turn, uKit.w, is set with the scroll: _placeSpace)
       pu.uKit.value.x = N[N_PKIND]; pu.uKit.value.y = N[N_PRING]; pu.uKit.value.z = N[N_PSIDE];
       pu.uMix.value.set(N[N_PL1], N[N_PL2], N[N_PL3], N[N_PDUST]);
-      pu.uMix2.value.set(N[N_PCLUS], N[N_PGLOW], N[N_PSPARK], S.space.warp ? N[N_PSPARK] : 0);
+      pu.uMix2.value.set(N[N_PCLUS], N[N_PGLOW], N[N_PSPARK], S.space.warp ? N[N_PSPARK] : N[N_PSTARC]);
       pu.uPos.value.set(N[N_PCX], N[N_PCZ] - 6, N[N_PCR], N[N_PTILT]);
       pu.uHot.value.copy(o.pHot); pu.uGas.value.copy(o.pGas); pu.uGas2.value.copy(o.pGas2); pu.uDust.value.copy(o.pDust);
     }
@@ -8399,12 +8435,12 @@ const GALAXY_TOD_SRC = [
   galaxyKey(380, { pNeb: 0x203c8a, pGas: 0x1c8a8c, pGas2: 0x9a7a44, pDust: 0x5a3020, pL1: 1.0, pL2: 0.8, pL3: 0.55, pDustI: 0.55, pSpark: 0.9, pClus: 0 }),
   galaxyKey(470, { sun: 0xf0f4ff, sky: 0x283448, pSpace: 0x02030a, pNeb: 0x1a2c6a, pGas: 0x1a6a7a, pGas2: 0x6a5a3a, pDust: 0x3a2418, pL1: 0.45, pL2: 0.3, pL3: 0.15, pDustI: 0.3, pSpark: 0.4, pClus: 1.0, pStar: 1.25, pHot: 0xffd8a0 }),
   galaxyKey(760, { sun: 0xf0f4ff, sky: 0x283448, pSpace: 0x02030a, pNeb: 0x1a2c6a, pGas: 0x1a6a7a, pGas2: 0x6a5a3a, pDust: 0x3a2418, pL1: 0.45, pL2: 0.3, pL3: 0.15, pDustI: 0.3, pSpark: 0.4, pClus: 1.0, pStar: 1.25, pHot: 0xffd8a0 }),
-  galaxyKey(850, { sun: 0xfff0dc, sky: 0x3a3024, gnd: 0x4a3a2a, pSpace: 0x060403, pNeb: 0x5a4630, pGas: 0x2a6a6a, pGas2: 0x7a5a36, pDust: 0x4a2a18, pL1: 1.0, pL2: 0.35, pL3: 0.2, pDustI: 1.0, pSpark: 0.3, pClus: 0.3, pStar: 1.2,
-    pHot: 0xffcc88, pGlowI: 0.35, pCx: 0, pCz: -60, pCr: 16, pTilt: 3.5 }),
-  galaxyKey(1200, { sun: 0xfff0dc, sky: 0x3a3024, gnd: 0x4a3a2a, pSpace: 0x060403, pNeb: 0x5a4630, pGas: 0x2a6a6a, pGas2: 0x7a5a36, pDust: 0x4a2a18, pL1: 0.9, pL2: 0.35, pL3: 0.2, pDustI: 1.0, pSpark: 0.3, pClus: 0.3, pStar: 1.2,
-    pHot: 0xffcc88, pGlowI: 0.7, pCx: 0, pCz: -48, pCr: 16, pTilt: 3.5 }),
-  galaxyKey(1275, { sun: 0xffe8c8, sunI: 2.5, sky: 0x4a3620, gnd: 0x5a4028, hemiI: 1.2, pSpace: 0x070402, pNeb: 0x5a4630, pGas: 0x2a6a6a, pGas2: 0x7a5a36, pDust: 0x4a2a18, pL1: 0.6, pL2: 0.35, pL3: 0.25, pDustI: 0.8, pSpark: 0.3, pClus: 0.2, pStar: 1.1,
-    pHot: 0xffd49a, pGlowI: 1.0, pCx: 0, pCz: -32, pCr: 15, pTilt: 3.5 }),
+  galaxyKey(850, { sun: 0xfff0dc, sky: 0x3a3024, gnd: 0x4a3a2a, pSpace: 0x050403, pNeb: 0x4a3c2c, pGas: 0x2a6a6a, pGas2: 0x6a5234, pDust: 0x4a2a18, pL1: 0.8, pL2: 0.3, pL3: 0.2, pDustI: 0.95, pSpark: 0.3, pClus: 0.25, pStar: 1.1, pStarC: 1.0,
+    pHot: 0xffcc88, pGlowI: 0.3, pCx: 0, pCz: -62, pCr: 12, pTilt: 2.6 }),
+  galaxyKey(1200, { sun: 0xfff0dc, sky: 0x3a3024, gnd: 0x4a3a2a, pSpace: 0x050403, pNeb: 0x4a3c2c, pGas: 0x2a6a6a, pGas2: 0x6a5234, pDust: 0x4a2a18, pL1: 0.75, pL2: 0.3, pL3: 0.2, pDustI: 0.9, pSpark: 0.3, pClus: 0.25, pStar: 1.1, pStarC: 1.0,
+    pHot: 0xffcc88, pGlowI: 0.75, pCx: 0, pCz: -42, pCr: 12, pTilt: 2.6 }),
+  galaxyKey(1275, { sun: 0xffe8c8, sunI: 2.5, sky: 0x4a3620, gnd: 0x5a4028, hemiI: 1.2, pSpace: 0x030206, pNeb: 0x3e3226, pGas: 0x2c4c88, pGas2: 0x5a4630, pDust: 0x3a2014, pL1: 0.4, pL2: 0.25, pL3: 0.2, pDustI: 0.6, pSpark: 0.35, pClus: 0.2, pStar: 1.1, pStarC: 0.6,
+    pHot: 0xffd49a, pGlowI: 1.0, pCx: 0, pCz: -22, pCr: 9, pTilt: 2.6 }),
 ];
 const GALAXY_CLOUD = { nebula: 0, clusters: 0, dust: 0, core: 0 };
 
@@ -8567,8 +8603,11 @@ function coastalCalm(x, d) {
 // gen(world, chunk, k, d0), water (null = the stage never shows water), flatCheck (self-check
 // terrain flatness in the clear zones), tod (time-of-day keys), cloud (low-cloud density per
 // biome), cloudShadowK(biome), deck (show the cloud-sea deck). Optional: space (the space kit's
-// backdrop parts: { body, nebula, band, deep }), drift (the world registers drift props), noClouds
-// (no low-cloud layer at all), voidH (grid cells entirely below it are not drawn: space shows through).
+// backdrop parts: { body, nebula, band, deep } and the later parts gas, clus, core, web, gals, warp, hole,
+// with layers (the parallax layers' drift rates, per unit of stage distance) and turn(d, body) (the solar
+// bodies' surface turn); see SPACE_FRAG), drift (the world registers drift props), noClouds (no low-cloud
+// layer at all), voidH (grid cells entirely below it are not drawn: space shows through). The air-only
+// worlds also export arena (the boss arena's clear corridor).
 export const WORLD_STAGES = {
   coastal: {
     id: 'coastal', layout: LAYOUT, salt: 0,

@@ -1571,7 +1571,7 @@ uniform vec3 uOcean, uLand, uLand2, uCloud, uAtmos, uGlow, uCity, uSpace, uNeb;
 uniform vec4 uScroll2;            // the parallax layers' drifts (layers 1–3, the lens field), each wrapped at LAYER_SPAN
 uniform vec4 uKit;                // SP_BODY 2: (which body, Saturn's rings, the camera's side offset (radii), surface turn)
 uniform vec4 uMix;                // layer strengths: gas / web layers 1–3; dust lanes (galaxy) or the spacetime grid (cosmos)
-uniform vec4 uMix2;               // (star clusters / old galaxies, the core / the black hole, young stars, 0)
+uniform vec4 uMix2;               // (star clusters / old galaxies, the core / the black hole, young stars, the lenses)
 uniform vec4 uPos;                // the core / the black hole on the virtual plane: (x, z, radius, arm twist / disk tilt)
 uniform vec3 uLens[3];            // SP_WARP: point lenses on the virtual plane (x, z, Einstein radius)
 uniform vec3 uHot, uGas, uGas2, uDust;
@@ -1656,7 +1656,10 @@ vec3 cluster(vec2 q, float aa) {
   if (r2 > 4.4) return vec3(0.0);
   vec3 tint = mix(uHot, vec3(0.8, 0.9, 1.25), h2.g * h2.g);
   float dn = exp(-r2 * 1.2);
-  vec3 s = stars(q * 4.8 + 7.0, 5.0, mix(0.99, 0.62, dn), 0.12, aa * 4.8) + stars(q * 8.0 + 3.0, 7.0, mix(0.995, 0.55, dn), 0.12, aa * 8.0) * 0.8;
+  vec3 s = stars(q * 4.8 + 7.0, 5.0, mix(0.99, 0.62, dn), 0.12, aa * 4.8);
+#ifndef LOW
+  s += stars(q * 8.0 + 3.0, 7.0, mix(0.995, 0.55, dn), 0.12, aa * 8.0) * 0.8;
+#endif
   return tint * (exp(-r2 * 2.2) * 0.45 + exp(-r2 * 0.6) * 0.08) + s * (0.55 + 0.45 * tint) * 1.1;
 }
 #endif
@@ -1734,14 +1737,15 @@ void main() {
   vec2 P0 = P.xz;
 #endif
 #ifdef SP_WARP
-  for (int i = 0; i < 3; i++) {
+  // (every part below is skipped while its strength is 0: uniform branches cost nothing)
+  if (uMix2.w > 0.001) for (int i = 0; i < 3; i++) {
     vec2 lv = P0 - uLens[i].xy;
     float l2 = dot(lv, lv);
     P.xz -= lv * (uLens[i].z * uLens[i].z / (l2 + 0.08)) * (1.0 - smoothstep(64.0, 196.0, l2));   // fades out by 14 units
   }
 #endif
 #ifdef SP_HOLE
-  { vec2 hv = P0 - uPos.xy; float r2 = dot(hv, hv), rs2 = uPos.z * uPos.z * uMix2.y;
+  if (uMix2.y > 0.001) { vec2 hv = P0 - uPos.xy; float r2 = dot(hv, hv), rs2 = uPos.z * uPos.z * uMix2.y;
     P.xz -= hv * (2.4 * rs2 / max(r2, 0.9 * rs2 + 1e-4)); }
 #endif
   vec2 q = vec2(P.x, P.z - uScroll.z);
@@ -1787,6 +1791,7 @@ void main() {
     : vec2(asin(clamp(nr.x, -1.0, 1.0)), atan(nr.z, max(nr.y, 1e-3)));
   uv *= ${(PLANET_N / (2 * Math.PI)).toFixed(8)};
   vec2 gx = dFdx(uv), gy = dFdy(uv);
+  vec2 zgx = dFdx(P.xz) * ${(1 / NEB_SPAN).toFixed(8)}, zgy = dFdy(P.xz) * ${(1 / NEB_SPAN).toFixed(8)};   // (the belt's dust: taken outside the branches)
   if (kind == 2.0) {
     // Saturn is seen over its pole, where atan's seam shows: its longitude gradient from a copy with the
     // seam turned round, whichever is smoother
@@ -1825,11 +1830,19 @@ void main() {
     col += stars(q * 0.6 + 11.0, 8.0, 0.84, 0.06, aa * 0.6) * uLook.z * 0.9;
 #endif
     col += stars(q * 1.6, 7.0, 0.8, 0.07, aa * 1.6) * uLook.z * 0.55;
+#if SP_KIND == 2
+    // the asteroid belt's dust (the zodiacal light: uNeb, uLook.y): one soft lookup drifting with the nebula
+    if (uLook.y > 0.001) {
+      vec2 zq = vec2(P.x, P.z - uScroll.w) * ${(1 / NEB_SPAN).toFixed(8)};
+      vec4 zd = textureGrad(uNoise, zq + vec2(0.21, 0.63), zgx, zgy);
+      col += uNeb * (smoothstep(0.35, 0.85, zd.g * 0.8 + zd.b * 0.2) * 0.9 + 0.12) * uLook.y;
+    }
+#endif
 #ifdef SP_CLUS
-    col += cluster(q, aa) * uMix2.x;
+    if (uMix2.x > 0.001) col += cluster(q, aa) * uMix2.x;
 #endif
 #ifdef SP_CORE
-    {
+    if (uMix2.y > 0.001) {
       // the galactic core (uPos: where, how big, how tightly the arms wind; uMix2.y): a golden bulge, two
       // spiral arms wound out of it (log spirals), behind the gas and its dust
       vec2 cv = (P.xz - uPos.xy) / uPos.z;
@@ -1856,12 +1869,12 @@ void main() {
       float dust = smoothstep(0.52, 0.66, dv) * uMix.w;
       col = col * (1.0 - 0.9 * dust) + uDust * (1.0 - smoothstep(0.0, 0.08, abs(dv - 0.51))) * uMix.w * 0.25;
 #ifndef LOW
-      col += youngStar(l3 * 8.0, aa) * uMix2.z;
+      if (uMix2.z > 0.001) col += youngStar(l3 * 8.0, aa) * uMix2.z;
 #endif
     }
 #endif
 #ifdef SP_WEB
-    {
+    if (uMix.x + uMix.y > 0.001) {
       // the cosmic web: two layers (far uNeb, near uGas; uMix.xy) drifting at their own rates, their
       // knots glowing uHot
       vec2 gX = dFdx(P.xz) * ${(1 / LAYER_SPAN).toFixed(8)}, gY = dFdy(P.xz) * ${(1 / LAYER_SPAN).toFixed(8)};
@@ -1874,17 +1887,17 @@ void main() {
     }
 #endif
 #ifdef SP_GALS
-    col += oldGalaxy(vec2(P.x, P.z - uScroll2.z) * 0.125) * uMix2.x;
+    if (uMix2.x > 0.001) col += oldGalaxy(vec2(P.x, P.z - uScroll2.z) * 0.125) * uMix2.x;
 #endif
 #ifdef SP_WARP
-    {
+    if (uMix.w + uMix2.w > 0.001) {
       // the spacetime grid, bent round the lenses (uMix.w): lines every 4 units on the lens field's layer,
       // fading where they are stretched past a pixel; faint light round each Einstein radius
       vec2 gq = vec2(P.x, P.z - uScroll2.w) * 0.25;
       vec2 fw = fwidth(gq) * 1.3 + 1e-4;
       vec2 ln = (1.0 - smoothstep(vec2(0.0), fw, abs(fract(gq + 0.5) - 0.5))) * (1.0 - smoothstep(vec2(0.07), vec2(0.3), fw));
       col += uGas * max(ln.x, ln.y) * uMix.w * 0.22;
-      for (int i = 0; i < 3; i++) {
+      if (uMix2.w > 0.001) for (int i = 0; i < 3; i++) {
         float lr = length(P0 - uLens[i].xy), e = uLens[i].z;
         col += uGas2 * exp(-(lr - e) * (lr - e) / (0.02 + 0.05 * e * e)) * 0.16 * step(0.01, e);
       }
@@ -2015,8 +2028,7 @@ void main() {
 #ifndef LOW
       vec3 fp = flowPh();
       vec4 tu = mix(textureGrad(uNoise, tq + fl * fp.x, gtx, gty), textureGrad(uNoise, tq + fl * fp.y + 0.5, gtx, gty), fp.z);
-      vec4 tu2 = mix(textureGrad(uNoise, tq * 3.0 + fl * 3.0 * fp.x + (tu.rb - 0.5) * 0.12, gtx * 3.0, gty * 3.0),
-        textureGrad(uNoise, tq * 3.0 + fl * 3.0 * fp.y + (tu.rb - 0.5) * 0.12 + 0.25, gtx * 3.0, gty * 3.0), fp.z);
+      vec4 tu2 = textureGrad(uNoise, tq * 3.0 + (tu.rb - 0.5) * 0.12, gtx * 3.0, gty * 3.0);   // (rides on the flowing octave)
 #else
       vec4 tu = textureGrad(uNoise, tq, gtx, gty), tu2 = tu;
 #endif
@@ -2105,7 +2117,7 @@ void main() {
   }
 #endif
 #ifdef SP_HOLE
-  {
+  if (uMix2.y > 0.001) {
     // the black hole (uPos: where, its shadow's radius, the disk's tilt from face-on; uMix2.y fades it in):
     // the shadow; the disk seen directly — its far half behind the shadow, its near half across the front
     // of it — and seen twice more, lensed: the far half arched over the shadow, a thin arc under it; the
@@ -3110,7 +3122,7 @@ export class World {
       // the later parts (the surface turn, uKit.w, is set with the scroll: _placeSpace)
       pu.uKit.value.x = N[N_PKIND]; pu.uKit.value.y = N[N_PRING]; pu.uKit.value.z = N[N_PSIDE];
       pu.uMix.value.set(N[N_PL1], N[N_PL2], N[N_PL3], N[N_PDUST]);
-      pu.uMix2.value.set(N[N_PCLUS], N[N_PGLOW], N[N_PSPARK], 0);
+      pu.uMix2.value.set(N[N_PCLUS], N[N_PGLOW], N[N_PSPARK], S.space.warp ? N[N_PSPARK] : 0);
       pu.uPos.value.set(N[N_PCX], N[N_PCZ] - 6, N[N_PCR], N[N_PTILT]);
       pu.uHot.value.copy(o.pHot); pu.uGas.value.copy(o.pGas); pu.uGas2.value.copy(o.pGas2); pu.uDust.value.copy(o.pDust);
     }
@@ -3122,7 +3134,8 @@ export class World {
     for (const ch of this.chunks) if (ch.k !== null && ch.phase === 3) { active++; verts += ch.n; sverts += ch.sn; }
     return { stage: S.id, distance: this._d, biome: biomeOf(this._d), activeChunks: active, triangles: (verts + sverts) / 3,
       violations: this.stats.violations, violationLog: this.stats.violationLog.slice(0, 12), lastBuildMs: this.stats.lastBuildMs, maxBuildMs: this.stats.maxBuildMs, builds: this.stats.builds,
-      water: this.water.visible, deck: this.deck.visible, space: this.space.visible, maxSliceMs: this.stats.maxSliceMs };
+      water: this.water.visible, deck: this.deck.visible, space: this.space.visible, maxSliceMs: this.stats.maxSliceMs,
+      body: S.space && S.space.body === 2 ? SOLAR_BODIES[Math.round(this._todN[N_PKIND])] : null };
   }
 
   dispose() {
@@ -6229,7 +6242,7 @@ function sledGeo() {
 const KP = {
   ice: C(0xb8c8d8), iceD: C(0x7c8ea2), snow: C(0xe2e8ee), foil: C(0xd8b870), foilD: C(0x9a7a3c), mirror: C(0xc8d0dc),
   heat: C(0xff8a3c), glow: C(0xffd070), rust: C(0x7a4a34), marsRock: C(0x7a5444), marsRockD: C(0x5a3a30),
-  chitin: C(0x3a2c3e), chitinD: C(0x241a2a), chitinL: C(0x5a4658), vein: C(0x68ffc8), veinD: C(0x2a8a78),
+  chitin: C(0x5c4a66), chitinD: C(0x362a40), chitinL: C(0x8a7090), vein: C(0x68ffc8), veinD: C(0x2a8a78),
   crystal: C(0x5aa8d8), crystalD: C(0x2a5a8a), crystalL: C(0x9ae0ff), core: C(0xc8f4ff), amber: C(0xe0a040),
   black: C(0x0c0c10), stone: C(0x2a2a32), edge: C(0x78d8ff), violet: C(0x8a6aff), land: C(0x4a7a44), sea: C(0x2a5a8a),
 };
@@ -8032,6 +8045,7 @@ const SOLAR_LAYOUT = [
 ];
 const SO_LANE = { d0: -Infinity, d1: 1234, x: 5 };
 const SO_ARENA = { d0: 1234, d1: Infinity, x: 7.5 };
+const SOLAR_BODIES = ['mars', 'jupiter', 'saturn', 'sun'];   // pKind → name (world.info().body)
 // the surface's turn (uKit.w) for the body on screen: Mars and the Sun at a crawl, Jupiter's latitudes sweep
 // down the screen (a polar pass), Saturn turns under us (its rings' clumps pass by)
 function solarTurn(d, kind) {
@@ -8067,22 +8081,31 @@ function cycler(x, d, y, rot) {
   box(-0.06, 5.25, 0.06, 5.35, y + 0.1, y + 0.2, OP.lampC, OP.lampC);
   frameId();
 }
-// a raiders' mining rig on an asteroid: a drill derrick, fuel tanks, a hab, a conveyor boom out over the
-// void with a glowing ore chute, warning lamps
+// a raiders' mining rig on an asteroid: a steel platform bolted on its crown with a landing pad, a drill
+// derrick (lattice legs, crown block, warning lamp), a cluster of fuel tanks, a hab, and a conveyor boom out
+// over the void, its ore chute glowing
 function minerRig(x, d, y, r, rot) {
   asteroid(x, d, y, r, OP.rockD);
-  const top = y + r * 0.62;
+  const top = y + r * 0.66;
   frame(x, d, rot);
-  for (const [px, pd] of [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]]) box(px - 0.05, pd - 0.05, px + 0.05, pd + 0.05, top - 0.3, top + 1.15, OP.hazard, OP.hazard);
-  for (const h of [0.25, 0.7]) { box(-0.35, -0.35, 0.35, -0.28, top + h, top + h + 0.06, OP.frame, OP.frame); box(-0.35, 0.28, 0.35, 0.35, top + h, top + h + 0.06, OP.frame, OP.frame); }
-  box(-0.4, -0.4, 0.4, 0.4, top + 1.15, top + 1.3, OP.hullD, OP.redD);
-  box(-0.07, -0.07, 0.07, 0.07, top + 1.3, top + 1.42, OP.lampR, OP.lampR);
-  cyl(0.75 * r, -0.35 * r, 0.26, top - 0.35, top + 0.25, 8, OP.white, OP.silver);
-  cyl(0.72 * r, 0.3 * r, 0.22, top - 0.4, top + 0.12, 8, OP.orange, OP.silver);
-  tube(-0.55 * r, -0.4, 0.8, top - 0.1, 0.24, 0.24, OP.white, 7);
-  box(-0.1, 0.4, 0.1, r + 1.9, top - 0.05, top + 0.08, OP.frame, OP.hazard);
-  box(-0.16, r + 1.6, 0.16, r + 2.0, top - 0.3, top + 0.08, OP.hullD, KP.heat);
-  box(-0.06, r + 1.95, 0.06, r + 2.05, top + 0.05, top + 0.15, OP.lampR, OP.lampR);
+  for (let i = 0; i < 8; i++) { const a = (i / 8) * TAU + 0.39; PX[i] = Math.cos(a) * 0.95 * r; PD[i] = Math.sin(a) * 0.8 * r; }
+  topStyle(T_SLAB, 0.9, 0.9);
+  prism(8, top - 0.25, top, OP.hullD, OP.deck);
+  plain();
+  disc(-0.42 * r, 0.3 * r, 0.42, 0.42, top + 0.004, OP.dark, 10);
+  ring(-0.42 * r, 0.3 * r, 0.42, 0.42, 0.06, top + 0.008, OP.hazard, 14);
+  for (let i = 0; i < 4; i++) { const a = (i / 4) * TAU + 0.78, lx = -0.42 * r + Math.cos(a) * 0.52, ld = 0.3 * r + Math.sin(a) * 0.52; box(lx - 0.04, ld - 0.04, lx + 0.04, ld + 0.04, top, top + 0.06, OP.lampC, OP.lampC); }
+  for (const [px, pd] of [[-0.24, -0.24], [0.24, -0.24], [-0.24, 0.24], [0.24, 0.24]]) box(0.25 * r + px - 0.045, -0.2 * r + pd - 0.045, 0.25 * r + px + 0.045, -0.2 * r + pd + 0.045, top, top + 1.05, OP.hazard, OP.hazard);
+  for (const h of [0.3, 0.68]) for (const sd of [-0.27, 0.23]) box(0.25 * r - 0.3, -0.2 * r + sd, 0.25 * r + 0.3, -0.2 * r + sd + 0.04, top + h, top + h + 0.05, OP.frame, OP.frame);
+  box(0.25 * r - 0.34, -0.2 * r - 0.34, 0.25 * r + 0.34, -0.2 * r + 0.34, top + 1.05, top + 1.18, OP.hullD, OP.redD);
+  box(0.25 * r - 0.06, -0.2 * r - 0.06, 0.25 * r + 0.06, -0.2 * r + 0.06, top + 1.18, top + 1.3, OP.lampR, OP.lampR);
+  for (let i = 0; i < 3; i++) cyl(0.5 * r + (i - 1) * 0.36, 0.42 * r + (i & 1) * 0.2, 0.17, top, top + 0.42, 8, i === 1 ? OP.orange : OP.white, OP.silver);
+  tube(-0.5 * r, -0.62 * r, -0.05 * r, top + 0.2, 0.22, 0.22, OP.white, 7);
+  box(-0.5 * r - 0.08, -0.05 * r - 0.1, -0.5 * r + 0.08, -0.05 * r, top + 0.36, top + 0.44, OP.lampC, OP.lampC);
+  box(-0.1, 0.8 * r, 0.1, r + 2.0, top - 0.05, top + 0.08, OP.frame, OP.hazard);
+  for (let q = 0.9 * r; q < r + 1.7; q += 0.42) box(-0.07, q, 0.07, q + 0.16, top + 0.08, top + 0.16, OP.rockL, OP.rockD);
+  box(-0.18, r + 1.7, 0.18, r + 2.12, top - 0.35, top + 0.1, OP.hullD, KP.heat);
+  box(-0.06, r + 2.06, 0.06, r + 2.16, top + 0.1, top + 0.2, OP.lampR, OP.lampR);
   frameId();
 }
 // a gas harvester floating over Jupiter: a hexagonal deck, a dome, tanks, a long scoop boom reaching down
@@ -8123,11 +8146,26 @@ function ringStation(x, d, y, rot) {
 // a collector array by the Sun: a truss along d, mirror panels tilted toward the light, glowing radiators
 function solarArray(x, d, y, len, side) {
   box(x - 0.08, d - len / 2, x + 0.08, d + len / 2, y - 0.08, y + 0.08, OP.frame, OP.frame);
+  frame(x + side * 0.1, d, 0);
+  tube(0, -1.3, 1.3, y + 0.05, 0.3, 0.3, OP.white, 7);
+  frameId();
+  box(x - 0.05, d - 1.35, x + 0.05, d - 1.25, y + 0.3, y + 0.4, OP.lampR, OP.lampR);
   for (let q = -len / 2 + 0.8; q < len / 2 - 0.6; q += 1.7) {
     // the panel's face only (tilted up toward the camera: its back is never seen)
     const a = x + side * 0.2, b = x + side * 2.6, lo = y - 0.1, hi = y + 0.75, mx = (a + b) / 2, mh = y - 2;
     tri(a, lo, d + q - 0.7, b, hi, d + q - 0.7, b, hi, d + q + 0.7, KP.foil, 1.15, mx, mh, d + q);
     tri(a, lo, d + q - 0.7, b, hi, d + q + 0.7, a, lo, d + q + 0.7, KP.foil, 1.15, mx, mh, d + q);
+    // the cells' frame lines: one along the panel, two across (a hair above it)
+    if (!LOWQ) for (const t of [0.33, 0.66]) {
+      const px = lerp(a, b, t), ph = lerp(lo, hi, t) + 0.012, e = 0.035 * side, eh = 0.035 * 0.35;
+      tri(px - e, ph - eh, d + q - 0.7, px + e, ph + eh, d + q - 0.7, px + e, ph + eh, d + q + 0.7, KP.foilD, 0.8, px, ph - 2, d + q);
+      tri(px - e, ph - eh, d + q - 0.7, px + e, ph + eh, d + q + 0.7, px - e, ph - eh, d + q + 0.7, KP.foilD, 0.8, px, ph - 2, d + q);
+    }
+    if (!LOWQ) {
+      const e = 0.03, ph = 0.012;
+      tri(a, lo + ph, d + q - e, b, hi + ph, d + q - e, b, hi + ph, d + q + e, KP.foilD, 0.8, mx, mh, d + q);
+      tri(a, lo + ph, d + q - e, b, hi + ph, d + q + e, a, lo + ph, d + q + e, KP.foilD, 0.8, mx, mh, d + q);
+    }
     box(Math.min(x - side * 0.2, x - side * 1.2), d + q - 0.1, Math.max(x - side * 0.2, x - side * 1.2), d + q + 0.1, y - 0.05, y + 0.02, KP.heat, KP.heat);
   }
   checkTall(Math.min(x, x + side * 2.6), d - len / 2, Math.max(x, x + side * 2.6), d + len / 2, y + 0.75);
@@ -8169,7 +8207,8 @@ function genSolar(w, ch, k, d0) {
   if (k === 27) ringStation(8.9, 1092, 1.6, -1.3);
   if (k === 29) ringStation(-9.0, 1178, 1.8, 1.2);
   // tumblers beside the lanes: rocks (and ice by Saturn, loose mirrors by the Sun)
-  const nt = [1, LOWQ ? 2 : 4, 1, LOWQ ? 2 : 4, 2][band];
+  // (per type ≤ DRIFT_MAX = 48 over the ≤ 4 chunks laid out: ≤ 11 of one type per chunk)
+  const nt = [1, LOWQ ? 2 : 3, 1, LOWQ ? 2 : 3, 2][band];
   for (let i = 0; i < nt; i++) {
     const type = band === 3 ? D_ICE : band === 4 ? (rand() < 0.6 ? D_MIRROR : D_SHARD) : D_ROCK, s = type === D_ROCK || type === D_ICE ? rr(0.3, 0.75) : rr(0.4, 0.65);
     const d = rr(d0 + 2, d1 - 2), x = side() * rr(xin(d) + 1.4 * s + 0.3, 11);
@@ -8177,7 +8216,7 @@ function genSolar(w, ch, k, d0) {
   }
   // the deep layer far below them: Mars' satellites and its moons, the belt's thick drift of rock, ice round
   // Jupiter and in Saturn's rings, loose mirrors and wreckage in the corona
-  const nd = [LOWQ ? 2 : 4, LOWQ ? 5 : 12, LOWQ ? 1 : 3, LOWQ ? 5 : 12, LOWQ ? 2 : 4][band];
+  const nd = [LOWQ ? 2 : 4, LOWQ ? 5 : 9, LOWQ ? 1 : 3, LOWQ ? 5 : 9, LOWQ ? 2 : 4][band];
   for (let i = 0; i < nd; i++) {
     const r = rand(), d = rr(d0, d1), y = -rr(2.5, 14), x = side() * rr(5.3 - y * 0.12, 17);
     const type = band === 0 ? (r < 0.5 ? D_SAT : D_ROCK) : band === 1 ? (r < 0.85 ? D_ROCK : D_ICE) : band === 2 ? (r < 0.6 ? D_ICE : D_ROCK) : band === 3 ? (r < 0.85 ? D_ICE : D_ROCK) : (r < 0.5 ? D_MIRROR : D_SHARD);
@@ -8186,7 +8225,7 @@ function genSolar(w, ch, k, d0) {
   }
   if (k === 3) addDrift(ch, D_MOONLET, -12.5, -10, 150, 0.03, 3.4, 0.2);    // Phobos
   if (k === 6) addDrift(ch, D_MOONLET, 13, -12, 262, 0.04, 1.8, 0.2);       // Deimos
-  if (k === 26) addDrift(ch, D_MOONLET, -13.5, -11, 1062, 0.05, 2.6, 0.3);  // a shepherd moon, dusted with ice
+  if (k === 26) addDrift(ch, D_ICE, -12.5, -11, 1062, 0.05, 2.6, 0.3);     // a shepherd moonlet of the rings
   styleReset();
 }
 // light: a white sun, warmer toward the end; hemi from below is the body's light. The body's colours:
@@ -8194,7 +8233,7 @@ function genSolar(w, ch, k, d0) {
 // belts / pLand2 tan / pCloud zones / pOcean festoons / pHot the Great Red Spot; Saturn pLand / pCloud bands,
 // pLand2 its pole, pGas / pGas2 the rings; the Sun pHot, its corona pAtmos, prominences pGlow
 const solarKey = (d, sunI, hemiI, o) => ({ d, sun: 0xfff2e4, sunI, sky: 0x1e1c24, gnd: 0x5a3a2a, hemiI, fog: 0x000000, near: 52, far: 130,
-  cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0, pSpace: 0x020203, pNeb: 0x2c2a3a, pNebI: 0.35, pStar: 0.9, pCityI: 0, ...o });
+  cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0, pSpace: 0x020203, pNeb: 0x2c2a3a, pNebI: 0, pStar: 0.9, pCityI: 0, ...o });
 const MARS = { pKind: 0, pOcean: 0x3a2622, pLand: 0x7e4630, pLand2: 0xa8784e, pCloud: 0xd8b8a0, pAtmos: 0xc88a6e, pGlow: 0x7aa0ff, pAtmW: 0.006, psun: [-0.45, 0.75, -0.5] };
 const JUPITER = { pKind: 1, pOcean: 0x3e4c5a, pLand: 0x5a301a, pLand2: 0x9a5e32, pCloud: 0xac9674, pHot: 0x9a3c26, pAtmos: 0xa8967c, pGlow: 0xffc890, pAtmW: 0.01, psun: [-0.45, 0.8, -0.4] };
 const SATURN = { pKind: 2, pRing: 1, pLand: 0x947648, pLand2: 0x6a6450, pCloud: 0xc8b890, pGas: 0xa89a7e, pGas2: 0x70685c, pAtmos: 0xc8b484, pGlow: 0xffd8a0, pAtmW: 0.01, psun: [0.2, 0.85, -0.5] };
@@ -8205,21 +8244,22 @@ const SOLAR_TOD_SRC = [
   solarKey(280, 2.4, 1.0, { ...MARS, pX: 3, pZ: 26, pF: 17, pH: 0.12 }),
   // the belt: Mars falls behind to the lower left (off the screen before it turns into Jupiter, which comes
   // in from beyond the top left and grows ahead)
-  solarKey(340, 2.3, 0.9, { ...MARS, pX: -2, pZ: 22, pF: 17, pH: 0.8, pNebI: 0.45 }),
-  solarKey(400, 2.3, 0.9, { ...MARS, pX: -8, pZ: 16, pF: 17, pH: 2.6, pNebI: 0.55 }),
-  solarKey(445, 2.3, 0.9, { ...MARS, pX: -18, pZ: 22, pF: 17, pH: 5, pNebI: 0.6 }),
-  solarKey(460, 2.3, 0.9, { ...MARS, pX: -34, pZ: 36, pF: 17, pH: 6, pNebI: 0.6 }),
-  solarKey(470, 2.3, 0.9, { ...JUPITER, pX: -40, pZ: -70, pF: 22, pH: 14, pNebI: 0.6 }),
-  solarKey(600, 2.3, 0.9, { ...JUPITER, pX: 3, pZ: -30, pF: 22, pH: 4, pNebI: 0.5 }),
-  solarKey(670, 2.3, 0.9, { ...JUPITER, pX: 1, pZ: -14, pF: 22, pH: 1.4, pNebI: 0.4 }),
+  solarKey(340, 2.3, 0.9, { ...MARS, pX: -2, pZ: 22, pF: 17, pH: 0.8, pNebI: 0.85, pNeb: 0x4a3a2a }),
+  solarKey(400, 2.3, 0.9, { ...MARS, pX: -8, pZ: 16, pF: 17, pH: 2.6, pNebI: 0.8, pNeb: 0x4a3a2a }),
+  solarKey(445, 2.3, 0.9, { ...MARS, pX: -18, pZ: 22, pF: 17, pH: 5, pNebI: 0.85, pNeb: 0x4a3a2a }),
+  solarKey(460, 2.3, 0.9, { ...MARS, pX: -34, pZ: 36, pF: 17, pH: 6, pNebI: 0.85, pNeb: 0x4a3a2a }),
+  solarKey(470, 2.3, 0.9, { ...JUPITER, pX: -40, pZ: -70, pF: 22, pH: 14, pNebI: 0.85, pNeb: 0x4a3a2a }),
+  solarKey(600, 2.3, 0.9, { ...JUPITER, pX: 3, pZ: -30, pF: 22, pH: 4, pNebI: 0.6, pNeb: 0x4a3a2a }),
+  solarKey(670, 2.3, 0.9, { ...JUPITER, pX: 1, pZ: -14, pF: 22, pH: 1.4, pNebI: 0.3, pNeb: 0x4a3a2a }),
   // Jupiter's cloud tops fill the view, the limb across the top
-  solarKey(730, 2.2, 1.0, { ...JUPITER, pX: 0, pZ: 8, pF: 17, pH: 0.22, pNebI: 0.3 }),
-  solarKey(975, 2.2, 1.0, { ...JUPITER, pX: 0, pZ: 8, pF: 17, pH: 0.22, pNebI: 0.3 }),
-  solarKey(1025, 2.2, 1.0, { ...JUPITER, pX: 0, pZ: 46, pF: 17, pH: 2.5, pNebI: 0.3 }),
-  solarKey(1034, 2.2, 1.0, { ...JUPITER, pX: -44, pZ: 46, pF: 17, pH: 8, pNebI: 0.3 }),
+  solarKey(730, 2.2, 1.0, { ...JUPITER, pX: 0, pZ: 8, pF: 17, pH: 0.22 }),
+  solarKey(975, 2.2, 1.0, { ...JUPITER, pX: 0, pZ: 8, pF: 17, pH: 0.22 }),
+  solarKey(1025, 2.2, 1.0, { ...JUPITER, pX: 0, pZ: 46, pF: 17, pH: 2.5 }),
+  solarKey(1034, 2.2, 1.0, { ...JUPITER, pX: -44, pZ: 46, pF: 17, pH: 8 }),
   // Saturn: far off over its pole, the rings round it; then over the rings themselves, the globe on the left
-  solarKey(1040, 2.3, 1.0, { ...SATURN, pX: -44, pZ: -70, pF: 17, pH: 14, pSide: 0 }),
-  solarKey(1100, 2.3, 1.0, { ...SATURN, pX: 2, pZ: -32, pF: 17, pH: 4, pSide: 0 }),
+  solarKey(1040, 2.3, 1.0, { ...SATURN, pX: -44, pZ: -44, pF: 17, pH: 16, pSide: 0 }),
+  solarKey(1064, 2.3, 1.0, { ...SATURN, pX: -4, pZ: -24, pF: 17, pH: 11, pSide: 0 }),
+  solarKey(1100, 2.3, 1.0, { ...SATURN, pX: 2, pZ: -26, pF: 17, pH: 4, pSide: 0 }),
   solarKey(1150, 2.3, 1.0, { ...SATURN, pX: 1.5, pZ: -2, pF: 9, pH: -0.38, pSide: 1.85 }),
   solarKey(1222, 2.3, 1.0, { ...SATURN, pX: 1.5, pZ: -2, pF: 9, pH: -0.38, pSide: 1.85 }),
   solarKey(1240, 2.4, 1.0, { ...SATURN, pX: -8, pZ: 40, pF: 9, pH: 2, pSide: 1.85 }),
@@ -8307,7 +8347,8 @@ function hivePods(x, d, y, s) {
     frame(cx, cd, rand() * TAU);
     for (let j = 0; j < 7; j++) { const t = j / 6; LR[j] = (j === 0 || j === 6 ? 0 : (0.75 + 0.25 * (j & 1)) * Math.sin(t * Math.PI) * r * 1.3); LH[j] = y + (t - 0.4) * h; LK[j] = 0.75 + 0.07 * j; }
     lathe(0, 0, 7, LOWQ ? 6 : 8, jit(KP.chitin, 0.12, TC3), 0, 1, rr(0.8, 1.0), 0.15);
-    disc(0, 0, r * 0.35, r * 0.35, y + 0.6 * h + 0.005, KP.vein, 7, 1.2);
+    disc(0, 0, r * 0.5, r * 0.5, y + 0.6 * h + 0.005, KP.vein, 7, 1.2);
+    ring(0, 0, r * 0.62, r * 0.62, 0.05, y + 0.6 * h + 0.006, KP.veinD, 10, 0, 1.1);
     frameId();
     if (i > 0) { frame((px + cx) / 2, (pd + cd) / 2, Math.atan2(-(cx - px), cd - pd)); const L = Math.hypot(cx - px, cd - pd) / 2; tube(0, -L, L, y - 0.1, 0.1 * s, 0.14 * s, KP.chitinD, 5); frameId(); }
     px = cx; pd = cd;
@@ -8424,14 +8465,15 @@ function ringworld(cx, cd, R, W, y, a, b, dA, dB, seed) {
     PX[0] = i0; PD[0] = dd; PX[1] = i1; PD[1] = e; PX[2] = o1; PD[2] = e; PX[3] = o0; PD[3] = dd;
     if (s < 0) { PX[1] = o0; PD[1] = dd; PX[3] = i1; PD[3] = e; }
     prism(4, y - 0.35 - brokeA - brokeB, y, OP.hullD, OP.hull);
-    // the land on it: seas and continents in strips across, cloud here and there (flat, just above)
-    for (let q = 0; q < 5; q++) {
-      const t0 = 0.1 + q * 0.16, t1 = t0 + 0.16;
-      const h = fbm(dd * 0.07 + seed, q * 0.45 + seed * 3.1), cl = vnoise(dd * 0.16 - seed, q * 0.7 + 5.3);
-      const c = cl > 0.72 ? KP.snow : h < 0.5 ? KP.sea : h < 0.62 ? KP.land : h < 0.7 ? KP.amber : OP.rockL;
-      const ax = lerp(i0, o0, t0), bx = lerp(i1, o1, t0), cx2 = lerp(i1, o1, t1), dx = lerp(i0, o0, t1);
-      if (s > 0) flat4(dx, dd, ax, dd, bx, e, cx2, e, y + 0.01, c, 0.85 + 0.3 * h);      // (corners CCW from above)
-      else flat4(ax, dd, dx, dd, cx2, e, bx, e, y + 0.01, c, 0.85 + 0.3 * h);
+    // the land on it: a lattice across the ribbon, every vertex coloured from the noise (seas, green land,
+    // desert, bare rock, cloud) so the continents blend; corners CCW from above
+    const NW = LOWQ ? 3 : 6, y1 = GROUND_Y + y + 0.01;
+    for (let q = 0; q < NW && room(6); q++) {
+      const t0 = 0.1 + (q / NW) * 0.8, t1 = t0 + 0.8 / NW;
+      landCol(dd, t0, seed, RW0); landCol(dd, t1, seed, RW1); landCol(e, t1, seed, RW2); landCol(e, t0, seed, RW3);
+      const ax = lerp(i0, o0, t0), dx = lerp(i0, o0, t1), cx2 = lerp(i1, o1, t1), bx = lerp(i1, o1, t0);
+      if (s > 0) { vtx(dx, y1, dd, RW1, 1, 0, 0); vtx(ax, y1, dd, RW0, 1, 0, 0); vtx(bx, y1, e, RW3, 1, 0, 0); vtx(dx, y1, dd, RW1, 1, 0, 0); vtx(bx, y1, e, RW3, 1, 0, 0); vtx(cx2, y1, e, RW2, 1, 0, 0); }
+      else { vtx(ax, y1, dd, RW0, 1, 0, 0); vtx(dx, y1, dd, RW1, 1, 0, 0); vtx(cx2, y1, e, RW2, 1, 0, 0); vtx(ax, y1, dd, RW0, 1, 0, 0); vtx(cx2, y1, e, RW2, 1, 0, 0); vtx(bx, y1, e, RW3, 1, 0, 0); }
     }
     // the rim walls
     for (const [t0, t1] of [[0, 0.1], [0.9, 1.0]]) {
@@ -8441,6 +8483,18 @@ function ringworld(cx, cd, R, W, y, a, b, dA, dB, seed) {
     }
     if (Math.abs(dd % 6) < 0.75 && !LOWQ) box(Math.min(i0, o0) - 0.06, dd - 0.06, Math.min(i0, o0) + 0.06, dd + 0.06, y + 0.45, y + 0.55, KP.edge, KP.edge);
   }
+}
+
+const RW0 = [0, 0, 0], RW1 = [0, 0, 0], RW2 = [0, 0, 0], RW3 = [0, 0, 0];
+// the ring-world's land at (d, t across the ribbon)
+function landCol(d, t, seed, out) {
+  const h = fbm(d * 0.06 + seed, t * 2.4 + seed * 3.1), cl = vnoise(d * 0.14 - seed, t * 3.6 + 5.3);
+  cset(out, KP.sea);
+  mixInto(out, KP.land, sstep(0.46, 0.52, h));
+  mixInto(out, KP.amber, sstep(0.6, 0.68, h));
+  mixInto(out, OP.rockL, sstep(0.7, 0.76, h));
+  mixInto(out, KP.snow, sstep(0.66, 0.78, cl) * 0.9);
+  return out;
 }
 
 // ---- cosmos chunks ------------------------------------------------------------------------------
@@ -8588,7 +8642,7 @@ export const WORLD_STAGES = {
     tod: makeTod(SOLAR_TOD_SRC), cloud: SOLAR_CLOUD,
     cloudShadowK: () => 0,
     deck: false,
-    space: { body: 2, nebula: true, deep: true, turn: solarTurn }, drift: true, noClouds: true,
+    space: { body: 2, deep: true, turn: solarTurn }, drift: true, noClouds: true,
   },
   galaxy: {
     id: 'galaxy', layout: GALAXY_LAYOUT, salt: 2600000,

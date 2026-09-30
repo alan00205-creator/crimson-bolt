@@ -58,11 +58,12 @@
     <button id="bloom" class="on" title="Bloom post-process like the game's HIGH setting (B)">Bloom</button>
     <button id="ph" class="on" title="Placeholder jet + enemy bullets for contrast checks (P)">Placeholders</button>
     <button id="lanes" title="Overlay the guaranteed-clear lanes, cross roads and corridors (L)">Clear zones</button>
+    <button id="freeze" title="Freeze the world's clock (animation and scroll) for repeatable frames; ?t=<seconds> starts frozen (T)">Freeze</button>
     <button id="scan" title="Build every chunk of this stage (d 0–1600) at the current quality and report violations and build times (S)">Scan stage</button>
   </div>
   <div class="stats" id="stats"></div>
   <div class="stats" id="scanOut"></div>
-  <div class="keys">Keys: 1–9 stage · ←/→ scrub ±10 · F fly · Q quality · B bloom · P placeholders · L zones · S scan · H hide UI</div>
+  <div class="keys">Keys: 1–9 stage · ←/→ scrub ±10 · F fly · T freeze · Q quality · B bloom · P placeholders · L zones · S scan · H hide UI</div>
 </div>
 <script type="module">
 import * as THREE from 'three';
@@ -78,7 +79,7 @@ const STAGE_IDS = Object.keys(WORLD_STAGES);
 const opt = {
   d: +(Q.get('d') || 0), speed: Q.has('speed') ? +Q.get('speed') : 7, fly: Q.get('fly') !== '0',
   quality: Q.get('q') === 'low' ? 'low' : 'high', bloom: Q.get('bloom') !== '0', ph: Q.get('ph') !== '0',
-  lanes: Q.get('lanes') === '1', ui: Q.get('ui') !== '0',
+  lanes: Q.get('lanes') === '1', ui: Q.get('ui') !== '0', freeze: Q.has('t'), t: +(Q.get('t') || 0),
   stage: STAGE_IDS.includes(Q.get('stage')) ? Q.get('stage') : 'coastal',
 };
 if (!opt.ui) document.body.classList.add('noui');
@@ -105,6 +106,7 @@ sun.position.set(-14, 30, 10);
 scene.add(hemi, sun, sun.target);
 
 const world = new World({ scene, renderer, sun, hemi, quality: opt.quality, stage: opt.stage });
+if (opt.freeze) { world._t = opt.t; world._clock = opt.t; }
 world.reset(opt.d);
 
 // --- placeholders: red jet + glowing enemy bullets (same recipe as the game) ---
@@ -279,9 +281,10 @@ const toggles = {
   bloom: () => { opt.bloom = !opt.bloom; setBtn('bloom', opt.bloom); },
   ph: () => { opt.ph = !opt.ph; setBtn('ph', opt.ph); },
   lanes: () => { opt.lanes = !opt.lanes; setBtn('lanes', opt.lanes); },
+  freeze: () => { opt.freeze = !opt.freeze; setBtn('freeze', opt.freeze); },
 };
 for (const k in toggles) $(k).addEventListener('click', toggles[k]);
-setBtn('fly', opt.fly); setBtn('quality', opt.quality === 'high', 'Quality: ' + opt.quality); setBtn('bloom', opt.bloom); setBtn('ph', opt.ph); setBtn('lanes', opt.lanes);
+setBtn('fly', opt.fly); setBtn('quality', opt.quality === 'high', 'Quality: ' + opt.quality); setBtn('bloom', opt.bloom); setBtn('ph', opt.ph); setBtn('lanes', opt.lanes); setBtn('freeze', opt.freeze);
 $('scan').addEventListener('click', () => showScan(scan()));
 // stage selector + one jump button per biome of the current stage
 const stagesEl = $('stages'), jumps = $('jumps');
@@ -317,7 +320,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'arrowleft') world.reset(Math.max(0, world.distance - 10));
   else if (k >= '1' && k <= '9' && STAGE_IDS[+k - 1]) setStage(STAGE_IDS[+k - 1], 0);
   else if (k === 'f') toggles.fly(); else if (k === 'q') toggles.quality(); else if (k === 'b') toggles.bloom();
-  else if (k === 'p') toggles.ph(); else if (k === 'l') toggles.lanes(); else if (k === 's') showScan(scan());
+  else if (k === 'p') toggles.ph(); else if (k === 'l') toggles.lanes(); else if (k === 's') showScan(scan()); else if (k === 't') toggles.freeze();
   else if (k === 'h') document.body.classList.toggle('noui');
 });
 
@@ -340,7 +343,8 @@ function statsText() {
     `world calls <b class="${warnC}">${w.calls}</b> / 70   tris <b class="${warnT}">${(w.tris / 1000).toFixed(1)}k</b> / 150k\n` +
     `frame calls <b>${stats.total.calls}</b>   tris <b>${(stats.total.tris / 1000).toFixed(1)}k</b>\n` +
     `chunks <b>${i.activeChunks}</b>  built <b>${i.builds}</b>  last <b>${i.lastBuildMs.toFixed(1)}ms</b>  max <b>${i.maxBuildMs.toFixed(1)}ms</b>\n` +
-    `violations <b class="${i.violations ? 'warn' : ''}">${i.violations}</b>   water <b>${i.water ? 'on' : 'off'}</b>   deck <b>${i.deck ? 'on' : 'off'}</b>   space <b>${i.space ? 'on' : 'off'}</b>`;
+    `violations <b class="${i.violations ? 'warn' : ''}">${i.violations}</b>   water <b>${i.water ? 'on' : 'off'}</b>   deck <b>${i.deck ? 'on' : 'off'}</b>   space <b>${i.space ? 'on' : 'off'}</b>` +
+    (i.body ? `   body <b>${i.body}</b>` : '') + (opt.freeze ? '   <b>frozen</b>' : '');
 }
 
 // --- loop -----------------------------------------------------------------------
@@ -349,7 +353,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   let dt = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now; t += dt;
   stats.fps = stats.fps * 0.93 + (dt > 0 ? 1 / dt : 60) * 0.07;
-  world.update(dt, opt.fly ? opt.speed : 0);
+  world.update(opt.freeze ? 0 : dt, opt.fly ? opt.speed : 0);   // frozen: the clock and the scroll stand still
   ph.visible = opt.ph;
   if (opt.ph) updatePlaceholders(t);
   updateZones();

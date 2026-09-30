@@ -150,10 +150,11 @@ export class UI {
     h.innerHTML = touch ? '<span>危急時按右下 <b>B</b> 投彈：清除敵彈並短暫無敵</span>' : '<span>危急時按 <b>X</b> 投彈：清除敵彈並短暫無敵</span>';
     h.hidden = false;
     document.getElementById('btn-bomb').classList.add('pulse');
-    this.hintTimer = setTimeout(() => { this.hideHint(true); document.getElementById('btn-bomb').classList.remove('pulse'); }, 3600);
+    this.hintTimer = setTimeout(() => this.hideHint(true), 3600);
   }
   hideHint(fade = false) {
     clearTimeout(this.hintTimer);
+    document.getElementById('btn-bomb').classList.remove('pulse'); // the bomb hint's pulse ends with any hint
     const h = document.getElementById('hint');
     if (h.hidden) return;
     if (!fade) { h.hidden = true; return; }

@@ -641,6 +641,7 @@ function startGame({ loop = 1, stage = 0, keepScore = false } = {}) {
 function pause() {
   if (state !== 'playing' && state !== 'resuming') return;
   ui.clearBanner();
+  ui.hideHint(); // a first-run hint must not show through the pause menu
   state = 'paused';
   input.releaseStick();
   input.clearEdges(); // movement presses from play must not move the menu focus

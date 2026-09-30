@@ -22,8 +22,10 @@ const TAU = Math.PI * 2;
 const wrap = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += TAU; return a; };
 
 // Enemy definitions (fields: see the ENEMY table in stage.js). The mid-boss's body is only a
-// holder: its HP lives in its parts and the reactor core kills it, so the body target is tiny
-// (always under the core's hit circle) and its hp only has to outlast bombs.
+// holder: its HP lives in its parts and the reactor core kills it, so the body is no target at
+// all (bodyTarget: false: no shot, beam, lock or bomb can waste damage on it; its hp is only a
+// backstop). keepOff holds the jet 8.5 below it: the claw guns sit ~3.7 in front of the walker,
+// so they stay beyond shoot()'s 4-unit point-blank rule and hugging it can't silence it.
 export const ENEMY = {
   gunship:    { hp: 34, score: 1500, radius: 1.25, air: true, explode: 1.5, debris: 12, medal: 1, prewarm: 5 },
   s2_striker: { hp: 10, score: 700, radius: 1.0, air: true, explode: 1.1, debris: 8, medal: 0.35, prewarm: 6 },
@@ -31,6 +33,7 @@ export const ENEMY = {
   sandskiff:  { hp: 7, score: 350, radius: 0.85, air: false, explode: 0.9, debris: 6, medal: 0.4, prewarm: 8 },
   scorpion: {
     hp: 5000, score: 30000, radius: 0.1, air: false, explode: 3.4, debris: 32, midboss: true, noRevenge: true, prewarm: 1,
+    bodyTarget: false, keepOff: 8.5,
     parts: [
       { key: 'clawL', hp: 115, score: 4000, medals: 2, big: 1.6 }, { key: 'clawR', hp: 115, score: 4000, medals: 2, big: 1.6 },
       { key: 'tail', hp: 150, score: 5000, medals: 2, big: 1.8 },

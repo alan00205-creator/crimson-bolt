@@ -2620,7 +2620,7 @@ const SONGDEF = {
       },
       B: {
         chords: 'E B F# C#m A E F# G#', lead: SOLAR_CHORUS7 + ' g#5:4 b#5:4 d#6:8',
-        bass: 'oct16*7 build', drums: 'bB*7 fS', crash: [0, 4], gtr: 'half*7 hemX',
+        bass: 'pump*7 build', drums: 'bB*7 fS', crash: [0, 4], gtr: 'half*7 hemX',
         stab: 'hB none hA none hB none hA hA', arp: 'bellS3*8',
         p2: { dbl: 'brass-12', drums: 'bC*7 fS', arp: 'arpS*8' },
       },
@@ -2694,9 +2694,9 @@ const SONGDEF = {
   // the chromatic-mediant chords E minor and C minor for the alien shifts), 172 BPM: a drum &
   // bass two-step with ghost snares over a pumping 16th bass and sixteenth chugs, the pulse
   // lead's storm call, crystal tines (glass) for the star clusters and arpeggios sweeping two
-  // octaves (the warp); the chorus switches to four-on-the-floor; the bridge is the nebula —
-  // half time, choir and glass on a cycle of minor chords a major third apart (Em G#m Cm) —
-  // then the chorus over double kick. 4-bar intro, 40-bar loop: A1 A2 B(chorus) C(nebula) D(chorus').
+  // octaves (the warp); the bridge is the nebula — half time, choir and glass on a cycle of
+  // minor chords a major third apart (Em G#m Cm) — then the last chorus breaks into
+  // four-on-the-floor over double kick. 4-bar intro, 40-bar loop: A1 A2 B(chorus) C(nebula) D(chorus').
   stage7: {
     bpm: 172, key: 8, minor: true, delay: 0.75, intro: ['I'], loop: ['A1', 'A2', 'B', 'C', 'D'],
     S: {
@@ -2723,9 +2723,9 @@ const SONGDEF = {
       },
       B: {
         chords: 'B F# G#m E B F# E D#', lead: GAL_CHORUS7 + ' g6:8 d#6:4 a#5:4',
-        bass: 'oct16*7 build', drums: 'bB*7 fS', crash: [0, 4], gtr: 'half*7 push',
+        bass: 'p16*7 build', drums: 'dnbB*7 fS', crash: [0, 4], gtr: 'half*7 push',
         stab: 'hB none hA none hB none hA hA', arp: 'warp*8',
-        p2: { dbl: 'glass+12', drums: 'bC*7 fS', arp: 'glassA*8' },
+        p2: { dbl: 'glass+12', arp: 'glassA*8' },
       },
       C: {
         chords: 'Em Em G#m G#m Cm Cm D# D#', padV: 'choir', pad: 1,
@@ -2828,7 +2828,7 @@ const SONGDEF = {
       B: {
         chords: 'Gb Db Ab Ebm Gb Db F F', padV: 'choir', pad: 0.8,
         lead: COSMOS_CHORUS7 + ' c6:4 a5:4 f5:8',
-        bass: 'oct16*7 build', drums: 'cosH*7 fS', crash: [0, 4], gtr: 'half*7 push',
+        bass: 'fifths*7 build', drums: 'cosH*7 fS', crash: [0, 4], gtr: 'half*7 push',
         stab: 'hB none hA none hB none hA hA', arp: 'bellQ*8',
         p2: { dbl: 'bell+12', arp: 'arpQ*8' },
       },

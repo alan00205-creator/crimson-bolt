@@ -321,6 +321,7 @@ export class Game {
   get startBombs() { return this.ac.bombs + this.up.bombs; } // a new run, a continue and every life
   get bombCap() { return this.ac.bombCap + this.up.bombs; }
   get startLives() { return 2 + this.up.life; }             // a new run and a continue
+  get bonusPct() { return Math.round((this.moneyMul - 1) * 100); } // the CR bonus in force, e.g. 20
 
   // Start a stage. stage: 0-based index into STAGES. keepScore carries score, lives, bombs,
   // weapons, continues and runMoney over (next stage / next loop); otherwise it is a new run.

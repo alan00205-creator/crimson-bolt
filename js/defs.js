@@ -44,32 +44,33 @@ export const DEFAULT_AIRCRAFT = 'bolt';
 // --- hangar shop: paints -----------------------------------------------------------------
 // Per aircraft; index 0 ('std') is the free factory scheme. The models build every scheme
 // (createPlayer(id, paint)); game.setAircraft(id, paint) swaps it in. UI swatch: `swatch` is
-// [body, trim] (CSS, for a two-tone chip); `col` / `hex` is the scheme's accent — for 'std' it is
-// the aircraft's own colour — and also tints the option drones' exhaust.
+// [body, trim] (CSS, for a two-tone chip); `col` / `hex` is the scheme's accent (its glow; the same
+// as the models' paint accent, and for 'std' the aircraft's own colour), which also tints the
+// option drones' exhaust.
 export const PAINTS = {
   bolt: [
-    { id: 'std', zh: '赤電', price: 0, desc: '出廠塗裝。赤紅機身配白色機首。', swatch: ['#c81f2a', '#e3e7ec'], col: '#ff4a55', hex: 0xff4a55 },
-    { id: 'raven', zh: '夜鴉', price: 4000, desc: '消光黑機身，赤紅發光線條。', swatch: ['#17181c', '#ff2a3a'], col: '#ff3a48', hex: 0xff3a48 },
-    { id: 'egret', zh: '白鷺', price: 4000, desc: '純白機身，金色飾線。', swatch: ['#eef0f3', '#d9a634'], col: '#f4f1e6', hex: 0xf4f1e6 },
-    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#e0ac32', '#fff0b8'], col: '#ffc940', hex: 0xffc940 },
+    { id: 'std', zh: '赤電', price: 0, desc: '出廠塗裝。赤紅機身，白色閃電塗紋。', swatch: ['#c81f2a', '#e3e7ec'], col: '#ff4a55', hex: 0xff4a55 },
+    { id: 'raven', zh: '夜鴉', price: 4000, desc: '消光黑機身，赤紅發光線條。', swatch: ['#1d1e23', '#ff2a3c'], col: '#ff2a3c', hex: 0xff2a3c },
+    { id: 'egret', zh: '白鷺', price: 4000, desc: '純白機身，金色飾線。', swatch: ['#e2e2de', '#c9962f'], col: '#f1ead8', hex: 0xf1ead8 },
+    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#d9a53a', '#fff0b8'], col: '#f0c75a', hex: 0xf0c75a },
   ],
   gale: [
-    { id: 'std', zh: '冰藍', price: 0, desc: '出廠塗裝。冰藍配白的高速塗裝。', swatch: ['#2fb6de', '#eef4f8'], col: '#46e0ff', hex: 0x46e0ff },
-    { id: 'dusk', zh: '黃昏', price: 5000, desc: '夕陽橘漸層到暮紫。', swatch: ['#f07a2a', '#7a3aa8'], col: '#ff8a3a', hex: 0xff8a3a },
-    { id: 'ghost', zh: '幽靈', price: 5000, desc: '低可視度的深淺灰。', swatch: ['#8b9199', '#4d535b'], col: '#c2c9d2', hex: 0xc2c9d2 },
-    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#e0ac32', '#fff0b8'], col: '#ffc940', hex: 0xffc940 },
+    { id: 'std', zh: '冰藍', price: 0, desc: '出廠塗裝。珍珠白機身配冰藍飾色。', swatch: ['#eef4f8', '#2fb6de'], col: '#46e0ff', hex: 0x46e0ff },
+    { id: 'dusk', zh: '黃昏', price: 5000, desc: '機首夕陽橘，漸層到機尾暮紫。', swatch: ['#e2601c', '#5a2f78'], col: '#ff8a3d', hex: 0xff8a3d },
+    { id: 'ghost', zh: '幽靈', price: 5000, desc: '低可視度的深淺灰。', swatch: ['#a2a9b0', '#5f666f'], col: '#aab3bc', hex: 0xaab3bc },
+    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#d9a53a', '#fff0b8'], col: '#f0c75a', hex: 0xf0c75a },
   ],
   titan: [
     { id: 'std', zh: '沙金', price: 0, desc: '出廠塗裝。槍灰機身配琥珀飾條。', swatch: ['#565d67', '#e8b24a'], col: '#e8b24a', hex: 0xe8b24a },
-    { id: 'jungle', zh: '叢林', price: 6000, desc: '橄欖綠迷彩。', swatch: ['#5f6b3a', '#a89a62'], col: '#a7b86a', hex: 0xa7b86a },
-    { id: 'steel', zh: '鋼灰', price: 6000, desc: '深鋼灰機身，紅色條紋。', swatch: ['#353b43', '#d0303a'], col: '#ff5a5f', hex: 0xff5a5f },
-    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#e0ac32', '#fff0b8'], col: '#ffc940', hex: 0xffc940 },
+    { id: 'jungle', zh: '叢林', price: 6000, desc: '橄欖綠迷彩，卡其色標誌。', swatch: ['#5f6b3a', '#a89a62'], col: '#7f9a45', hex: 0x7f9a45 },
+    { id: 'steel', zh: '鋼灰', price: 6000, desc: '深鋼灰機身，紅色條紋。', swatch: ['#353b43', '#cf2630'], col: '#e0303a', hex: 0xe0303a },
+    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#d9a53a', '#fff0b8'], col: '#f0c75a', hex: 0xf0c75a },
   ],
   phantom: [
     { id: 'std', zh: '紫晶', price: 0, desc: '出廠塗裝。黑色機身，紫晶光邊。', swatch: ['#1d1728', '#b98cff'], col: '#b98cff', hex: 0xb98cff },
-    { id: 'blood', zh: '血月', price: 8000, desc: '漆黑機身，血紅光邊。', swatch: ['#1a0d10', '#d01a30'], col: '#ff4058', hex: 0xff4058 },
-    { id: 'aurora', zh: '極光', price: 8000, desc: '白色機身，青綠極光流轉。', swatch: ['#e6edf0', '#34dcc4'], col: '#5ff0d6', hex: 0x5ff0d6 },
-    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#e0ac32', '#fff0b8'], col: '#ffc940', hex: 0xffc940 },
+    { id: 'blood', zh: '血月', price: 8000, desc: '紅黑機身，血紅光邊。', swatch: ['#2e1719', '#ff2436'], col: '#ff2436', hex: 0xff2436 },
+    { id: 'aurora', zh: '極光', price: 8000, desc: '珍珠白機身，青綠極光光邊。', swatch: ['#d8e1e5', '#3ff0c8'], col: '#3ff0c8', hex: 0x3ff0c8 },
+    { id: 'gold', zh: '黃金', price: 25000, desc: '全機鏡面黃金，散發暖光。', swatch: ['#d9a53a', '#fff0b8'], col: '#f0c75a', hex: 0xf0c75a },
   ],
 };
 export const DEFAULT_PAINT = 'std';

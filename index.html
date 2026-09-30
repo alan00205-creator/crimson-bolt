@@ -140,6 +140,14 @@ body:not(.touch) #stick { display: none; }
 #btn-bomb.empty { opacity: 0.35; filter: grayscale(0.7); }
 #btn-bomb:active { transform: scale(0.94); }
 body:not(.touch) #btn-bomb { display: none; }
+/* hold-to-focus (aircraft with option drones): above the bomb button, same thumb */
+.pad-r { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+#btn-focus { --ac: var(--violet); pointer-events: auto; width: 54px; height: 54px; border-radius: 50%; cursor: pointer; touch-action: none;
+  border: 2px solid var(--ac); background: rgba(8,10,18,0.5); display: grid; place-items: center; padding: 0;
+  font: 700 14px var(--f-cjk); letter-spacing: 0.04em; color: var(--ink); text-shadow: 0 1px 0 #000;
+  box-shadow: 0 0 12px rgba(0,0,0,0.35); opacity: 0.85; }
+#btn-focus.active { opacity: 1; background: var(--ac); color: #0b0d14; text-shadow: none; box-shadow: 0 0 18px var(--ac); transform: scale(0.94); }
+body:not(.touch) #btn-focus { display: none; }
 #popups { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .chain { margin-top: 3px; white-space: nowrap; font: 600 11px var(--f-display); letter-spacing: 0.14em; color: #ffd84d; min-height: 12px; text-shadow: 0 1px 0 #000; }
 #hint { position: absolute; left: 50%; bottom: calc(30% + var(--safe-b)); transform: translateX(-50%); pointer-events: none;
@@ -246,6 +254,7 @@ body.sides #keys { display: none; } /* the side panel already lists the keys (ma
 .seg button { pointer-events: auto; min-height: 44px; min-width: 48px; padding: 0 12px; background: transparent; border: 0; cursor: pointer; font: 600 11px var(--f-display); letter-spacing: 0.12em; color: var(--ink-dim); }
 .seg button[aria-pressed="true"] { background: var(--ink); color: #0b0d14; }
 .setting input[type=range] { width: 130px; height: 36px; accent-color: var(--crimson); }
+.seg button:focus-visible, .setting input[type=range]:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
 /* the OK row sticks to the bottom of a scrolling panel and covers the text scrolling under it
    (sticky offsets are inset by the panel's padding, hence the negative bottom/margins) */
 .panel-foot { position: sticky; bottom: calc(-1 * var(--pb)); z-index: 1; display: grid; margin: 0 calc(-1 * var(--px)) calc(-1 * var(--pb));
@@ -381,11 +390,13 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
       <div class="row"><kbd>SHIFT</kbd> 慢速移動</div>
       <div class="row"><kbd>X</kbd>/<kbd>SPACE</kbd> 炸彈</div>
       <div class="row"><kbd>ESC</kbd>/<kbd>P</kbd> 暫停</div>
+      <div class="row"><kbd>M</kbd> 靜音</div>
       <div class="row">射擊為自動</div>
     </div>
     <div class="touch-only"><h3>CONTROLS</h3>
       <div class="row">下方搖桿 移動</div>
       <div class="row">右下 <kbd>B</kbd> 炸彈</div>
+      <div class="row">按住 <kbd>集中</kbd> 僚機收攏（PHANTOM）</div>
       <div class="row">右上 <kbd>‖</kbd> 暫停</div>
       <div class="row">射擊為自動</div>
     </div>
@@ -407,12 +418,16 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
           <div class="icons" id="lives" aria-label="剩餘機數"></div>
           <div class="icons" id="bombs" aria-label="炸彈"></div>
         </div>
-        <button id="btn-bomb" aria-label="炸彈">B<small id="bomb-count">3</small></button>
+        <div class="pad-r">
+          <button id="btn-focus" aria-label="按住：僚機收攏、集中火力" hidden>集中</button>
+          <button id="btn-bomb" aria-label="炸彈">B<small id="bomb-count">3</small></button>
+        </div>
       </div>
-      <div id="keys" aria-hidden="true"><span><kbd>←↑↓→</kbd>移動</span><span><kbd>Shift</kbd>慢速</span><span><kbd>X</kbd>炸彈</span><span><kbd>Esc</kbd>暫停</span></div>
+      <div id="keys" aria-hidden="true"><span><kbd>←↑↓→</kbd>移動</span><span><kbd>Shift</kbd>慢速</span><span><kbd>X</kbd>炸彈</span><span><kbd>Esc</kbd>暫停</span><span><kbd>M</kbd>靜音</span></div>
       <div id="stick" aria-label="移動搖桿"><div class="stick-base"><i class="stick-dir"></i><div class="stick-knob"></div></div></div>
     </div>
     <div id="hint" hidden></div>
+    <div id="toast" role="status" hidden></div>
     <div id="popups"></div>
     <div id="banner"></div>
     <div id="vignette"></div>
@@ -447,9 +462,11 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
         <div class="touch-only"><h4>TOUCH 手機</h4><ul>
           <li>用畫面下方中央的搖桿移動：推得越遠飛得越快，輕推可微調位置。</li>
           <li>射擊全自動。右下角 <b>B</b> 鈕投下炸彈：清除敵彈、重創全畫面敵人，並短暫無敵。</li>
+          <li>駕駛 PHANTOM 時，按住 B 鈕上方的 <b>集中</b> 鈕：僚機收攏、集中火力。</li>
         </ul></div>
         <div class="kbd-only"><h4>KEYBOARD 鍵盤</h4><ul>
-          <li>方向鍵／WASD 移動，按住 Shift 慢速移動（精準閃避）；X 或空白鍵投彈；Esc／P 暫停。也支援手把。</li>
+          <li>方向鍵／WASD 移動，按住 Shift 慢速移動（精準閃避；PHANTOM 的僚機同時收攏、集中火力）；X 或空白鍵投彈；Esc／P 暫停；M 靜音。</li>
+          <li>也支援手把：搖桿／十字鍵移動，按住 LB 或 LT／RT 慢速，B、X 或 RB 投彈，START 暫停。</li>
         </ul></div>
         <div><h4>ITEMS 道具</h4><ul id="howto-items">
           <li><span class="chip b">B</span>炸彈 +1。<span class="chip medal">★</span>勳章：連續拾取分數遞增，漏接一枚就歸零。</li>
@@ -475,6 +492,8 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
         <h2>SETTINGS<small>設定</small></h2>
         <div class="setting"><label for="set-music">音樂音量</label><input type="range" id="set-music" min="0" max="100" value="70"></div>
         <div class="setting"><label for="set-sfx">音效音量</label><input type="range" id="set-sfx" min="0" max="100" value="80"></div>
+        <div class="setting"><label>靜音<span class="kbd-only">（M 鍵）</span></label><div class="seg" id="set-mute" role="group" aria-label="靜音">
+          <button data-v="on">ON</button><button data-v="off">OFF</button></div></div>
         <div class="setting"><label>畫質</label><div class="seg" id="set-quality" role="group" aria-label="畫質">
           <button data-v="auto">AUTO</button><button data-v="high">HIGH</button><button data-v="low">LOW</button></div></div>
         <div class="setting"><label>畫面震動</label><div class="seg" id="set-shake" role="group" aria-label="畫面震動">

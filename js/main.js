@@ -48,7 +48,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('crimsonbolt.' + k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } },
   set(k, v) { try { localStorage.setItem('crimsonbolt.' + k, JSON.stringify(v)); return true; } catch (_) { return false; } },
 };
-const settings = Object.assign({ music: 0.7, sfx: 0.8, quality: 'auto', shake: !reducedMotion, haptics: true, touchSens: 1 }, store.get('settings', {}));
+const settings = Object.assign({ music: 0.7, sfx: 0.8, muted: false, quality: 'auto', shake: !reducedMotion, haptics: true, touchSens: 1 }, store.get('settings', {}));
 if (![0.85, 1, 1.2].includes(settings.touchSens)) settings.touchSens = 1; // old drag-sensitivity values
 let hiScore = Number(store.get('hi', 0)) || 0;
 
@@ -152,6 +152,7 @@ async function boot() {
   view = new gameMod.View(camera, GROUND_Y);
   input = new Input(viewEl);
   input.bindStick($('stick'), document.querySelector('#stick .stick-base'), document.querySelector('#stick .stick-knob'));
+  input.bindFocus($('btn-focus'));
   game = new gameMod.Game({ scene, world, fx, audio, ui, models, view, shake, settings, GROUND_Y, LANES_X });
   game.onEvent = onGameEvent;
 
@@ -305,7 +306,7 @@ function frame(now) {
   if (input.padUsed) { input.padUsed = false; setTouchUI(false); }
   fx.begin();
 
-  if (input.take('mute')) { audio.setMuted(!audio.muted); }
+  if (input.take('mute')) toggleMute();
 
   if (state === 'playing') {
     if (input.take('pause')) { pause(); }
@@ -360,16 +361,44 @@ function frame(now) {
 let needsRender = true;
 let resumeT = 0, resumeShown = 0;
 
-// Gamepad menu navigation: D-pad/stick moves focus, A activates, B goes back.
+// Keyboard / gamepad menu navigation: up/down (arrows, W/S, D-pad/stick) move the focus, left/right
+// change the focused settings switch or slider, A activates, B goes back. A panel whose only focus
+// stop is its OK button (HOW TO PLAY) scrolls instead, so the text under OK can be read.
 function menuNav() {
   const up = input.take('navUp') || input.take('up'), down = input.take('navDown') || input.take('down');
+  const left = input.take('navLeft') || input.take('left'), right = input.take('navRight') || input.take('right');
   const ok = input.take('padConfirm'), back = input.take('padBack');
-  if (!up && !down && !ok && !back) return;
-  const btns = [...document.querySelectorAll('.screen:not([hidden]) .btn')].filter((b) => b.offsetParent !== null);
-  if (!btns.length) return;
-  const i = btns.indexOf(document.activeElement);
-  if (up || down) { const n = i < 0 ? 0 : (i + (down ? 1 : -1) + btns.length) % btns.length; btns[n].focus({ preventScroll: false }); audio.play('select', { vol: 0.4 }); }
-  if (ok) (i >= 0 ? btns[i] : btns[0]).click();
+  if (!up && !down && !left && !right && !ok && !back) return;
+  // focus stops: buttons, each switch group once (at its selected option) and sliders
+  const stops = [];
+  for (const el of document.querySelectorAll('.screen:not([hidden]) :is(.btn, .seg, input[type=range])')) {
+    if (el.offsetParent === null) continue;
+    stops.push(el.classList.contains('seg') ? el.querySelector('[aria-pressed="true"]') || el.querySelector('button') : el);
+  }
+  if (!stops.length) return;
+  const ae = document.activeElement, seg = ae && ae.closest ? ae.closest('.seg') : null;
+  const i = stops.findIndex((s) => s === ae || (seg && s.parentElement === seg));
+  if (up || down) {
+    const panel = stops.length === 1 && document.querySelector('.screen:not([hidden]) .panel');
+    const room = panel ? panel.scrollHeight - panel.clientHeight : 0;
+    if (room > 1 && (down ? panel.scrollTop < room - 1 : panel.scrollTop > 0)) {
+      panel.scrollBy({ top: (down ? 1 : -1) * Math.round(panel.clientHeight * 0.4), behavior: reducedMotion ? 'auto' : 'smooth' });
+    } else {
+      const n = i < 0 ? 0 : (i + (down ? 1 : -1) + stops.length) % stops.length;
+      if (n !== i) { stops[n].focus({ preventScroll: false }); audio.play('select', { vol: 0.4 }); }
+    }
+  }
+  if ((left || right) && i >= 0) {
+    const d = right ? 1 : -1, s = stops[i];
+    if (seg) {
+      const opts = [...seg.querySelectorAll('button')], o = opts[opts.indexOf(ae) + d];
+      if (o) { o.click(); o.focus(); }
+    } else if (s.type === 'range') {
+      const v = Math.max(+s.min, Math.min(+s.max, +s.value + d * 10));
+      if (v !== +s.value) { s.value = v; s.dispatchEvent(new Event('input', { bubbles: true })); s.dispatchEvent(new Event('change', { bubbles: true })); }
+    }
+  }
+  if (ok) (i >= 0 ? stops[i] : stops[0]).click();
   if (back) { const b = document.querySelector('.screen:not([hidden]) [data-act="back"], .screen:not([hidden]) [data-act="resume"]'); if (b) b.click(); }
 }
 
@@ -469,6 +498,7 @@ function pause() {
   ui.clearBanner();
   state = 'paused';
   input.releaseStick();
+  input.clearEdges(); // movement presses from play must not move the menu focus
   document.querySelectorAll('#pause [data-armed="1"]').forEach((b) => { b.dataset.armed = ''; restoreLabel(b); });
   ui.only('pause');
   audio.play('pause');
@@ -819,6 +849,7 @@ function bindUI() {
     });
   };
   seg('set-quality', 'quality');
+  seg('set-mute', 'muted', (v) => v === 'on');
   seg('set-shake', 'shake', (v) => v === 'on');
   seg('set-haptics', 'haptics', (v) => v === 'on');
   seg('set-touch', 'touchSens', (v) => Number(v));
@@ -842,15 +873,23 @@ function bindUI() {
 }
 // Embedded pages (e.g. an iframe preview) don't get key presses until clicked once; say so on the title.
 function updateFocusNote() { $('focus-note').hidden = document.hasFocus(); }
+// M: mute / unmute everything; saved like any setting and shown in SETTINGS.
+function toggleMute() {
+  settings.muted = !settings.muted;
+  applySettings();
+  ui.toast(settings.muted ? '靜音 ON ・ 按 M 恢復聲音' : '靜音 OFF');
+}
 let lastQualitySetting = settings.quality;
 function applySettings() {
   const setSeg = (id, v) => { for (const b of $(id).querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === String(v))); };
   setSeg('set-quality', settings.quality);
+  setSeg('set-mute', settings.muted ? 'on' : 'off');
   setSeg('set-shake', settings.shake ? 'on' : 'off');
   setSeg('set-haptics', settings.haptics ? 'on' : 'off');
   setSeg('set-touch', settings.touchSens);
   $('set-music').value = Math.round(settings.music * 100);
   $('set-sfx').value = Math.round(settings.sfx * 100);
+  audio.setMuted(!!settings.muted);
   audio.setMusicVolume(settings.music);
   audio.setSfxVolume(settings.sfx);
   shake.enabled = settings.shake;

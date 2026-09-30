@@ -17,6 +17,7 @@ export class UI {
       bossFill: $('boss-fill'), bossName: $('boss-name'), banner: $('banner'), popups: $('popups'),
       flash: $('flash'), vignette: $('vignette'), titleHi: $('title-hi'), sideHi: $('side-hi'), bossSub: $('boss-sub'),
       hudCr: $('hud-cr'), titleCr: $('title-cr'), sideCr: $('side-cr'), hangarCr: $('hangar-cr'),
+      focusBtn: $('btn-focus'), toast: $('toast'),
     };
     this.screens = ['loading', 'title', 'howto', 'settings', 'hangar', 'pause', 'continue', 'gameover', 'results'];
     this.ships = {}; // hangar rows by aircraft id (built once by buildHangar)
@@ -53,10 +54,13 @@ export class UI {
       this.el.titleCr.textContent = s; this.el.hangarCr.textContent = s; if (this.el.sideCr) this.el.sideCr.textContent = s;
     });
   }
-  // The current aircraft: lives icons in its colour, its name on the title and in the side panel.
+  // The current aircraft: lives icons in its colour, its name on the title and in the side panel,
+  // and the touch 集中 button (only for aircraft with option drones).
   setShip(ac) {
     this.set('ship', ac.id, () => {
       this.el.lives.style.setProperty('--ship', ac.color);
+      this.el.focusBtn.hidden = !(ac.options > 0);
+      this.el.focusBtn.style.setProperty('--ac', ac.color);
       $('hangar-label').textContent = '機庫・' + ac.zh;
       const side = $('side-ship'); if (side) side.textContent = `${ac.name} ${ac.zh}`;
     });
@@ -159,6 +163,14 @@ export class UI {
       : '';
   }
   clearBanner() { clearTimeout(this.bannerTimer); this.el.banner.innerHTML = ''; }
+  // A short status line under the HUD (e.g. mute on/off); works on every screen.
+  toast(text, ms = 1400) {
+    const el = this.el.toast;
+    clearTimeout(this.toastTimer);
+    el.textContent = text;
+    el.hidden = false;
+    this.toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+  }
 
   // --- floating score popups (projected from world by caller) ---------------------------------
   popup(text, sx, sy, cls = '') {

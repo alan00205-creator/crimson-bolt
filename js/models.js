@@ -3,14 +3,14 @@
 // -----------------------------------------------------------------------------
 // Everything here is built from code: no model files, no image files. The
 // toolkit (GB builder, materials, caches, palettes, helpers) and the house style
-// live in modelkit.js; the other aircraft and the stage-2/3 enemies and bosses
+// live in modelkit.js; the other aircraft and the stage-2…5 enemies and bosses
 // live in the extension files and are merged into the registry below:
 //
 //   createPlayer(id = 'bolt', paint = 'std')     kind 'player:<id>[:<paint>]'  bolt here, others: models_ships.js PLAYERS
 //   createOption(id = 'phantom', paint = 'std')  kind 'option:<id>[:<paint>]'  models_ships.js OPTIONS, else a placeholder pod
 //                                 (paints: PAINT_IDS[id]; 'std' = the factory scheme and keeps the bare kind)
-//   createEnemy(type)             kind <type>         stage-1 types here, others: models_s2/s3 ENEMIES
-//   createBoss(id = 'arclight')   kind 'boss:<id>'    ARCLIGHT here, others: models_s2/s3 BOSSES
+//   createEnemy(type)             kind <type>         stage-1 types here, others: models_s2…s5 ENEMIES
+//   createBoss(id = 'arclight')   kind 'boss:<id>'    ARCLIGHT here, others: models_s2…s5 BOSSES
 //   createItem(kind)              P (setColor: any MAIN_WEAPONS key), S (setKind: any SUB_WEAPONS
 //                                 key), B, medal, 1UP
 //   createShadow(model)           one baked silhouette per kind (pristineOf knows every prefix)
@@ -50,14 +50,18 @@ import { AIRCRAFT_BY_ID, MAIN_WEAPONS, SUB_WEAPONS } from './defs.js';
 import * as SHIPS from './models_ships.js';
 import * as S2 from './models_s2.js';
 import * as S3 from './models_s3.js';
+import * as S4 from './models_s4.js';
+import * as S5 from './models_s5.js';
 export { modelStats } from './modelkit.js';
 
 // extension tables (merged; stage-1 names always win a collision)
 const EXT_PLAYERS = { ...(SHIPS.PLAYERS || {}) };
 const EXT_OPTIONS = { ...(SHIPS.OPTIONS || {}) };
 const EXT_PAINTS = { ...(SHIPS.PLAYER_PAINTS || {}) };   // { <aircraft id>: { <paint>: { accent } } }
-const EXT_ENEMIES = { ...(S2.ENEMIES || {}), ...(S3.ENEMIES || {}) };
-const EXT_BOSSES = { ...(S2.BOSSES || {}), ...(S3.BOSSES || {}) };
+// the stage extension files in stage order; a later file wins a name clash (reported below)
+const EXT_STAGES = [['models_s2', S2], ['models_s3', S3], ['models_s4', S4], ['models_s5', S5]];
+const EXT_ENEMIES = Object.assign({}, ...EXT_STAGES.map(([, m]) => m.ENEMIES || {}));
+const EXT_BOSSES = Object.assign({}, ...EXT_STAGES.map(([, m]) => m.BOSSES || {}));
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const warned = new Set();
 function warnOnce(what, id, fallback) {
@@ -1379,7 +1383,7 @@ function createArclight() {
   return g;
 }
 
-/** boss by id ('arclight' here, others from models_s2/s3 BOSSES); kind 'boss:<id>' */
+/** boss by id ('arclight' here, others from models_s2…s5 BOSSES); kind 'boss:<id>' */
 export function createBoss(id = 'arclight') {
   let g;
   if (id !== 'arclight' && own(EXT_BOSSES, id)) g = EXT_BOSSES[id]();
@@ -1743,14 +1747,19 @@ export function disposeAll() {
 // =============================================================================
 const BASE_ENEMY_TYPES = ['dart', 'hornet', 'tank', 'turret', 'gunboat', 'carrier', 'bomber', 'crawler'];
 const BASE_GROUND_TYPES = ['tank', 'turret', 'gunboat', 'crawler'];
-// name collisions: stage-1 names win, and models_s3 would silently shadow models_s2 — say so loudly
-for (const [what, base, a, b] of [['enemy', BASE_ENEMY_TYPES, S2.ENEMIES, S3.ENEMIES], ['boss', ['arclight'], S2.BOSSES, S3.BOSSES],
-  ['aircraft', ['bolt'], SHIPS.PLAYERS, null]]) {
-  for (const k of Object.keys(a || {})) {
-    if (base.includes(k)) console.error(`models: extension ${what} "${k}" collides with a stage-1 model and is ignored`);
-    else if (b && own(b, k)) console.error(`models: ${what} "${k}" is defined in both models_s2.js and models_s3.js (models_s3 wins)`);
-  }
-  for (const k of Object.keys(b || {})) if (base.includes(k)) console.error(`models: extension ${what} "${k}" collides with a stage-1 model and is ignored`);
+// name collisions: stage-1 names win, and a later stage file would silently shadow an earlier one — say so loudly
+for (const [what, base, tables] of [
+  ['enemy', BASE_ENEMY_TYPES, EXT_STAGES.map(([f, m]) => [f, m.ENEMIES])],
+  ['boss', ['arclight'], EXT_STAGES.map(([f, m]) => [f, m.BOSSES])],
+  ['aircraft', ['bolt'], [['models_ships', SHIPS.PLAYERS]]]]) {
+  tables.forEach(([file, t], i) => {
+    for (const k of Object.keys(t || {})) {
+      if (base.includes(k)) { console.error(`models: extension ${what} "${k}" collides with a stage-1 model and is ignored`); continue; }
+      for (const [prev, pt] of tables.slice(0, i)) {
+        if (pt && own(pt, k)) console.error(`models: ${what} "${k}" is defined in both ${prev}.js and ${file}.js (${file} wins)`);
+      }
+    }
+  });
 }
 const EXT_ENEMY_TYPES = Object.keys(EXT_ENEMIES).filter((t) => !BASE_ENEMY_TYPES.includes(t));
 

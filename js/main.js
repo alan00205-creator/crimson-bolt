@@ -128,8 +128,9 @@ function applyLoadout() {
 }
 
 // Local leaderboard (this device only): store 'ranking' → up to RANK_MAX runs, best first:
-// { score, name, ac, paint, stage (1-3 reached), loop, clear (stage 3 cleared in the run), cont
-// (continues used), date ('yyyy-mm-dd'), t (ms when recorded; the newest row is highlighted) }.
+// { score, name, ac, paint, stage (1..STAGE_COUNT reached), loop, clear (the final stage cleared in
+// the run — stage 3 for rows saved before stages 4 and 5 existed), cont (continues used), date
+// ('yyyy-mm-dd'), t (ms when recorded; the newest row is highlighted) }.
 // Sanitised on every read like the wallet (malformed rows dropped, names trimmed to NAME_MAX);
 // works in memory when storage fails. Names are player text: the UI shows them with textContent.
 const RANK_MAX = 10, NAME_MAX = 10, NAME_DEFAULT = 'PLAYER';
@@ -188,8 +189,8 @@ function syncHi() {
 }
 const today = () => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
 
-// The run in progress, for the board: its best score (a continue zeroes the score), whether stage 3
-// was cleared, and whether it has been offered. A run ends — and is offered once — at GAME OVER,
+// The run in progress, for the board: its best score (a continue zeroes the score), whether the
+// final stage was cleared, and whether it has been offered. A run ends — and is offered once — at GAME OVER,
 // at QUIT / RESTART from the pause menu and at TITLE from the results; NEXT STAGE / NEXT LOOP and
 // hiding the page keep it going.
 let run = null; // { best, clear, offered, mark (the score at its last results / continue, for NEW RECORD) }
@@ -295,7 +296,7 @@ async function boot() {
 }
 
 // Compile every pooled material once so the first enemy of each type doesn't hitch, for every
-// stage world (stage 2/3 terrain too) at both qualities; stage 1 is restored afterwards. Programs
+// stage world (stages 2–5 too) at both qualities; stage 1 is restored afterwards. Programs
 // differ by render target (the bloom path renders the scene into the composer's linear target,
 // low quality straight to the canvas), and compile() also walks hidden objects (e.g. a stage's
 // cloud deck), so compile for both targets rather than relying on the render() at the end.
@@ -625,7 +626,8 @@ function startGame({ loop = 1, stage = 0, keepScore = false } = {}) {
   ui.flash(0.45);
   showShip();
   ui.setMission(gameMod.STAGES, game.stageIdx, loop);
-  const k = loop <= 1 ? `STAGE ${st.n}` : game.stageIdx === 0 ? `LOOP ${loop} · 難度提升` : `STAGE ${st.n} · LOOP ${loop}`;
+  const final = game.stageIdx === gameMod.STAGES.length - 1;
+  const k = loop <= 1 ? `${final ? 'FINAL ' : ''}STAGE ${st.n}` : game.stageIdx === 0 ? `LOOP ${loop} · 難度提升` : `STAGE ${st.n} · LOOP ${loop}`;
   ui.banner(`<div class="k">${k}</div><div class="h">${st.name}</div><div class="s">${st.zh}</div>`, '', 2800);
   audio.play(st.startSfx);
   audio.music(st.music);
@@ -774,16 +776,15 @@ async function showResults() {
     ['CHAIN × ' + g.medalMaxChain, '勳章連鎖', '+' + fmt(chainBonus)],
   ];
   if (ext) lines.push(['EXTEND', '戰機增加', '+' + ext, 'extend']);
-  const zh = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
   $('res-title').textContent = last ? 'ALL CLEAR' : `STAGE ${meta.n} CLEAR`;
   $('res-title').classList.toggle('all', last);
   $('res-sub').innerHTML = last
-    ? `LOOP ${g.loop} COMPLETE <b>全 ${gameMod.STAGES.length} 關制霸</b>`
+    ? `LOOP ${g.loop} COMPLETE <b>全${zhNum(gameMod.STAGES.length)}關制霸</b>`
     : `${meta.name} <b>${meta.zh}</b>`;
   $('res-next').textContent = last ? '' : `NEXT ▸ STAGE ${meta.n + 1} ${gameMod.STAGES[g.stageIdx + 1].zh}`;
   if (last) {
     $('next-title').textContent = 'NEXT LOOP';
-    $('next-label').textContent = `第${zh[g.loop + 1] || g.loop + 1}輪・難度提升`;
+    $('next-label').textContent = `第${zhNum(g.loop + 1)}輪・難度提升`;
   } else {
     $('next-title').textContent = 'NEXT STAGE';
     $('next-label').textContent = '下一關';
@@ -799,6 +800,9 @@ async function showResults() {
   }, { earned, wallet: readWallet().money, bonus: g.bonusPct });
   if (state === 'results') focusFirst('results');
 }
+// 1..10 as a Chinese numeral (一…十); larger numbers stay digits.
+const ZH_NUM = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+function zhNum(n) { return ZH_NUM[n] || String(n); }
 // Results → the next stage, or after the last stage the next loop from stage 1 (harder).
 function nextStage() {
   const last = game.stageIdx >= gameMod.STAGES.length - 1;
@@ -889,7 +893,7 @@ function onGameEvent(ev) {
       break;
     case 'clearBanner':
       ui.boss(false);
-      ui.banner(`<div class="k">STAGE ${game.stage.n}</div><div class="h">MISSION COMPLETE</div><div class="s">任務完成</div>`, 'clear', 3000);
+      ui.banner(`<div class="k">${game.stageIdx === gameMod.STAGES.length - 1 ? 'FINAL ' : ''}STAGE ${game.stage.n}</div><div class="h">MISSION COMPLETE</div><div class="s">任務完成</div>`, 'clear', 3000);
       audio.music('clear');
       break;
     case 'clear':
@@ -1293,7 +1297,7 @@ function exposeDebug() {
     get state() { return state; },
     get fps() { return fpsAvg; },
     get quality() { return qualityLevel; },
-    // start({ stage, loop }) — stage is the stage NUMBER (1..3, like STAGE_META.n); start(2) = loop 2
+    // start({ stage, loop }) — stage is the stage NUMBER (1..5, like STAGE_META.n); start(2) = loop 2
     start(o = {}) {
       if (typeof o === 'number') o = { loop: o };
       startGame({ loop: Math.max(1, o.loop | 0 || 1), stage: Math.max(1, o.stage | 0 || 1) - 1, keepScore: !!o.keepScore });

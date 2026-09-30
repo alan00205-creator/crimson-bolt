@@ -19,6 +19,7 @@ const RANK_NOTE = '「2-3」＝第 2 輪第 3 關。紀錄只存在這台裝置�
 // a board date: '09/30' this year, '2025/09/30' before
 const boardDate = (d) => { if (!d) return ''; const [y, m, day] = d.split('-'); return y === String(new Date().getFullYear()) ? `${m}/${day}` : `${y}/${m}/${day}`; };
 const WARN_DEFAULT = { e: 'HUGE FORTRESS APPROACHING', s: '巨大要塞 接近中' };
+const ZH_NUM = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
 
 export class UI {
   constructor() {
@@ -268,9 +269,13 @@ export class UI {
         + `<li>S 副武器：同樣循環變換，吃同字母升級。</li>${grid(SUB_ORDER, SUB_WEAPONS)}`);
     }
   }
+  // The how-to route line and each stage's clear reward (MONEY.stageClear, before the bonus upgrade).
   setRoute(stages) {
     const el = $('howto-route');
-    if (el) el.textContent = `共 ${stages.length} 關：${stages.map((s) => s.zh).join(' → ')}。全破後進入下一輪（難度提升）。`;
+    const n = stages.length, zh = ZH_NUM[n] || String(n);
+    if (el) el.textContent = `共${zh}關：${stages.map((s) => s.zh).join(' → ')}。第${zh}關是最終決戰，全破後進入下一輪（難度提升）。`;
+    const cr = $('howto-clearcr');
+    if (cr) cr.textContent = `（第 1～${n} 關依序 ${stages.map((s) => fmt(MONEY.stageClear[s.n] || 0)).join('／')}）`;
   }
 
   // --- hangar ---------------------------------------------------------------------

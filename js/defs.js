@@ -7,7 +7,7 @@
 export const MONEY = {
   label: 'CR',
   perScore: 1 / 40,                  // every point scored is worth 1/40 CR
-  stageClear: [0, 1500, 2500, 4000], // extra CR for clearing stage n (index = stage number)
+  stageClear: [0, 1500, 2500, 4000, 5500, 7500], // extra CR for clearing stage n (index = stage number)
 };
 
 // --- aircraft ------------------------------------------------------------------------------
@@ -116,7 +116,8 @@ export const MAX_SUB_LEVEL = 4; // sub-weapon levels 1..4
 
 // --- stages ------------------------------------------------------------------------------
 // Presentation data only; the playable definitions (timeline, bosses, enemies) live in
-// stage.js / stage2.js / stage3.js and are assembled by stages.js.
+// stage.js / stage2.js … stage5.js and are assembled by stages.js. Played in this order; the last
+// entry is the final stage (ALL CLEAR, then the next loop from stage 1, harder).
 export const STAGE_META = [
   {
     n: 1, name: 'COASTAL FRONT', zh: '沿岸前線', world: 'coastal',
@@ -135,6 +136,18 @@ export const STAGE_META = [
     boss: 'SERAPH', bossZh: '空中母艦', music: 'stage3', bossMusic: 'boss3', startSfx: 'stageStart3',
     warn: { e: 'AERIAL MOTHERSHIP APPROACHING', s: '空中母艦 接近中' },
     mission: '擊破空中母艦 SERAPH',
+  },
+  {
+    n: 4, name: 'FROZEN FRONTIER', zh: '冰原戰線', world: 'arctic',
+    boss: 'NORTHSTAR', bossZh: '極地要塞', music: 'stage4', bossMusic: 'boss4', startSfx: 'stageStart4',
+    warn: { e: 'POLAR FORTRESS APPROACHING', s: '極地要塞 接近中' },
+    mission: '擊破極地要塞 NORTHSTAR',
+  },
+  {
+    n: 5, name: 'ORBITAL FINALE', zh: '軌道決戰', world: 'orbit',
+    boss: 'OMEGA', bossZh: '終焉之核', music: 'stage5', bossMusic: 'boss5', startSfx: 'stageStart5',
+    warn: { e: 'FINAL CORE APPROACHING', s: '終焉之核 接近中' },
+    mission: '擊破終焉之核 OMEGA',
   },
 ];
 export const STAGE_COUNT = STAGE_META.length;

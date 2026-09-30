@@ -1578,7 +1578,10 @@ export class World {
 
     // shared uniforms
     this.uDN = { value: new THREE.Vector2() };
-    // land material: vertex colours × tiled atlas × world-space detail noise
+    // land material: vertex colours × tiled atlas × world-space detail noise. Most ground is the
+    // white tile 0 (cell (0, 3) in shader space) with a constant uv: with zero gradients
+    // textureGrad would read one white texel at LOD 0, so those pixels skip the fetch (the
+    // derivatives stay outside the branch; tile 0 with a varying uv still samples as before)
     const landMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, map: this.tex.atlas, color: new THREE.Color(COL_SCALE, COL_SCALE, COL_SCALE) });
     landMat.onBeforeCompile = (sh) => {
       sh.uniforms.uNoise = { value: this.tex.noise };
@@ -1592,9 +1595,11 @@ export class World {
 #ifdef USE_MAP
   {
     vec2 cbF = fract(vMapUv);
-    vec2 cbA = (vTile * 128.0 + 4.0 + cbF * 120.0) / 512.0;
     vec2 cbDx = dFdx(vMapUv) * (120.0 / 512.0), cbDy = dFdy(vMapUv) * (120.0 / 512.0);
-    diffuseColor *= textureGrad(map, cbA, cbDx, cbDy);
+    if (vTile.x > 0.5 || vTile.y < 2.5 || cbDx != vec2(0.0) || cbDy != vec2(0.0)) {
+      vec2 cbA = (vTile * 128.0 + 4.0 + cbF * 120.0) / 512.0;
+      diffuseColor *= textureGrad(map, cbA, cbDx, cbDy);
+    }
   }
 #endif
   {
@@ -1603,7 +1608,7 @@ export class World {
     diffuseColor.rgb *= (0.88 + 0.24 * cbN) * (0.93 + 0.14 * cbM);
   }`);
     };
-    landMat.customProgramCacheKey = () => 'crimson-bolt-land-v2';
+    landMat.customProgramCacheKey = () => 'crimson-bolt-land-v3';
     this.landMat = landMat;
     this.shadowMat = new THREE.MeshBasicMaterial({ color: 0x1a2432, transparent: true, opacity: 0.34, depthWrite: false });
     this.propMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });

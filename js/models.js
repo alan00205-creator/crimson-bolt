@@ -6,17 +6,21 @@
 // live in modelkit.js; the other aircraft and the stage-2/3 enemies and bosses
 // live in the extension files and are merged into the registry below:
 //
-//   createPlayer(id = 'bolt')     kind 'player:<id>'  bolt here, others: models_ships.js PLAYERS
-//   createOption(id = 'phantom')  kind 'option:<id>'  models_ships.js OPTIONS, else a placeholder pod
+//   createPlayer(id = 'bolt', paint = 'std')     kind 'player:<id>[:<paint>]'  bolt here, others: models_ships.js PLAYERS
+//   createOption(id = 'phantom', paint = 'std')  kind 'option:<id>[:<paint>]'  models_ships.js OPTIONS, else a placeholder pod
+//                                 (paints: PAINT_IDS[id]; 'std' = the factory scheme and keeps the bare kind)
 //   createEnemy(type)             kind <type>         stage-1 types here, others: models_s2/s3 ENEMIES
 //   createBoss(id = 'arclight')   kind 'boss:<id>'    ARCLIGHT here, others: models_s2/s3 BOSSES
 //   createItem(kind)              P (setColor: any MAIN_WEAPONS key), S (setKind: any SUB_WEAPONS
 //                                 key), B, medal, 1UP
 //   createShadow(model)           one baked silhouette per kind (pristineOf knows every prefix)
-//   PLAYER_TYPES, OPTION_TYPES, BOSS_TYPES, ENEMY_TYPES, GROUND_TYPES (merged), ITEM_KINDS, modelStats
+//   PLAYER_TYPES, OPTION_TYPES, PAINT_IDS, paintAccent(id, paint), BOSS_TYPES, ENEMY_TYPES, GROUND_TYPES (merged),
+//   ITEM_KINDS, modelStats
 // An unknown aircraft / option / boss id falls back to bolt / the placeholder pod /
 // ARCLIGHT with a console warning (so a missing extension never stops the game);
-// an unknown enemy type throws, as before.
+// an unknown paint falls back to 'std' with one warning; an unknown enemy type throws, as before.
+// Paints are recolours of the same geometry (modelkit repaint): same budget, and the painted kinds
+// share the std silhouette for their ground shadow.
 //
 // Extras beyond the contract (all optional for core to use):
 //   * userData.muzzles of tank / turret / gunboat / crawler are refreshed by
@@ -39,7 +43,9 @@ import {
   TAU, DEG, lin, rgb, S, lit, GL, EM, scl, hash3, M, GB, wreckOf, bodyMat, additiveMat, FLASH_K, flashFn,
   GEO, TEX, GBS, G, GG, gbOf, PL, EN, BO, FLAME_JET, FLAME_VIOLET, buildFlame, assemblePlayer, enemyShell,
   syncMuzzles, hazardStrip, trackLoft, TRACK_COL, hazardDrape, blockOn, makePart, destructiblePart, glyphTex, haloTex,
+  paintedBody, GOLD, FLAME_GOLD, flameTint,
 } from './modelkit.js';
+import * as DEFS from './defs.js';   // DEFS.PAINTS is optional: only cross-checked against PAINT_IDS
 import { AIRCRAFT_BY_ID, MAIN_WEAPONS, SUB_WEAPONS } from './defs.js';
 import * as SHIPS from './models_ships.js';
 import * as S2 from './models_s2.js';
@@ -49,6 +55,7 @@ export { modelStats } from './modelkit.js';
 // extension tables (merged; stage-1 names always win a collision)
 const EXT_PLAYERS = { ...(SHIPS.PLAYERS || {}) };
 const EXT_OPTIONS = { ...(SHIPS.OPTIONS || {}) };
+const EXT_PAINTS = { ...(SHIPS.PLAYER_PAINTS || {}) };   // { <aircraft id>: { <paint>: { accent } } }
 const EXT_ENEMIES = { ...(S2.ENEMIES || {}), ...(S3.ENEMIES || {}) };
 const EXT_BOSSES = { ...(S2.BOSSES || {}), ...(S3.BOSSES || {}) };
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -185,23 +192,74 @@ function buildPlayer() {
   return b;
 }
 const BOLT_NOZZLES = [[-0.095, 0], [0.095, 0]];
-/** CRIMSON BOLT — the reference implementation of the player contract (see assemblePlayer) */
-function createBolt() {
-  return assemblePlayer({
-    name: 'player', body: GG('player', buildPlayer), rough: 0.5, metal: 0.12,
-    flame: G('player.flame', () => buildFlame(BOLT_NOZZLES, FLAME_JET)), flameZ: 0.9,
-    radius: 0.3, grazeRadius: 1.0, debris: '#c41c26',
+/** CRIMSON BOLT — the reference implementation of the player contract (see assemblePlayer).
+ *  paint: a BOLT_PAINTS key; anything else is the factory scheme (the 'player' geometry, untouched). */
+function createBolt(paint = 'std') {
+  const pt = own(BOLT_PAINTS, paint) ? BOLT_PAINTS[paint] : null;
+  const g = assemblePlayer({
+    name: 'player', body: pt ? paintedBody('player', buildPlayer, BOLT_PAL, paint, pt) : GG('player', buildPlayer),
+    rough: pt ? pt.rough : 0.5, metal: pt ? pt.metal : 0.12,
+    flame: pt && pt.flame ? G('player.flame.' + paint, () => buildFlame(BOLT_NOZZLES, pt.flame)) : G('player.flame', () => buildFlame(BOLT_NOZZLES, FLAME_JET)),
+    flameZ: 0.9,
+    radius: 0.3, grazeRadius: 1.0, debris: pt ? pt.debris : '#c41c26',
     muzzles: [[0, 0, -1.0], [-0.27, 0, -0.2], [0.27, 0, -0.2]], muzzleZ: -1.0,
     trail: [[-0.095, 0.95], [0.095, 0.95]],   // nozzle exits (the flame mesh starts at z 0.9)
     bankDeg: 35,
   });
+  if (pt && pt.trail) g.userData.trailColor = pt.trail;
+  return g;
 }
+
+// ---- CRIMSON BOLT paints: recolours of the 'player' GB (modelkit repaint), keys 'player.paint.<id>'
+// Roles are the PL palette plus the nozzle core. Faces are told apart by their centroid where one
+// role covers several parts: canards (z < −0.38, off the centre line) and the wingtip missiles (|x| > 0.76).
+const BOLT_PAL = { ...PL, hot: GL(EM.engineHot, 0.7) };
+const onCanard = (c) => c[2] < -0.38 && Math.abs(c[0]) > 0.09;
+const onMissile = (c) => Math.abs(c[0]) > 0.76;
+const RAVEN_LINE = GL(rgb(1.0, 0.015, 0.04, 0.78), 0.26);   // crimson glow line (kept under 1: ACES turns brighter reds peach)
+const EGRET_GOLD = lit('#c9962f'), EGRET_GOLD_LT = lit('#dcae4a'), EGRET_GOLD_DK = lit('#8f6618');
+const BOLT_PAINTS = {
+  // 夜鴉 RAVEN — matte black; every white accent (spine, leading edges, lightning livery, tail band)
+  // becomes a glowing crimson line; smoked-red canopy, redder exhaust
+  raven: {
+    rough: 0.8, metal: 0.1, debris: '#9c1520', accent: '#ff2a3c',
+    map: {
+      crimson: lit('#1d1e23'), crimsonLt: lit('#2a2b31'), crimsonMd: lit('#18191d'), crimsonDk: lit('#101115'),
+      white: (st, c) => (onCanard(c) || onMissile(c) ? lit('#34363d') : RAVEN_LINE),
+      steel: lit('#34363d'), steelDk: lit('#202227'), belly: lit('#1b1c20'), bellyDk: lit('#131417'),
+      radome: lit('#101115'), gunDk: lit('#0f1013'), nozzle: lit('#26282d'),
+      glass: S(lin('#3c0b10'), rgb(0.14, 0.0, 0.01)), glassLt: S(lin('#b0232c'), rgb(0.34, 0.02, 0.03)),
+    },
+    flame: flameTint(FLAME_JET, ([r, g, b]) => [r, g * 0.55, b * 0.7]),
+    trail: [2.7, 0.55, 0.36],
+  },
+  // 白鷺 EGRET — white and pale grey with gold trim where the bolt is white; dark smoked canopy
+  // (a dark mark that keeps the jet readable over white clouds)
+  egret: {
+    rough: 0.45, metal: 0.16, debris: '#e6e1d2', accent: '#f1ead8',
+    map: {
+      crimson: lit('#d7d8d4'), crimsonLt: lit('#e2e2de'), crimsonMd: lit('#bfc2c4'), crimsonDk: lit('#868c94'),
+      white: (st, c) => (onMissile(c) ? lit('#e2e2de') : onCanard(c) ? EGRET_GOLD_LT : EGRET_GOLD),
+      steel: EGRET_GOLD_DK, belly: lit('#8a9098'), bellyDk: lit('#686e76'),
+      glass: S(lin('#10233a'), rgb(0.01, 0.04, 0.09)), glassLt: S(lin('#5f8fc0'), rgb(0.03, 0.1, 0.2)),
+    },
+  },
+  // 黃金 GOLD — polished gold following the bolt's light / dark panels, warm glows
+  gold: {
+    rough: GOLD.rough, metal: GOLD.metal, debris: GOLD.debris, accent: '#f0c75a',
+    map: {
+      glass: GOLD.glass, glassLt: GOLD.glassLt, hot: GOLD.hot, '*': GOLD.face,
+      white: (st, c, n) => (onCanard(c) || onMissile(c) ? GOLD.face(st, c, n) : GOLD.line),   // the livery glows
+    },
+    flame: FLAME_GOLD, trail: GOLD.trail,
+  },
+};
 
 const NOOP = () => {};
 /** registry stamp + safe defaults, so a model missing an optional hook never breaks the game loop */
-function finishPlayer(g, id) {
+function finishPlayer(g, id, paint = 'std') {
   const ud = g.userData;
-  ud.kind = 'player:' + id;
+  ud.kind = 'player:' + id + (paint === 'std' ? '' : ':' + paint);
   if (ud.radius === undefined) ud.radius = 0.3;
   if (ud.grazeRadius === undefined) ud.grazeRadius = 1.0;
   if (!ud.debrisColor) ud.debrisColor = new THREE.Color('#c41c26');
@@ -212,12 +270,22 @@ function finishPlayer(g, id) {
   return g;
 }
 
-/** player aircraft by id ('bolt' here, others from models_ships.js); kind 'player:<id>' */
-export function createPlayer(id = 'bolt') {
+/** a paint id this aircraft really has, else 'std' (one warning per unknown pair) */
+function paintFor(id, paint) {
+  if (paint === 'std' || paint == null) return 'std';
+  if (own(PAINT_IDS, id) && PAINT_IDS[id].includes(paint)) return paint;
+  warnOnce('paint', id + ':' + paint, id + ':std');
+  return 'std';
+}
+/** player aircraft by id ('bolt' here, others from models_ships.js) in a paint scheme (PAINT_IDS[id];
+ *  'std' = the factory scheme); kind 'player:<id>', or 'player:<id>:<paint>' for any other paint */
+export function createPlayer(id = 'bolt', paint = 'std') {
   let g;
-  if (id !== 'bolt' && own(EXT_PLAYERS, id)) g = EXT_PLAYERS[id]();
-  else { if (id !== 'bolt') warnOnce('aircraft', id, 'bolt'); g = createBolt(); }
-  return finishPlayer(g, id);
+  if (id !== 'bolt' && !own(EXT_PLAYERS, id)) { warnOnce('aircraft', id, 'bolt'); return finishPlayer(createBolt(), id); }
+  paint = paintFor(id, paint);
+  if (id !== 'bolt') g = EXT_PLAYERS[id](paint);
+  else g = createBolt(paint);
+  return finishPlayer(g, id, paint);
 }
 
 // =============================================================================
@@ -259,9 +327,9 @@ function buildOptionPod() {
   b.mirrorX(f0);
   return b;
 }
-function createOptionPod(id) {
+function createOptionPod(id, paint = 'std') {
   const ac = AIRCRAFT_BY_ID[id];
-  const hex = ac ? ac.hex : 0xb98cff;
+  const hex = paint !== 'std' ? paintAccent(id, paint) : ac ? ac.hex : 0xb98cff;   // painted jets: tinted by the paint's accent
   const { g, pivot, ud } = enemyShell('option', 0.35, hex);
   g.name = 'option';
   const mat = bodyMat(0.5, 0.3);
@@ -290,11 +358,13 @@ function createOptionPod(id) {
   ud.update(0, 0);
   return g;
 }
-/** option drone by aircraft id (models_ships.js OPTIONS[id], else the placeholder pod); kind 'option:<id>' */
-export function createOption(id = 'phantom') {
-  const g = own(EXT_OPTIONS, id) ? EXT_OPTIONS[id]() : createOptionPod(id);
+/** option drone by aircraft id (models_ships.js OPTIONS[id], else the placeholder pod), matching the jet's
+ *  paint (PAINT_IDS[id]); kind 'option:<id>', or 'option:<id>:<paint>' for any paint but 'std' */
+export function createOption(id = 'phantom', paint = 'std') {
+  paint = paintFor(id, paint);
+  const g = own(EXT_OPTIONS, id) ? EXT_OPTIONS[id](paint) : createOptionPod(id, paint);
   const ud = g.userData;
-  ud.kind = 'option:' + id;
+  ud.kind = 'option:' + id + (paint === 'std' ? '' : ':' + paint);
   if (ud.radius === undefined) ud.radius = 0.35;
   if (!ud.debrisColor) ud.debrisColor = new THREE.Color(0xb98cff);
   if (!ud.muzzles) ud.muzzles = [new THREE.Vector3(0, 0, -0.4)];
@@ -1516,17 +1586,20 @@ const SHADOW = new Map();
 const _m4a = new THREE.Matrix4(), _m4b = new THREE.Matrix4(), _v3 = new THREE.Vector3();
 function shadowKey(model) {
   const ud = model.userData;
-  return ud.kind || model.name || model.uuid;
+  const k = ud.kind || model.name || model.uuid;
+  return PAINTED.test(k) ? k.slice(0, k.lastIndexOf(':')) : k;   // paints never change the shape: share the std silhouette
 }
-/** a clean instance of any registered kind: 'player:<id>', 'option:<id>', 'boss:<id>', enemy types, item kinds */
+const PAINTED = /^(player|option):[^:]+:[^:]+$/;
+/** a clean instance of any registered kind: 'player:<id>[:<paint>]', 'option:<id>[:<paint>]', 'boss:<id>', enemy types, item kinds */
 function pristineOf(kind) {
   if (typeof kind !== 'string') return null;
   try {
     const c = kind.indexOf(':');
     if (c > 0) {
-      const pre = kind.slice(0, c), id = kind.slice(c + 1);
-      if (pre === 'player') return createPlayer(id);
-      if (pre === 'option') return createOption(id);
+      const pre = kind.slice(0, c), id = kind.slice(c + 1), c2 = id.indexOf(':');
+      const ac = c2 > 0 ? id.slice(0, c2) : id, paint = c2 > 0 ? id.slice(c2 + 1) : 'std';   // 'player:<id>:<paint>'
+      if (pre === 'player') return createPlayer(ac, paint);
+      if (pre === 'option') return createOption(ac, paint);
       if (pre === 'boss') return createBoss(id);
     }
     if (ENEMY_TYPES.includes(kind)) return createEnemy(kind);
@@ -1641,7 +1714,7 @@ export function createShadow(model) {
   if (!s) {
     // Bake from a pristine instance of the same kind, so the cached silhouette never
     // depends on the pose of the model passed in (banked, turret yawed, parts destroyed…).
-    const ref = pristineOf(model.userData.kind);
+    const ref = pristineOf(key);
     s = bakeShadow(ref || model);
     if (ref && ref.userData.dispose) ref.userData.dispose();
     SHADOW.set(key, s);
@@ -1683,6 +1756,27 @@ const EXT_ENEMY_TYPES = Object.keys(EXT_ENEMIES).filter((t) => !BASE_ENEMY_TYPES
 export const PLAYER_TYPES = ['bolt', ...Object.keys(EXT_PLAYERS).filter((id) => id !== 'bolt')];
 /** aircraft ids with a real option-drone model (createOption uses the placeholder pod for any other id) */
 export const OPTION_TYPES = Object.keys(EXT_OPTIONS);
+/** paint schemes per aircraft: { <aircraft id>: ['std', …] } ('std' first = the factory scheme). createPlayer /
+ *  createOption take any of these; defs.js PAINTS (the hangar's price list) should list the same ids. */
+export const PAINT_IDS = { bolt: ['std', ...Object.keys(BOLT_PAINTS)] };
+for (const [id, list] of Object.entries(EXT_PAINTS)) if (own(EXT_PLAYERS, id)) PAINT_IDS[id] = ['std', ...Object.keys(list).filter((p) => p !== 'std')];
+/** a paint's accent colour (hex number) — the glow / trim that identifies it; 'std' = the aircraft colour */
+export function paintAccent(id, paint = 'std') {
+  const t = id === 'bolt' ? BOLT_PAINTS : own(EXT_PAINTS, id) ? EXT_PAINTS[id] : null;
+  const p = paint !== 'std' && t && own(t, paint) ? t[paint] : null;
+  if (p && p.accent) return new THREE.Color(p.accent).getHex();
+  const ac = AIRCRAFT_BY_ID[id];
+  return ac ? ac.hex : 0xb98cff;
+}
+// the hangar's price list (defs.js PAINTS, when present) must only offer paints that have a model
+if (DEFS.PAINTS && typeof DEFS.PAINTS === 'object') {
+  for (const [id, list] of Object.entries(DEFS.PAINTS)) {
+    for (const p of Array.isArray(list) ? list : []) {
+      const pid = p && typeof p === 'object' ? p.id : p;
+      if (!(own(PAINT_IDS, id) && PAINT_IDS[id].includes(pid))) console.error(`models: defs.js PAINTS lists "${id}:${pid}" but there is no such paint model (it will show the factory scheme)`);
+    }
+  }
+}
 export const BOSS_TYPES = ['arclight', ...Object.keys(EXT_BOSSES).filter((id) => id !== 'arclight')];
 export const ENEMY_TYPES = [...BASE_ENEMY_TYPES, ...EXT_ENEMY_TYPES];
 export const ITEM_KINDS = ['P', 'S', 'B', 'medal', '1UP'];

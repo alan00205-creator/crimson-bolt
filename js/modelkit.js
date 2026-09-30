@@ -489,6 +489,152 @@ export const BO = { // boss — blackened steel; bright trims carry the silhouet
 };
 
 // =============================================================================
+// Paint schemes (hangar liveries)
+// -----------------------------------------------------------------------------
+// A paint is a RECOLOUR of an aircraft's cached body GB: same triangles in the
+// same order (same silhouette, same shadow, same budget), new face styles. The
+// factory scheme ('std') never goes through here, so it stays byte-identical.
+// Faces are matched to the palette role they were built with by exact colour
+// (+ emission), so a paint is plain data: { role: newStyle | fn }. Cache every
+// painted body under its own key: GG(key + '.' + paint, () => repaint(…)).
+// =============================================================================
+const styleKey = (C, E, i) => C[i] + ',' + C[i + 1] + ',' + C[i + 2] + '|' + E[i] + ',' + E[i + 1] + ',' + E[i + 2];
+/**
+ * A recoloured copy of `src` (a GB). pal = the palette src was built with ({ role: style }, add any inline
+ * styles the builder used, e.g. { hot: GL(EM.engineHot, 0.7) }); map = { role: style | fn(st, c, n, t) }:
+ * st is the face's current style { c, e }, c its centroid [x, y, z], n its unit normal, t its triangle
+ * index; fn returns a style, or null to keep the face. '*' catches every face whose role has no entry
+ * (and colours not in pal). Unmapped faces keep their style. (st / c / n are reused: copy what you keep.)
+ */
+export function repaint(src, pal, map) {
+  const role = new Map();
+  for (const [k, s] of Object.entries(pal)) {
+    const key = s.c.join(',') + '|' + s.e.join(',');    // same text as styleKey (numbers print the same)
+    if (!role.has(key)) role.set(key, k);
+  }
+  const out = new GB();
+  out.p = src.p.slice(); out.c = src.c.slice(); out.e = src.e.slice();
+  const P = src.p, C = src.c, E = src.e, st = { c: [0, 0, 0], e: [0, 0, 0] }, cen = [0, 0, 0], nor = [0, 0, 0];
+  for (let t = 0; t < src.n; t++) {
+    const i = t * 9;
+    const r = role.get(styleKey(C, E, i));
+    let m = r !== undefined && Object.prototype.hasOwnProperty.call(map, r) ? map[r] : map['*'];
+    if (!m) continue;
+    if (typeof m === 'function') {
+      st.c[0] = C[i]; st.c[1] = C[i + 1]; st.c[2] = C[i + 2]; st.e[0] = E[i]; st.e[1] = E[i + 1]; st.e[2] = E[i + 2];
+      cen[0] = (P[i] + P[i + 3] + P[i + 6]) / 3; cen[1] = (P[i + 1] + P[i + 4] + P[i + 7]) / 3; cen[2] = (P[i + 2] + P[i + 5] + P[i + 8]) / 3;
+      const ux = P[i + 3] - P[i], uy = P[i + 4] - P[i + 1], uz = P[i + 5] - P[i + 2];
+      const vx = P[i + 6] - P[i], vy = P[i + 7] - P[i + 1], vz = P[i + 8] - P[i + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = Math.hypot(nx, ny, nz) || 1;
+      nor[0] = nx / l; nor[1] = ny / l; nor[2] = nz / l;
+      m = m(st, cen, nor, t);
+      if (!m) continue;
+    }
+    for (let k = 0; k < 9; k += 3) {
+      out.c[i + k] = m.c[0]; out.c[i + k + 1] = m.c[1]; out.c[i + k + 2] = m.c[2];
+      out.e[i + k] = m.e[0]; out.e[i + k + 1] = m.e[1]; out.e[i + k + 2] = m.e[2];
+    }
+  }
+  return out;
+}
+/** relative luminance of a linear rgb triple */
+export const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+/** peak of a style's emission (glowing faces are ≳ 1, tinted glass ≈ 0.1–0.3, plain paint 0) */
+export const glowOf = (st) => Math.max(st.e[0], st.e[1], st.e[2]);
+/**
+ * Luminance ramp: fn(st) → a style whose colour follows the face's original brightness along
+ * stops [[luminance, hex], …] (ascending), so a scheme keeps the model's light / dark panel pattern.
+ * Styles are cached per stop segment and quantised to 16 steps (few distinct colours, no banding noise).
+ */
+export function ramp(stops) {
+  const L = stops.map(([l]) => l), K = stops.map(([, h]) => lin(h)), cache = new Map();
+  return (st) => {
+    const l = lum(st.c);
+    let k = 0;
+    while (k < L.length - 2 && l > L[k + 1]) k++;
+    const u = Math.max(0, Math.min(1, (l - L[k]) / ((L[k + 1] - L[k]) || 1)));
+    const q = k * 16 + Math.round(u * 15);
+    let s = cache.get(q);
+    if (!s) { s = S(mix3(K[k], K[k + 1], Math.round(u * 15) / 15)); cache.set(q, s); }
+    return s;
+  };
+}
+/** a glowing face re-tinted to the HDR hue `e` at its peak brightness × gain (albedo k as in GL). Saturated
+ *  reds want gain < 1: ACES pushes bright reds toward peach */
+export function retint(st, e, k = 0.4, gain = 1) {
+  const g = glowOf(st) * gain, m = Math.max(e[0], e[1], e[2]) || 1;
+  return GL([(e[0] / m) * g, (e[1] / m) * g, (e[2] / m) * g], k);
+}
+/** smooth 2D value noise in [0, 1] (build-time only: camouflage blotches, weathering) */
+export function noise2(x, z, seed = 0) {
+  const x0 = Math.floor(x), z0 = Math.floor(z), fx = x - x0, fz = z - z0;
+  const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+  const h = (a, b) => hash3(a + seed * 17.3, b, seed * 3.1);
+  const a = h(x0, z0), b = h(x0 + 1, z0), c = h(x0, z0 + 1), d = h(x0 + 1, z0 + 1);
+  return a + (b - a) * sx + (c - a) * sz + (a - b - c + d) * sx * sz;
+}
+
+/**
+ * 黃金 GOLD — shared by every aircraft. The game has no environment map, so a metal would render dark:
+ * the "mirror" is baked instead. Each face keeps the model's light / dark panel pattern (a luminance ramp
+ * from deep bronze to pale gold) and is lit by a fake reflection of a sky / horizon / ground gradient
+ * picked by its normal (upward facets catch a bright sky, flanks a glint at the horizon, the belly the
+ * dark ground), plus a faint warm self-glow so the shadow side never goes brown. Accent lines glow.
+ */
+const GOLD_RAMP = [[0, '#3a2206'], [0.012, '#6a430c'], [0.05, '#a8741a'], [0.16, '#d59f2c'], [0.4, '#e9bd4a'], [0.75, '#f5d676']];
+const goldCache = new Map();
+export const GOLD = {
+  glass: S(lin('#4a2a04'), rgb(0.12, 0.06, 0.0)), glassLt: S(lin('#f0b850'), rgb(0.34, 0.2, 0.04)),
+  glow: rgb(1.0, 0.72, 0.32, 3.0),                      // retint target for glowing edges / lights
+  line: GL(rgb(1.0, 0.56, 0.14, 0.72), 0.52),          // warm glowing accent line (bright, but no white-out)
+  hot: GL(rgb(1.0, 0.84, 0.55, 4.2), 0.7),             // nozzle cores
+  rough: 0.3, metal: 0.3,
+  debris: '#e2b54a',
+  trail: [2.8, 1.75, 0.55],                             // warm exhaust sprite
+  /** '*' mapper: glows → warm gold at the same brightness, faint self-lit faces → amber glass, the rest → mirror gold */
+  face: (st, c, n) => {
+    const g = glowOf(st);
+    if (g >= 0.45) return retint(st, GOLD.glow, 0.5, 0.75);
+    if (g > 0) return GOLD.glass;
+    return GOLD.mirror(lum(st.c), n);
+  },
+  /** mirror gold for a face of original luminance l and normal n (styles cached on a coarse grid) */
+  mirror(l, n) {
+    // view from above and a little behind (the game camera); reflect it about the face normal
+    const vy = -0.94, vz = -0.34, d = n[1] * vy + n[2] * vz, ry = vy - 2 * d * n[1];
+    // sky (bright) above, a hot glint band at the horizon, dark ground below; faces turned away from the
+    // camera (the belly, seen only in a bank) reflect the ground
+    const env = d > 0 ? 0.6 : ry > 0.12 ? 1.0 + 0.12 * (1 - ry) : ry > -0.12 ? 1.28 : 0.6 + 0.2 * (1 + ry);
+    let k = 0; while (k < GOLD_RAMP.length - 2 && l > GOLD_RAMP[k + 1][0]) k++;
+    const u = Math.round(Math.max(0, Math.min(1, (l - GOLD_RAMP[k][0]) / (GOLD_RAMP[k + 1][0] - GOLD_RAMP[k][0]))) * 7) / 7;
+    const e = Math.round(env * 10) / 10, key = k * 8 + u * 7 + e * 1000;
+    let s = goldCache.get(key);
+    if (!s) {
+      const base = mix3(lin(GOLD_RAMP[k][1]), lin(GOLD_RAMP[k + 1][1]), u);
+      const c = [Math.min(0.9, base[0] * e), Math.min(0.9, base[1] * e), Math.min(0.9, base[2] * e)];
+      s = S(c, [base[0] * 0.07, base[1] * 0.06, base[2] * 0.04]);
+      goldCache.set(key, s);
+    }
+    return s;
+  },
+};
+/** the painted body of a paint entry pt ({ map }) of the model cached under `key` (built by `build` with `pal`) */
+export function paintedBody(key, build, pal, paint, pt) {
+  return GG(key + '.paint.' + paint, () => repaint(gbOf(key, build), pal, pt.map));
+}
+/** 黃金 exhaust: a golden sheath around a white-hot core (same shape as FLAME_JET) */
+export const FLAME_GOLD = [
+  { r: 0.066, len: 0.62, base: rgb(1.0, 0.7, 0.22, 1.6), tip: rgb(0.55, 0.25, 0.0, 0.0), sides: 7 },
+  { r: 0.04, len: 0.36, base: rgb(1.0, 0.93, 0.72, 2.6), tip: rgb(1.0, 0.62, 0.18, 0.2), sides: 6 },
+];
+/** retint a flame preset: every cone's base / tip colour mapped by fn(rgb) → rgb */
+export function flameTint(cones, fn) { return cones.map((c) => ({ ...c, base: fn(c.base), tip: fn(c.tip) })); }
+/** a flame preset with the cone shapes of `shape` and the colours of `colours` (cone by cone, the last one repeats) */
+export function flameRecolour(shape, colours) {
+  return shape.map((c, i) => { const k = colours[Math.min(i, colours.length - 1)]; return { ...c, base: k.base, tip: k.tip }; });
+}
+
+// =============================================================================
 // Engine flames (additive cones, one geometry per nozzle layout)
 // =============================================================================
 /** CRIMSON BOLT jet flame: hot orange sheath + white-hot core */

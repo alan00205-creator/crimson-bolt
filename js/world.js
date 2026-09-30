@@ -2307,11 +2307,14 @@ export class World {
   _ground(d0) {
     const GX = GROUND_XS, NX = GX.length, NZ = CHUNK + 1;
     const H = GRID_H, Cc = GRID_C;
-    const terrainH = S.terrainH, groundColor = S.groundColor, flatCheck = S.flatCheck;
+    const terrainH = S.terrainH, groundColor = S.groundColor, flatCheck = S.flatCheck, snap = S.snap;
     for (let j = 0; j < NZ; j++) {
-      const d = d0 + j;
+      let d = d0 + j;
       for (let i = 0; i < NX; i++) {
-        const x = GX[i];
+        let x = GX[i];
+        // S.snap may move a vertex onto a nearby edge of the terrain (the moon's drops) so the edge follows
+        // its curve, not the grid's zigzag; it is a function of (x, d) only, so the chunk seams agree
+        if (snap) { d = d0 + j; snap(x, d); x = SNX; d = SND; GRID_X[j * NX + i] = x; GRID_D[j * NX + i] = d; }
         const h = terrainH(x, d);
         H[j * NX + i] = h;
         groundColor(x, d, h, TC);
@@ -2328,7 +2331,11 @@ export class World {
     const wet = S.water !== null || S.voidH !== undefined;
     const deep = S.water !== null ? WATER_REL - 0.3 : S.voidH;
     const cc = [0, 0, 0];
-    const put = (i, j) => {
+    const put = snap ? (i, j) => {
+      const q = j * NX + i, o = q * 3;
+      cc[0] = Cc[o]; cc[1] = Cc[o + 1]; cc[2] = Cc[o + 2];
+      vtx(GRID_X[q], GROUND_Y + H[q], GRID_D[q], cc, 1, 0, 0);
+    } : (i, j) => {
       const o = (j * NX + i) * 3;
       cc[0] = Cc[o]; cc[1] = Cc[o + 1]; cc[2] = Cc[o + 2];
       vtx(GX[i], GROUND_Y + H[j * NX + i], d0 + j, cc, 1, 0, 0);
@@ -2465,10 +2472,11 @@ export class World {
           _ax.set(Math.cos(ph * 3.1), 0.55 + 0.45 * Math.sin(ph * 1.7), Math.sin(ph * 2.3)).normalize();
           _q.setFromAxisAngle(_ax, ph + ((clock * sp) % TAU));
           _v3.set(x + a * Math.sin(clock * 0.21 + ph * 3.0), y + a * 0.6 * Math.sin(clock * 0.17 + ph * 5.0), d - sd);
-        } else {                                                      // runs up +d at b over a units, again and again
-          const b = R[o + 8], run = (clock * b + ph * a) % a;
-          _q.setFromAxisAngle(_Y, R[o + 9]);
-          _v3.set(x, y, d - sd - run);
+        } else {                                                      // runs up +d at b over a units once per c units
+          const b = R[o + 8], c = R[o + 9], run = (clock * b + ph * c) % c;
+          _q.identity();
+          _v3.set(x, y, d - sd - (run < a ? run : 0));
+          if (run >= a) { _s3.set(0, 0, 0); _m4.compose(_v3, _q, _s3); M[type].setMatrixAt(N[type]++, _m4); continue; }
         }
         _s3.set(s, s, s);
         _m4.compose(_v3, _q, _s3);
@@ -2631,6 +2639,8 @@ const GROUND_XS = (() => {
   return new Float32Array(a);
 })();
 const GRID_H = new Float32Array(GROUND_XS.length * (CHUNK + 1));
+const GRID_X = new Float32Array(GROUND_XS.length * (CHUNK + 1)), GRID_D = new Float32Array(GROUND_XS.length * (CHUNK + 1));
+let SNX = 0, SND = 0;             // S.snap's output
 const GRID_C = new Float32Array(GROUND_XS.length * (CHUNK + 1) * 3);
 
 // spinner registration (called from generators)
@@ -5529,7 +5539,8 @@ const SKIES_CLOUD = { stratosphere: 0.95, storm: 1.0, golden: 0.8, nearspace: 0.
 // like spinners and laid out every frame by World._placeDrift:
 //   move 0  turns about y at `spin` rad/s from a random phase (radar dishes)
 //   move 1  tumbles about an axis seeded by its phase at `spin` rad/s, swaying by `a` (rocks, wrecks)
-//   move 2  runs up +d at `b` units/s over `a` units from its d, again and again, at yaw `c` (sleds)
+//   move 2  runs up +d at `b` units/s over `a` units from its d, once every `c` units (≥ a) of its
+//           cycle: hidden (scale 0) for the rest (sleds on a rail between two tunnel mouths)
 // y is the height of the prop's origin above GROUND_Y. On worlds with space.deep it may be negative,
 // down to −16 (deeper still, the top edge of the view would reach past the chunks built so far): they
 // are real 3D, so perspective does the parallax and the fog fades them with depth. A new type is a
@@ -6043,6 +6054,1251 @@ const ORBIT_TOD_SRC = [
 const ORBIT_CLOUD = { earthlit: 0, debris: 0.34, station: 0, limb: 0 };
 
 // =============================================================================
+// LUNAR SIEGE (stage 5): a ground stage on the Moon. Grey regolith under a hard sun: no air, so no
+// fog and no clouds, near-black fill light, and long black shadows — props cast them as everywhere,
+// and the terrain casts its own (moonLit marches every grid vertex toward the sun). Craters of every
+// size (the big ones are terrain, the small ones draped decals), boulders, and wherever the ground
+// falls away (the rilles, the lava-tube skylights, the edge of the mare) the space kit's backdrop shows
+// through: black space, stars, the galactic band and, low beside the mare, the Earth.
+//   highlands 0–300 (cratered, the rover tracks along the lanes) · rilles 300–560 (two chasms across
+//   the play area, bridged by the lanes and cross roads, and along both flanks) · the great crater
+//   560–780 (terraced walls, the mid-boss floor) · lunar base 780–1000 (domes, landing pads, antenna
+//   arrays, solar fields) · mass driver 1000–1240 (the launch rail in its trench on the right flank,
+//   payload sleds racing up it, capacitor banks) · the mare 1240+ (the boss arena: dark basalt).
+// Ground units: lanes flat and clear at every distance, cross roads (d ≡ 20 mod 40) over 300–1240,
+// the crater floor |x| < 5.5 (560–780) and the mare |x| < 9 (1240+); the self-check covers them all.
+// =============================================================================
+const MOON_LAYOUT = [
+  { biome: 'highlands', from: 0,    to: 300 },
+  { biome: 'rilles',    from: 300,  to: 560 },
+  { biome: 'crater',    from: 560,  to: 780 },
+  { biome: 'base',      from: 780,  to: 1000 },
+  { biome: 'driver',    from: 1000, to: 1240 },
+  { biome: 'mare',      from: 1240, to: Infinity },
+];
+const MN_RIL = 300, MN_CRA = 560, MN_BASE = 780, MN_DRV = 1000, MN_MARE = 1240;
+const MN_MIDBOSS = { d0: 560, d1: 780, x: 5.5 };
+const MN_ARENA = { d0: 1240, d1: Infinity, x: 9 };
+const MN_VOID = -9, MN_SKIP = -7.5;        // a drop into space; grid cells entirely below MN_SKIP are not drawn
+const MN_DRV_X = 9.4, MN_DRV_A = 1004, MN_DRV_B = 1236;   // the mass driver's rail (right flank) and its ends
+
+// lunar palette (regolith kept mid-toned: the glowing bullets need a ground darker than themselves)
+const MP = {
+  hi: C(0x858480), reg: C(0x777674), regL: C(0x92918e), regD: C(0x5a5958), ejecta: C(0xa3a29e), dust: C(0x676663),
+  mare: C(0x404145), mareD: C(0x35363a), mareL: C(0x55565a), graded: C(0x72716f), wall: C(0x676562),
+  track: C(0x67655f), trackL: C(0x6f6d68), rut: C(0x4c4a46),
+  sinter: C(0x8b8883), sinterL: C(0x9d9a94), sinterD: C(0x6c6a66), paint: C(0xd4cebb), hazard: C(0xc9a23c),
+  steel: C(0x8a929a), steelD: C(0x58606a), white: C(0xd0d3d6), whiteD: C(0xa9aeb3), gold: C(0xc79d3e), goldD: C(0x8a6a28),
+  glass: C(0x2c3a4e), glassG: C(0x3d5a52), panel: C(0x23366c), dark: C(0x222529), red: C(0xa8362d), orange: C(0xc96a2a),
+  lampC: C(0x8eeeff), lampW: C(0xfff0c8), lampR: C(0xff5a44), lampG: C(0x9dffa8), leaf: C(0x5f8f58),
+};
+
+// ---- terrain (stateless) ------------------------------------------------------------------
+// soft section weights along the stage (a partition of unity), shared by height and colour
+const MW = new Float64Array(6);
+function mnWeights(d) {
+  const a = sstep(284, 316, d), b = sstep(548, 572, d), c = sstep(770, 792, d), e = sstep(988, 1012, d), f = sstep(1228, 1252, d);
+  MW[0] = 1 - a; MW[1] = a * (1 - b); MW[2] = b * (1 - c); MW[3] = c * (1 - e); MW[4] = e * (1 - f); MW[5] = f;
+}
+// 0 where ground units need flat ground, 1 away from it: lanes ±1.08 at every distance, cross roads
+// ±1.58 over 300–1240, the crater floor |x| < 5.6 over 560–780, the mare |x| < 9.1 from 1240
+function mnFlatK(x, d) {
+  let k = 1;
+  for (let i = 0; i < 3; i++) {
+    const a = Math.abs(x - LANES_X[i]);
+    if (a < 2.05) { const s = sstep(1.08, 2.05, a); if (s < k) k = s; }
+  }
+  if (k === 0) return 0;
+  if (d > 293 && d < 1245) {
+    const r = 1 - sstep(1.58, 3.5, crossDist(d));
+    if (r > 0) k *= 1 - r * sstep(293, 297.5, d) * (1 - sstep(1238, 1244, d));
+  }
+  const ax = Math.abs(x);
+  if (d > 552 && d < 788 && ax < 7) k *= 1 - sstep(552, 559, d) * (1 - sstep(781, 788, d)) * (1 - sstep(5.6, 7.0, ax));
+  if (d > 1234 && ax < 10.2) k *= 1 - sstep(1234, 1240, d) * (1 - sstep(9.1, 10.2, ax));
+  return k;
+}
+function mnLaneFree(x, r) {
+  for (let i = 0; i < 3; i++) if (Math.abs(x - LANES_X[i]) < LANE_HALF + 0.12 + r) return false;
+  return true;
+}
+
+// the big craters: a fixed list, bucketed per chunk (dense on the highlands, some reaching in over the
+// tracks, which run on across them; a few far out beside the rilles). Like the small ones they are draped
+// decals (mnSmallCrater: a crisp shadow crescent that a 1-unit terrain grid could never draw) with their
+// ejecta blocks round them as props; the terrain itself only rolls.
+const MCR = [], MCR_B = [];               // { x, d, R, fresh }; bucket per chunk k (from −2)
+(function genMoonCraters() {
+  srand(60417);
+  const add = (x, d, R) => MCR.push({ x, d, R, fresh: rand() < 0.25 });
+  for (let d = -60 + rr(0, 8); d < 296; d += rr(6, 11)) {                          // highlands
+    const side = rand() < 0.5 ? -1 : 1, R = rr(1.8, 5.2), near = rand() < 0.45;
+    add(side * (near ? rr(1.5, 7) : rr(8 + R * 0.3, 13 + R * 0.4)), d, R);
+  }
+  for (let d = 330 + rr(0, 10); d < 552; d += rr(16, 28)) {                        // rilles: far flanks only
+    const side = rand() < 0.5 ? -1 : 1, R = rr(2.2, 3.8);
+    add(side * rr(14.5, 17), d, R);
+  }
+  MCR.sort((a, b) => a.d - b.d);
+  for (let k = -2; k <= 16; k++) {
+    const a = k * CHUNK - 8, b = (k + 1) * CHUNK + 8, list = [];
+    for (let i = 0; i < MCR.length; i++) { const Cr = MCR[i]; if (Cr.d + Cr.R * 1.7 > a && Cr.d - Cr.R * 1.7 < b) list.push(Cr); }
+    MCR_B.push(list);
+  }
+})();
+// lava-tube skylights: round pits straight down into space, each with a rubble lip (props): a few on
+// the highland flanks (a list), and on both flanks of the mare one per 20-unit cell or so (stateless,
+// so the endless arena has them all the way), outside the arena's clear zone
+const MPIT = [];
+(function genMoonPits() {
+  srand(80321);
+  for (let d = 40 + rr(0, 20); d < 280; d += rr(55, 90)) { const side = rand() < 0.5 ? -1 : 1, R = rr(0.9, 1.6); MPIT.push({ x: side * (8.6 + R + rr(0, 1.2)), d, R }); }
+})();
+const PIT = { x: 0, d: 0, R: 0 };
+// the mare pit of cell j on side s (0 left, 1 right) into PIT, or false
+function marePit(j, s) {
+  if (j < 0 || hash2(j * 7 + s, 4409) > 0.62) return false;
+  PIT.R = 0.8 + 1.4 * hash2(j, 4411 + s);
+  PIT.d = MN_MARE + 5 + j * 20 + hash2(j + 17, 4413 + s) * 9;
+  PIT.x = (s ? 1 : -1) * (10.3 + PIT.R + hash2(j + 5, 4417 + s) * 1.3);
+  return true;
+}
+function pitV(px, pd, R, x, d) {
+  const q = Math.hypot(x - px, d - pd);
+  return q < R + 0.9 ? sstep(R + 0.9, R - 0.1, q) : 0;
+}
+function mnPitV(x, d) {
+  let v = 0;
+  if (d < 300) {
+    for (let i = 0; i < MPIT.length; i++) { const P = MPIT[i]; if (Math.abs(d - P.d) < P.R + 1) { const s = pitV(P.x, P.d, P.R, x, d); if (s > v) v = s; } }
+  } else if (d > MN_MARE && Math.abs(x) > 9.3) {
+    const s = x < 0 ? 0 : 1, j0 = Math.floor((d - MN_MARE - 17.2) / 20), j1 = Math.floor((d - MN_MARE - 1.9) / 20);
+    for (let j = j0; j <= j1; j++) if (marePit(j, s)) { const t = pitV(PIT.x, PIT.d, PIT.R, x, d); if (t > v) v = t; }
+  }
+  return v;
+}
+// the rilles: two chasms across the play area (between the cross roads: the lanes bridge them) and one
+// down each flank from 350 on (the cross roads bridge them); 1 = open to space, 0 = solid
+function rillA(x) { return 320 + 3.2 * Math.sin(x * 0.19 + 0.6) + 1.1 * Math.sin(x * 0.47 + 2.0); }
+function rillB(x) { return 440 + 2.6 * Math.sin(1.9 - x * 0.23) + 1.3 * Math.sin(x * 0.61 + 0.3); }
+function rillE(d, s) { return 11.2 + 1.1 * Math.sin(d * 0.043 + s * 2.1) + 0.6 * Math.sin(d * 0.11 + s * 4.3) + 0.8 * (vnoise(d * 0.07 + s * 17.7, 3.1) - 0.5); }
+function mnRilleV(x, d) {
+  let v = 0;
+  if (d > 310 && d < 330) { const w = 1.9 + 0.35 * Math.sin(x * 0.31 + 1.2); v = sstep(w + 0.9, w - 0.2, Math.abs(d - rillA(x))); }
+  else if (d > 431 && d < 449) { const w = 1.6 + 0.3 * Math.sin(x * 0.4); v = sstep(w + 0.9, w - 0.2, Math.abs(d - rillB(x))); }
+  if (d > 346 && d < 556) {
+    const s = x < 0 ? 0 : 1, w = 1.5 + 0.35 * Math.sin(d * 0.09 + s * 3.0);
+    const f = sstep(w + 0.9, w - 0.2, Math.abs(Math.abs(x) - rillE(d, s))) * sstep(346, 364, d) * (1 - sstep(538, 556, d));
+    if (f > v) v = f;
+  }
+  return v;
+}
+// the great crater's walls: foot at |x| ≈ 7.95, three terraces up to the rim (≈ 3.6), ruggedness on top
+function mnWallE(d, s) { return 7.95 + 0.35 * Math.sin(d * 0.07 + s * 2.2) + 0.25 * Math.sin(d * 0.17 + 0.9 + s * 3.9) + 0.4 * (vnoise(d * 0.1 + s * 29.3, 7.1) - 0.5); }
+function mnWallH(x, d, ax) {
+  const s = x < 0 ? 0 : 1, e = ax - mnWallE(d, s);
+  if (e <= 0) return 0;
+  const t = e / 3.3;
+  let h = 3.5 * (0.34 * sstep(0, 0.26, t) + 0.3 * sstep(0.36, 0.6, t) + 0.36 * sstep(0.7, 0.96, t));
+  if (t > 1.1) h -= 0.25 * (t - 1.1);
+  return h + 0.3 * sstep(0, 0.4, t) * (fbm(x * 0.21 + 3.3, d * 0.21 - 1.9) - 0.5);
+}
+// the mass driver's trench (1.1 deep, flat 2 wide) and the mare's edge (it drops into space past |x| ≈ 10)
+function mnTrench(x, d) {
+  if (d < MN_DRV_A - 2 || d > MN_DRV_B + 2) return 0;
+  return -1.1 * sstep(1.4, 1.0, Math.abs(x - MN_DRV_X)) * sstep(MN_DRV_A - 2, MN_DRV_A, d) * (1 - sstep(MN_DRV_B, MN_DRV_B + 2, d));
+}
+function mareE(d, s) { return 10.35 + 0.35 * Math.sin(d * 0.13 + s * 1.7) + 0.5 * (vnoise(d * 0.2 + s * 9.1, 1.3) - 0.5); }
+function mnMareV(x, d) {
+  if (d < MN_MARE - 4) return 0;
+  const s = x < 0 ? 0 : 1;
+  return sstep(mareE(d, s) - 0.1, mareE(d, s) + 0.9, Math.abs(x)) * sstep(MN_MARE - 4, MN_MARE + 10, d);
+}
+// the regolith's undulation: small everywhere, rolling hills out on the flanks, graded flat in the base
+function mnRough(x, d, ax) {
+  const h = 0.24 * (fbm(x * 0.13 + 2.7, d * 0.13 - 5.3) - 0.5);
+  return ax > 8.5 ? h + 0.9 * sstep(8.5, 16, ax) * (fbm(x * 0.055 - 4.1, d * 0.055 + 1.3) - 0.42) : h;
+}
+// (beyond |x| 17 the grid is never seen, not even down a drop: no detail there)
+function moonH(x, d) {
+  mnWeights(d);
+  const ax = Math.abs(x);
+  let h = ax < 17 ? mnRough(x, d, ax) * (1 - 0.8 * (MW[3] + MW[4]) - 0.85 * MW[5]) : 0;
+  if (MW[2] > 0) h += MW[2] * mnWallH(x, d, ax);
+  if (d > MN_DRV_A - 2 && d < MN_DRV_B + 2) h += mnTrench(x, d);
+  let v = d > 300 && d < 556 ? mnRilleV(x, d) : 0;
+  const p = mnPitV(x, d); if (p > v) v = p;
+  const m = mnMareV(x, d); if (m > v) v = m;
+  if (v > 0) h += (MN_VOID - h) * v;
+  const k = mnFlatK(x, d);
+  return k === 1 ? h : h * k;
+}
+// Grid snapping (the stage's S.snap): a vertex within half a cell of a drop's top edge (V = 0) or of its
+// foot (V = 1) moves onto it, so the rims of the rilles, the skylights and the mare follow their curves
+// and every cliff is one clean band between two edges. Never on the flat zones, never where two drops
+// both claim the vertex.
+function snapWall(a, bot, top) {
+  if (Math.abs(a - top) < 0.5) return top;
+  if (Math.abs(a - bot) < 0.5) return bot;
+  return NaN;
+}
+function moonSnap(x, d) {
+  SNX = x; SND = d;
+  if (mnFlatK(x, d) < 1) return;
+  const ax = Math.abs(x), s = x < 0 ? 0 : 1, sg = s ? 1 : -1;
+  let n = 0, nx = x, nd = d;
+  for (let i = 0; i < 2; i++) {                                       // the chasms across: move along d
+    const R = MN_CROSS[i], lo = R[1] + 1, hi = R[2] - 1;
+    if (d <= lo || d >= hi) continue;
+    const c = R[0](x), w = R[3] + R[4] * Math.sin(x * R[5] + R[6]), e = d - c, t = snapWall(Math.abs(e), w - 0.2, w + 0.9);
+    if (t === t) { n++; nd = c + (e < 0 ? -t : t); }
+  }
+  if (d > 364 && d < 538) {                                           // the flank chasms: move along x
+    const e = rillE(d, s), w = 1.5 + 0.35 * Math.sin(d * 0.09 + s * 3.0), q = ax - e, t = snapWall(Math.abs(q), w - 0.2, w + 0.9);
+    if (t === t) { n++; nx = sg * (e + (q < 0 ? -t : t)); }
+  }
+  if (d > 1252) {                                                     // the mare's edge
+    const e = mareE(d, s), t = snapWall(ax, e + 0.9, e - 0.1);
+    if (t === t) { n++; nx = sg * t; }
+  }
+  if (d < 300 || (d > MN_MARE && ax > 9.3)) {                         // skylights: move radially
+    let px = 0, pd = 0, pr = -1;
+    if (d < 300) { for (let i = 0; i < MPIT.length; i++) { const P = MPIT[i]; if (Math.hypot(x - P.x, d - P.d) < P.R + 1.5) { px = P.x; pd = P.d; pr = P.R; } } }
+    else {
+      const j0 = Math.floor((d - MN_MARE - 17.5) / 20), j1 = Math.floor((d - MN_MARE - 1.5) / 20);
+      for (let j = j0; j <= j1; j++) if (marePit(j, s) && Math.hypot(x - PIT.x, d - PIT.d) < PIT.R + 1.5) { px = PIT.x; pd = PIT.d; pr = PIT.R; }
+    }
+    if (pr > 0) {
+      const q = Math.hypot(x - px, d - pd), t = snapWall(q, pr - 0.1, pr + 0.9);
+      if (t === t && q > 1e-3) { n++; nx = px + (x - px) * t / q; nd = pd + (d - pd) * t / q; }
+    }
+  }
+  if (n === 1 && mnFlatK(nx, nd) === 1) { SNX = nx; SND = nd; }
+}
+// the highest the terrain can be near stage distance d (bounds the shadow march)
+function mnMaxH(d) { return d > 546 && d < 794 ? 3.9 : 0; }
+// the terrain's own cast shadow (only the great crater's walls are tall enough to cast one; crater bowls
+// get theirs from their decals): march from (x, d, h) toward the sun (the direction every drop shadow of
+// this stage uses: SUNX / SUND per unit of height, times the shadow length at d) as far as anything
+// could still rise above the ray; 1 = sunlit, 0 = in shadow, softened over 0.2 of height
+const MN_T = [0.15, 0.35, 0.6, 0.95, 1.4, 2.0, 2.7, 3.6];
+function moonLit(x, d, h) {
+  // the left wall's shadow reaches ≈ 6 in from its rim, the right wall (it faces the sun) shades only its
+  // own terraces; nothing beyond |x| 13.5 is ever on screen
+  if (x > -5.8 && x < 7.8 || x < -13.5 || x > 13.5) return 1;
+  const top = Math.max(mnMaxH(d), mnMaxH(d - 4)) - h;
+  if (top <= 0.12) return 1;
+  const k = todShadowK(d), kx = -SUNX * k, kd = -SUND * k;
+  let s = 1;
+  for (let i = 0; i < MN_T.length; i++) {
+    const t = MN_T[i];
+    if (t > top) break;
+    const g = moonH(x + kx * t, d + kd * t) - (h + t);
+    if (g > -0.2) { const v = 1 - sstep(-0.2, 0.05, g); if (v < s) s = v; if (s === 0) break; }
+  }
+  return s;
+}
+// the albedo of the ground at (x, d) before relief and light: bright highlands, darker graded ground,
+// dark mare basalt, with blotches, rays of fresh ejecta and, on the mare, pale swirls
+function moonAlbedo(x, d, out) {
+  mnWeights(d);
+  const ax = Math.abs(x), n = ax > 17 ? 0.5 : fbm(x * 0.11 + 5.1, d * 0.11 - 2.3);
+  out[0] = 0; out[1] = 0; out[2] = 0;
+  const w0 = MW[0], w1 = MW[1] + MW[2], w2 = MW[3] + MW[4], w3 = MW[5];
+  out[0] = MP.hi[0] * w0 + MP.reg[0] * w1 + MP.graded[0] * w2 + MP.mare[0] * w3;
+  out[1] = MP.hi[1] * w0 + MP.reg[1] * w1 + MP.graded[1] * w2 + MP.mare[1] * w3;
+  out[2] = MP.hi[2] * w0 + MP.reg[2] * w1 + MP.graded[2] * w2 + MP.mare[2] * w3;
+  if (ax > 17) return out;
+  mixInto(out, n > 0.5 ? MP.regL : MP.regD, Math.abs(n - 0.5) * (0.9 - 0.5 * w3));
+  if (w3 > 0) {                                                            // mare: dark basalt, pale swirls
+    const m = fbm(x * 0.05 + 7.7, d * 0.05 - 3.1);
+    mixInto(out, MP.mareD, sstep(0.5, 0.25, m) * 0.6 * w3);
+    mixInto(out, MP.mareL, sstep(0.55, 0.8, vnoise(x * 0.16 + d * 0.05, d * 0.08 - x * 0.03)) * 0.45 * w3);
+  }
+  // rays of a young crater far off-screen (sun side), streaking across the highlands and the mare
+  const ra = Math.atan2(d + 260, x + 180) * 38, ry = ra - Math.floor(ra);
+  mixInto(out, MP.ejecta, sstep(0.86, 0.97, ry) * sstep(0.35, 0.7, vnoise(x * 0.09, d * 0.03)) * 0.4 * (w0 + w3 * 0.8 + w1 * 0.5));
+  // tracked-over dust along the graded base
+  if (w2 > 0 && ax > 7.2) mixInto(out, MP.dust, sstep(0.55, 0.8, vnoise(x * 0.4, d * 0.4)) * 0.25 * w2);
+  return out;
+}
+function moonColor(x, d, h, out) {
+  moonAlbedo(x, d, out);
+  // relief: crater bowls a touch darker, rims and walls brighter (fresh rock), deeper = darker; a drop
+  // into space fades to black long before the grid ends
+  if (h > 0.05) mixInto(out, MP.ejecta, sstep(0.05, 0.9, h) * 0.3 * (1 - MW[2]));
+  if (MW[2] > 0) {                                  // the crater's walls: bare rock on the scarps, dust on the terraces
+    const ax = Math.abs(x), s = x < 0 ? 0 : 1, e = ax - mnWallE(d, s);
+    if (e > 0) {
+      const t = e / 3.3, w = MW[2];
+      const riser = sstep(0, 0.05, t) * (1 - sstep(0.2, 0.28, t)) + sstep(0.34, 0.4, t) * (1 - sstep(0.55, 0.62, t)) + sstep(0.68, 0.74, t) * (1 - sstep(0.9, 0.98, t));
+      mixInto(out, MP.ejecta, riser * 0.5 * w);
+      mixInto(out, MP.regL, riser * sstep(0.55, 0.85, vnoise(d * 0.7 + s * 7.3, e * 1.3)) * 0.35 * w);
+      mixInto(out, MP.regD, (1 - riser) * sstep(0.02, 0.2, t) * 0.35 * w);
+    }
+  }
+  if (h < -0.05) {
+    const k = h > -1.2 ? 1 - 0.22 * sstep(-0.05, -1.2, h) : 0.78 * (1 - sstep(-1.2, -3.6, h)) + 0.004;
+    out[0] *= k; out[1] *= k; out[2] *= k;
+  }
+  // the terrain's own shadow (the stage has no air: shadows are black but for a little earthshine)
+  if (h > -1.2) {
+    const s = moonLit(x, d, h), k = 0.15 + 0.85 * s;
+    out[0] *= k; out[1] *= k; out[2] *= k;
+  }
+  if (x > 17 || x < -17) return;
+  const g = 0.94 + 0.12 * vnoise(x * 0.9 + 1.7, d * 0.9 + 4.1);
+  out[0] *= g; out[1] *= g; out[2] *= g;
+}
+
+// ---- draped pieces (laid on the terrain, world coordinates) ----------------------------------
+let DL = 0.012;                          // lift of the draped piece being emitted
+const SUN_A = Math.atan2(-SUND, -SUNX);  // toward the sun in (x, d): the screen's lower left
+// a draped vertex: on the terrain itself, or (DP_ON: small pieces, the terrain being smooth at that
+// scale) on its tangent plane at DP_X, DP_D (height DP_H, slopes DP_GX / DP_GD)
+let DP_ON = false, DP_X = 0, DP_D = 0, DP_H = 0, DP_GX = 0, DP_GD = 0;
+function dplane(x, d) {
+  DP_ON = true; DP_X = x; DP_D = d; DP_H = moonH(x, d);
+  DP_GX = (moonH(x + 0.35, d) - DP_H) / 0.35; DP_GD = (moonH(x, d + 0.35) - DP_H) / 0.35;
+}
+function dv(x, d, c, k) {
+  const h = DP_ON ? DP_H + DP_GX * (x - DP_X) + DP_GD * (d - DP_D) : moonH(x, d);
+  vtx(x, GROUND_Y + h + DL, d, c, k, 0, 0);
+}
+// the band between radius r0(a) and r1(a) round (cx, cd) over angles a0 … a0 + span, in segs × rs cells
+// (rs radial steps: big pieces must sample the terrain inside them too, not only at their edges); w ≠ 0
+// makes the inner edge a crescent's: r1 · (1 − w · cos(a − aC))
+function dband(cx, cd, r0, r1, a0, span, segs, rs, c, k, w = 0, aC = 0) {
+  if (!room(segs * rs * 6)) return;
+  for (let i = 0; i < segs; i++) {
+    const b0 = a0 + (i / segs) * span, b1 = a0 + ((i + 1) / segs) * span, c0 = Math.cos(b0), s0 = Math.sin(b0), c1 = Math.cos(b1), s1 = Math.sin(b1);
+    const i0 = w ? r1 * (1 - w * Math.cos(b0 - aC)) : r0, i1 = w ? r1 * (1 - w * Math.cos(b1 - aC)) : r0;
+    for (let j = 0; j < rs; j++) {
+      const p0 = i0 + (r1 - i0) * (j / rs), p1 = i0 + (r1 - i0) * ((j + 1) / rs), q0 = i1 + (r1 - i1) * (j / rs), q1 = i1 + (r1 - i1) * ((j + 1) / rs);
+      dv(cx + c0 * p0, cd + s0 * p0, c, k); dv(cx + c0 * p1, cd + s0 * p1, c, k); dv(cx + c1 * q1, cd + s1 * q1, c, k);
+      dv(cx + c0 * p0, cd + s0 * p0, c, k); dv(cx + c1 * q1, cd + s1 * q1, c, k); dv(cx + c1 * q0, cd + s1 * q0, c, k);
+    }
+  }
+}
+function ddisc(cx, cd, rx, rd, c, k, segs) {
+  if (!room(segs * 3)) return;
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * TAU, a1 = ((i + 1) / segs) * TAU;
+    dv(cx, cd, c, k); dv(cx + Math.cos(a0) * rx, cd + Math.sin(a0) * rd, c, k); dv(cx + Math.cos(a1) * rx, cd + Math.sin(a1) * rd, c, k);
+  }
+}
+function dring(cx, cd, r0, r1, c, k, segs, rs = 1) { dband(cx, cd, r0, r1, 0, TAU, segs, rs, c, k); }
+// a crescent inside the circle r round (cx, cd): width w·r at angle aC, thinning to nothing at aC ± 90°
+function dcrescent(cx, cd, r, w, aC, c, k, segs, rs = 1) { dband(cx, cd, 0, r, aC - Math.PI / 2, Math.PI, segs, rs, c, k, w, aC); }
+// the ground colour a decal at (x, d) starts from: its albedo in the light it gets there
+function mnGround(x, d, out) {
+  moonAlbedo(x, d, out);
+  const k = 0.1 + 0.9 * moonLit(x, d, moonH(x, d));
+  out[0] *= k; out[1] *= k; out[2] *= k;
+  return out;
+}
+// is the ground solid (no drop into space, no crater wall) under a round footprint?
+function mnSolid(x, d, r) {
+  const h = moonH(x, d);
+  if (h < -0.35 || h > 0.9) return false;
+  for (let i = 0; i < 4; i++) {
+    const a = i * (TAU / 4) + 0.4, g = moonH(x + Math.cos(a) * r, d + Math.sin(a) * r);
+    if (g < -0.35 || Math.abs(g - h) > 0.45) return false;
+  }
+  return true;
+}
+const mnFree = (x, d, r) => mnLaneFree(x, r) && canPlace(x, d, r) && mnSolid(x, d, r);
+
+// a small crater as a decal: an ejecta halo (bright on fresh ones), the bowl, the far wall in the sun,
+// the black shadow under the sun-side rim, a pale rim
+function mnSmallCrater(x, d, r, fresh) {
+  frameId();
+  const c = mnGround(x, d, TC3), segs = LOWQ ? (r > 2 ? 12 : 8) : r > 2 ? 22 : r > 0.8 ? 14 : 10;
+  const rs = r < 0.7 ? 1 : Math.min(4, Math.ceil(r / (LOWQ ? 1.2 : 0.8)));      // radial steps: big ones follow the ground
+  if (r < 0.7) dplane(x, d);
+  DL = 0.008; dring(x, d, r * 1.05, r + Math.min(r * (fresh ? 1.1 : 0.55), fresh ? 2.6 : 1.6), c, fresh ? 1.26 : 1.1, segs, rs > 1 ? 2 : 1);
+  DL = 0.012; if (rs > 1) dring(x, d, 0, r, c, 0.76, segs, rs); else ddisc(x, d, r, r, c, 0.76, segs);
+  DL = 0.016; dcrescent(x, d, r * 0.97, 0.55, SUN_A + Math.PI, c, 1.45, segs, rs);
+  DL = 0.022; dcrescent(x, d, r * 0.97, 0.82, SUN_A, c, 0.09, segs, rs);
+  DL = 0.019; dring(x, d, r * 0.96, r * 1.09, c, 1.25, segs);
+  DP_ON = false;
+}
+// a boulder on the regolith (sitting in it), with its long black shadow on the ground under it
+function mnBoulder(x, d, r, c = MP.reg) {
+  const g = moonH(x, d), hgt = r * rr(0.85, 1.35);
+  frame(x, d, rand() * TAU);
+  LR[0] = r; LH[0] = g - r * 0.3; LK[0] = 0.72;
+  LR[1] = r * 0.82; LH[1] = g - r * 0.3 + hgt * 0.62; LK[1] = 0.95;
+  LR[2] = r * 0.32; LH[2] = g - r * 0.3 + hgt; LK[2] = 1.1;
+  lathe(0, 0, 3, LOWQ ? 5 : 6, jit(c, 0.16, TC3), 0, rr(0.8, 1.25), rr(0.8, 1.2), 0.45);
+  frameId();
+  shadowDisc(x, d, r * 0.62, hgt * 0.85 - r * 0.3, g);
+}
+// a scatter of boulders round (cx, cd) within radius R (the small ones never count as tall)
+function mnRubble(cx, cd, R, n, rmax, c) {
+  for (let i = 0; i < n; i++) {
+    const a = rand() * TAU, q = Math.sqrt(rand()) * R, x = cx + Math.cos(a) * q, d = cd + Math.sin(a) * q, r = rr(0.08, rmax);
+    if (!mnFree(x, d, r * 1.2)) continue;
+    mnBoulder(x, d, r, c);
+  }
+}
+
+// ---- roads ---------------------------------------------------------------------------------
+// a flat strip [x0, x1] × [a, b] at lay, in pieces of about `step` along d or x, each vertex coloured by
+// the light it gets from the terrain (the crater walls and rims cast their shadows across the roads too)
+function litStrip(x0, x1, a, b, lay, c, k, alongD, step) {
+  const n = Math.max(1, Math.round((alongD ? b - a : x1 - x0) / step));
+  if (!room(n * 6)) return;
+  const y = GROUND_Y + lay;
+  let pa = 0, pb = 0, pu = 0;
+  for (let i = 0; i <= n; i++) {
+    const u = alongD ? a + (b - a) * (i / n) : x0 + (x1 - x0) * (i / n);
+    const qa = 0.1 + 0.9 * (alongD ? moonLit(x0, u, 0) : moonLit(u, a, 0)), qb = 0.1 + 0.9 * (alongD ? moonLit(x1, u, 0) : moonLit(u, b, 0));
+    if (i && alongD) {                  // sections across d: (x0, u) … (x1, u)
+      vtx(x0, y, pu, c, k * pa, 0, 0); vtx(x1, y, pu, c, k * pb, 0, 0); vtx(x1, y, u, c, k * qb, 0, 0);
+      vtx(x0, y, pu, c, k * pa, 0, 0); vtx(x1, y, u, c, k * qb, 0, 0); vtx(x0, y, u, c, k * qa, 0, 0);
+    } else if (i) {                     // sections across x: (u, a) … (u, b)
+      vtx(pu, y, a, c, k * pa, 0, 0); vtx(u, y, a, c, k * qa, 0, 0); vtx(u, y, b, c, k * qb, 0, 0);
+      vtx(pu, y, a, c, k * pa, 0, 0); vtx(u, y, b, c, k * qb, 0, 0); vtx(pu, y, b, c, k * pb, 0, 0);
+    }
+    pa = qa; pb = qb; pu = u;
+  }
+}
+// lanes: rover tracks (compacted regolith with ruts) up to the base, sintered pavement with a centre
+// line and edge lights through the base and the driver complex; cross roads from 300 in the same styles
+function mnRoads(d0, d1) {
+  frameId(); setTile(0); uvMode(0, 0);
+  const ta = d0, tb = Math.min(d1, MN_BASE), pa = Math.max(d0, MN_BASE), pb = Math.min(d1, MN_MARE - 3);
+  for (let i = 0; i < 3; i++) {
+    const lx = LANES_X[i];
+    if (tb > ta) {
+      litStrip(lx - 1.04, lx + 1.04, ta, tb, 0.03, MP.track, 1, true, ta > 540 ? (LOWQ ? 4 : 2) : 40);
+      if (!LOWQ) for (const o of [-0.58, 0.46]) litStrip(lx + o, lx + o + 0.12, ta, tb, 0.036, MP.rut, 1, true, ta > 540 ? 4 : 40);
+    }
+    if (pb > pa) {
+      setTile(T_SLAB); uvMode(2.1, 2.1);
+      flat(lx - 1.06, pa, lx + 1.06, pb, L_BASE + 0.004, MP.sinter, 0.98);
+      setTile(0); uvMode(0, 0);
+      flat(lx - 0.05, pa, lx + 0.05, pb, L_MARK, MP.hazard, 0.9);
+      for (let d = Math.ceil(pa / 4) * 4 + 1; d < pb; d += 4) {
+        if (crossDist(d) < 2.4) continue;
+        for (const o of [-1.13, 1.13]) box(lx + o - 0.05, d - 0.05, lx + o + 0.05, d + 0.05, 0, 0.07, MP.steelD, MP.lampC);
+      }
+    }
+  }
+  const c = d0 + 20;
+  if (c >= MN_RIL && c < MN_MARE) {
+    if (c < MN_BASE) {
+      const st = c > 546 ? 1 : 80;
+      litStrip(-40, 40, c - 1.46, c + 1.46, 0.028, MP.track, 0.98, false, st * (LOWQ ? 4 : 2));
+      if (!LOWQ) for (const o of [-0.6, 0.48]) litStrip(-40, 40, c + o, c + o + 0.12, 0.034, MP.rut, 1, false, st * 4);
+    } else {
+      setTile(T_SLAB); uvMode(2.1, 2.1);
+      flat(-30, c - 1.48, 30, c + 1.48, L_BASE + 0.002, MP.sinter, 0.98);
+      setTile(0); uvMode(0, 0);
+      for (let x = -29.6; x < 29.6; x += 2.6) {
+        let skip = false;
+        for (let j = 0; j < 3; j++) if (Math.abs(x + 0.6 - LANES_X[j]) < 1.9) skip = true;
+        if (!skip) flat(x, c - 0.05, x + 1.2, c + 0.05, L_MARK - 0.004, MP.paint, 0.85);
+      }
+    }
+  }
+}
+
+// ---- moon chunks ----------------------------------------------------------------------------
+function genMoon(w, ch, k, d0) {
+  const d1 = d0 + CHUNK;
+  styleReset();
+  mnRoads(d0, d1);
+  if (d0 < MN_RIL) mnHighlands(ch, k, d0, Math.min(d1, MN_RIL));
+  if (d1 > MN_RIL && d0 < MN_CRA) mnRilles(ch, k, Math.max(d0, MN_RIL), Math.min(d1, MN_CRA));
+  if (d1 > MN_CRA && d0 < MN_BASE) mnGreatCrater(ch, k, Math.max(d0, MN_CRA), Math.min(d1, MN_BASE));
+  if (d1 > MN_BASE && d0 < MN_DRV) mnBase(ch, k, d0, d1);
+  if (d1 > MN_DRV && d0 < MN_MARE) mnDriver(ch, k, d0, d1);
+  if (d1 > MN_MARE) mnMare(ch, k, Math.max(d0, MN_MARE), d1);
+  styleReset();
+}
+// small crater decals over [a, b): n of them, bigger and fresher now and then, never on the tracks
+function mnCraterField(a, b, n, rBig, pFresh, xMax = 15) {
+  for (let i = 0; i < n; i++) {
+    const big = rand() < 0.22, r = big ? rr(0.55, rBig) : rr(0.16, 0.52), x = rr(-xMax, xMax), d = rr(a + 0.3, b - 0.3), fresh = rand() < pFresh;
+    if (!mnLaneFree(x, r * 1.1) || !mnSolid(x, d, r * 1.2)) continue;
+    mnSmallCrater(x, d, r, fresh);
+  }
+}
+
+// cratered highlands 0–300: small craters everywhere, ejecta blocks round the big ones, boulders,
+// the rubble lips of the skylights; an old landing site on the left (a descent stage, a flag, the tracks
+// of its rover), a crashed probe on the right
+function mnHighlands(ch, k, a, b) {
+  mnCraterField(a, b, LOWQ ? 18 : 46, 1.5, 0.2, 13);
+  const L = MCR_B[k + 2] || [];
+  for (let i = 0; i < L.length; i++) {
+    const Cr = L[i];
+    if (Cr.d < a || Cr.d >= b) continue;
+    mnSmallCrater(Cr.x, Cr.d, Cr.R, Cr.fresh);
+    const n = Math.round(Cr.R * (LOWQ ? 1.2 : 2.6) * (Cr.fresh ? 1.6 : 1));
+    for (let j = 0; j < n; j++) {
+      const an = rand() * TAU, q = Cr.R * rr(1.05, 1.7), x = Cr.x + Math.cos(an) * q, d = Cr.d + Math.sin(an) * q, r = rr(0.1, 0.24 + Cr.R * 0.05);
+      if (d < a || d >= b || !mnFree(x, d, r * 1.2)) continue;
+      mnBoulder(x, d, r, Cr.fresh ? MP.regL : MP.reg);
+    }
+  }
+  for (let i = 0; i < (LOWQ ? 5 : 12); i++) {
+    const x = (rand() < 0.5 ? -1 : 1) * rr(1.5, 15), d = rr(a + 0.5, b - 0.5), r = rand() < 0.8 ? rr(0.1, 0.24) : rr(0.3, 0.62);
+    if (mnFree(x, d, r * 1.2)) mnBoulder(x, d, r);
+  }
+  for (let i = 0; i < MPIT.length; i++) { const P = MPIT[i]; if (P.d >= a && P.d < b) mnPitLip(P.x, P.d, P.R); }
+  if (k === 3) oldLander(-9.6, 146, 0.4);
+  if (k === 6) crashedProbe(10.4, 262, 2.2);
+}
+// the rubble lip round a skylight: blocks tumbled at its edge, a pale ring of fresh regolith
+function mnPitLip(x, d, R) {
+  frameId();
+  const c = mnGround(x + (R + 1.6) * Math.sign(x), d, TC2);
+  DL = 0.01; dring(x, d, R + 0.75, R + 1.5, c, 1.12, LOWQ ? 10 : 16);
+  const n = LOWQ ? 5 : 11;
+  for (let i = 0; i < n; i++) {
+    const an = (i / n) * TAU + rr(-0.2, 0.2), q = R + rr(0.85, 1.4), bx = x + Math.cos(an) * q, bd = d + Math.sin(an) * q, r = rr(0.1, 0.3);
+    if (mnFree(bx, bd, r * 1.1)) mnBoulder(bx, bd, r, MP.regL);
+  }
+}
+// an old descent stage: gold-foil octagon on four splayed legs, its ladder, a flag, a dish on a tripod;
+// its rover's tracks wander off toward the lanes and back (the tracks run on the chunk's stream)
+function oldLander(x, d, rot) {
+  const g = moonH(x, d);
+  frame(x, d, rot);
+  for (let i = 0; i < 8; i++) { const an = (i / 8) * TAU + Math.PI / 8; PX[i] = Math.cos(an) * 0.52; PD[i] = Math.sin(an) * 0.52; }
+  prism(8, g + 0.34, g + 0.72, MP.gold, MP.goldD);
+  for (let i = 0; i < 4; i++) {
+    const an = (i / 4) * TAU + Math.PI / 4, cx = Math.cos(an), sx = Math.sin(an);
+    box(cx * 0.62 - 0.03, sx * 0.62 - 0.03, cx * 0.62 + 0.03, sx * 0.62 + 0.03, g, g + 0.46, MP.steel, MP.steel);
+    disc(cx * 0.72, sx * 0.72, 0.1, 0.1, g + 0.012, MP.steel, 6);
+  }
+  box(0.5, -0.1, 0.6, 0.1, g + 0.05, g + 0.5, MP.steelD, MP.steel);                                 // ladder
+  frameId();
+  box(x - 1.3 - 0.015, d + 0.6 - 0.015, x - 1.3 + 0.015, d + 0.6 + 0.015, g, g + 0.9, MP.whiteD, MP.whiteD);   // the flag
+  box(x - 1.3, d + 0.595, x - 0.95, d + 0.605, g + 0.66, g + 0.88, MP.red, MP.white);
+  cyl(x + 1.2, d - 0.9, 0.24, g + 0.32, g + 0.36, 8, MP.white, MP.whiteD);                        // the dish on its tripod
+  box(x + 1.2 - 0.02, d - 0.9 - 0.02, x + 1.2 + 0.02, d - 0.9 + 0.02, g, g + 0.32, MP.steelD, MP.steelD);
+  shadowBox(x - 0.55, d - 0.55, x + 0.55, d + 0.55, 0.72, g); shadowBox(x - 1.315, d + 0.585, x - 1.285, d + 0.615, 0.9, g);
+  // the rover's tracks: two thin dark ribbons wandering down the chunk and back
+  let px = x + 0.9, pd = d - 1.2, an = -1.9;
+  for (let s = 0; s < (LOWQ ? 14 : 30); s++) {
+    an += rr(-0.3, 0.3) + (px < x - 3 ? 0.15 : px > x + 3 ? -0.15 : 0);
+    const nx = px + Math.cos(an) * 0.8, nd = pd + Math.sin(an) * 0.8;
+    if (Math.abs(nx) < 7.7) break;
+    for (const o of [-0.11, 0.11]) {
+      const ox = -Math.sin(an) * o, od = Math.cos(an) * o;
+      DL = 0.014; if (room(6)) { const c = MP.rut; dv(px + ox - 0.03, pd + od, c, 0.95); dv(nx + ox - 0.03, nd + od, c, 0.95); dv(nx + ox + 0.03, nd + od, c, 0.95); dv(px + ox - 0.03, pd + od, c, 0.95); dv(nx + ox + 0.03, nd + od, c, 0.95); dv(px + ox + 0.03, pd + od, c, 0.95); }
+    }
+    px = nx; pd = nd;
+  }
+}
+// a probe that came down hard: a scorched furrow, the bent frame and one cell wing, scattered parts
+function crashedProbe(x, d, rot) {
+  const g = moonH(x, d);
+  frame(x, d, rot);
+  DL = 0.012;
+  const c = mnGround(x, d, TC2);
+  frameId(); ddisc(x, d, 1.3, 1.3, c, 0.55, LOWQ ? 8 : 12);
+  frame(x, d, rot);
+  box(-0.3, -0.35, 0.3, 0.35, g - 0.05, g + 0.34, MP.gold, MP.goldD);
+  topStyle(T_GLASS, 0.24, 0.3);
+  box(0.3, -0.35, 1.5, 0.3, g + 0.02, g + 0.07, MP.steel, MP.panel);
+  plain();
+  box(-1.0, 0.4, -0.6, 0.7, g, g + 0.12, MP.steelD, MP.steel);
+  frameId();
+  shadowBox(x - 0.3, d - 0.35, x + 0.3, d + 0.35, 0.34, g);
+  mnRubble(x, d, 2.2, LOWQ ? 3 : 7, 0.18, MP.regL);
+}
+
+// rilles 300–560: two chasms straight across (the lanes cross them on causeways with girder railings,
+// piers down into the dark), one down each flank from 350 (the cross roads bridge them); rubble on every
+// rim, survey masts, the first outposts of the base
+function mnRilles(ch, k, a, b) {
+  mnCraterField(a, b, LOWQ ? 12 : 30, 1.2, 0.15, 13);
+  // rim rubble along the crossing chasms
+  for (const [fn, lo, hi, w0, wa, wf, wp] of MN_CROSS) {
+    if (b <= lo || a >= hi) continue;
+    for (let x = -15; x < 15; x += LOWQ ? 1.1 : 0.55) {
+      const c = fn(x), w = w0 + wa * Math.sin(x * wf + wp);
+      for (const s of [-1, 1]) {
+        if (rand() > 0.55) continue;
+        const d = c + s * (w + rr(0.95, 1.8)), r = rr(0.07, 0.2);
+        if (d >= a && d < b && mnFree(x, d, r * 1.2)) mnBoulder(x, d, r, MP.regL);
+      }
+    }
+    for (let i = 0; i < 3; i++) {                                   // the bridges: girders along each causeway
+      const lx = LANES_X[i], c = fn(lx), w = w0 + wa * Math.sin(lx * wf + wp) + 0.5;
+      if (c >= a && c < b) mnBridgeD(lx, c - w, c + w);
+    }
+  }
+  // along the flank chasms: rubble on the inner rim, the cross road's bridges, survey masts
+  for (let d = Math.max(a, 352); d < Math.min(b, 554); d += LOWQ ? 1.4 : 0.7) {
+    for (let s = 0; s < 2; s++) {
+      if (rand() > 0.5) continue;
+      const w = 1.5 + 0.35 * Math.sin(d * 0.09 + s * 3.0), x = (s ? 1 : -1) * (rillE(d, s) - w - rr(0.95, 1.7)), r = rr(0.07, 0.22);
+      if (mnFree(x, d, r * 1.2)) mnBoulder(x, d, r, MP.regL);
+    }
+  }
+  const c = a - (a % CHUNK) + 20;
+  if (c >= a && c < b && c > 356 && c < 550) {
+    for (let s = 0; s < 2; s++) {
+      const w = 1.5 + 0.35 * Math.sin(c * 0.09 + s * 3.0) + 0.6, e = rillE(c, s);
+      mnBridgeX((s ? 1 : -1) * (e - w), (s ? 1 : -1) * (e + w), c);
+    }
+  }
+  if (!LOWQ || rand() < 0.5) for (let i = 0; i < 2; i++) {        // survey masts with a red light on the rims
+    const d = rr(a + 2, b - 2), s = rand() < 0.5 ? 0 : 1;
+    if (d < 356) continue;
+    const x = (s ? 1 : -1) * (rillE(d, s) - 2.6 - rr(0, 0.8));
+    if (!mnFree(x, d, 0.4)) continue;
+    mast(x, d, rr(1.2, 1.9));
+  }
+  if (k === 10) outpost(-8.6, 405);
+  if (k === 12) outpost(8.4, 492);
+}
+const MN_CROSS = [[rillA, 308, 332, 1.9, 0.35, 0.31, 1.2], [rillB, 429, 451, 1.6, 0.3, 0.4, 0]];
+// girder railings and piers along a lane's causeway over a chasm, stage range [dA, dB]
+function mnBridgeD(lx, dA, dB) {
+  frameId();
+  for (const sx of [-1, 1]) {
+    const x = lx + sx * 1.17;
+    box(x - 0.045, dA, x + 0.045, dB, 0.2, 0.28, MP.steel, MP.steel);
+    for (let d = dA; d <= dB + 0.01; d += (dB - dA) / Math.max(1, Math.round((dB - dA) / 0.8))) box(x - 0.035, d - 0.035, x + 0.035, d + 0.035, -0.5, 0.28, MP.steelD, MP.steel);
+    for (let d = dA + 0.9; d < dB - 0.6; d += 1.7) box(x - 0.1, d - 0.1, x + 0.1, d + 0.1, -7.5, -0.2, MP.steelD, MP.steelD);
+    shadowBox(x - 0.045, dA, x + 0.045, dB, 0.28);
+  }
+  for (const sx of [-1, 1]) if (mnSolid(lx + sx * 1.3, dB + 0.5, 0.1)) lampPost(lx + sx * 1.3, dB + 0.5, 0.9);   // (their shadows fall away from the drop)
+}
+// the same along a cross road over a flank chasm, from x0 to x1
+function mnBridgeX(x0, x1, c) {
+  frameId();
+  const xa = Math.min(x0, x1), xb = Math.max(x0, x1);
+  for (const sd of [-1, 1]) {
+    const d = c + sd * 1.66;
+    box(xa, d - 0.045, xb, d + 0.045, 0.2, 0.28, MP.steel, MP.steel);
+    for (let x = xa; x <= xb + 0.01; x += (xb - xa) / Math.max(1, Math.round((xb - xa) / 0.8))) box(x - 0.035, d - 0.035, x + 0.035, d + 0.035, -0.5, 0.28, MP.steelD, MP.steel);
+    for (let x = xa + 0.9; x < xb - 0.6; x += 1.7) box(x - 0.1, d - 0.1, x + 0.1, d + 0.1, -7.5, -0.2, MP.steelD, MP.steelD);
+  }
+}
+// a lamp post (its head in the brightest vertex colour: it catches the bloom)
+function lampPost(x, d, h) {
+  box(x - 0.035, d - 0.035, x + 0.035, d + 0.035, 0, h, MP.steelD, MP.steelD);
+  box(x - 0.08, d - 0.08, x + 0.08, d + 0.08, h, h + 0.08, MP.steel, MP.lampW);
+  shadowBox(x - 0.035, d - 0.035, x + 0.035, d + 0.035, h);
+}
+// a survey mast: a thin pole, a cross-arm, a red beacon, a battery box at its foot
+function mast(x, d, h) {
+  const g = moonH(x, d);
+  box(x - 0.03, d - 0.03, x + 0.03, d + 0.03, g, g + h, MP.steel, MP.steel);
+  box(x - 0.22, d - 0.02, x + 0.22, d + 0.02, g + h * 0.82, g + h * 0.86, MP.steel, MP.steel);
+  box(x - 0.05, d - 0.05, x + 0.05, d + 0.05, g + h, g + h + 0.06, MP.lampR, MP.lampR);
+  box(x + 0.08, d - 0.1, x + 0.3, d + 0.1, g, g + 0.14, MP.orange, MP.whiteD);
+  shadowBox(x - 0.03, d - 0.03, x + 0.03, d + 0.03, h, g);
+}
+// an outpost on the chasm's rim: a regolith-covered habitat pod, its airlock, a dish, a berm
+function outpost(x, d) {
+  if (!mnFree(x, d, 1.6)) return;
+  const g = moonH(x, d), s = Math.sign(x);
+  frame(x, d, 0);
+  LR[0] = 1.05; LH[0] = g - 0.05; LK[0] = 0.8; LR[1] = 0.95; LH[1] = g + 0.32; LK[1] = 0.95; LR[2] = 0.55; LH[2] = g + 0.62; LK[2] = 1.05; LR[3] = 0; LH[3] = g + 0.72; LK[3] = 1.1;
+  lathe(0, 0, 4, LOWQ ? 8 : 12, jit(MP.reg, 0.04, TC3), 0.2, 1.25, 1, 0.08);
+  frameId();
+  box(x - s * 1.5 - 0.22, d - 0.22, x - s * 1.5 + 0.22, d + 0.22, g, g + 0.36, MP.white, MP.whiteD);   // airlock
+  box(x - s * 1.72 - 0.02, d - 0.14, x - s * 1.72 + 0.02, d + 0.14, g + 0.04, g + 0.3, MP.lampW, MP.lampW);
+  cyl(x + s * 0.6, d + 1.3, 0.3, g + 0.5, g + 0.55, 8, MP.white, MP.whiteD);
+  box(x + s * 0.6 - 0.025, d + 1.3 - 0.025, x + s * 0.6 + 0.025, d + 1.3 + 0.025, g, g + 0.5, MP.steelD, MP.steelD);
+  shadowDisc(x, d, 1.0, 0.72, g);
+}
+
+// the great crater 560–780: terraced walls on both flanks (the terrain), rockfall at their foot and on
+// the terraces, survey beacons along the floor, a lander that tipped over on the left
+function mnGreatCrater(ch, k, a, b) {
+  mnCraterField(a, b, LOWQ ? 12 : 30, 1.1, 0.12, 11);
+  for (let d = a; d < b; d += LOWQ ? 1.6 : 0.8) {
+    for (let s = 0; s < 2; s++) {
+      const e = mnWallE(d, s), sg = s ? 1 : -1;
+      if (rand() < 0.55) { const x = sg * (e + rr(-0.5, 0.4)), r = rr(0.08, 0.34); if (mnFree(x, d, r * 1.2)) mnBoulder(x, d, r, MP.wall); }
+      if (!LOWQ && rand() < 0.25) { const x = sg * (e + rr(0.9, 3.2)), r = rr(0.1, 0.3); if (mnFree(x, d, r)) mnBoulder(x, d, r, MP.wall); }
+    }
+  }
+  for (let d = Math.ceil(a / 16) * 16 + 4; d < b; d += 16) for (const s of [-1, 1]) if (d > 566 && d < 774) { const x = s * 7.9; if (mnFree(x, d, 0.3)) mast(x, d, 0.9); }
+  if (k === 17) tippedLander(-8.4, 694);
+}
+// a lander on its side: the octagon tilted into the regolith, legs in the air, a dark scorch
+function tippedLander(x, d) {
+  const g = moonH(x, d);
+  frameId();
+  const c = mnGround(x, d, TC2);
+  DL = 0.012; ddisc(x + 0.3, d, 1.5, 1.2, c, 0.5, LOWQ ? 8 : 12);
+  frame(x, d, 0.5);
+  box(-0.7, -0.45, 0.2, 0.45, g, g + 0.55, MP.gold, MP.goldD);
+  box(0.2, -0.3, 0.6, 0.3, g, g + 0.36, MP.white, MP.whiteD);
+  for (const o of [-0.35, 0.35]) box(-1.3, o - 0.03, -0.7, o + 0.03, g + 0.35, g + 0.42, MP.steel, MP.steel);
+  frameId();
+  shadowBox(x - 0.7, d - 0.5, x + 0.6, d + 0.5, 0.55, g);
+  mnRubble(x, d, 2.4, LOWQ ? 3 : 6, 0.16, MP.regL);
+}
+
+// the mare 1240+: dark basalt, a few craters, rubble along the edge where it drops into space and round
+// the skylights, sparse boulders outside the arena (|x| ≥ 9.9)
+function mnMare(ch, k, a, b) {
+  mnCraterField(a, b, LOWQ ? 10 : 26, 1.3, 0.2, 11);
+  // wrinkle ridges: low sinuous swells of the old lava (the sunlit flank pale, the far one dark), stateless
+  // so they run on from chunk to chunk
+  frameId();
+  const step = LOWQ ? 2 : 1;
+  for (let r = 0; r < 2; r++) {
+    const rx = (d) => (r ? 4.6 + 2.4 * Math.sin(d * 0.017 + 2.1) + 1.2 * Math.sin(d * 0.083 + 0.4) + 0.4 * Math.sin(d * 0.23)
+      : -3.8 + 3.1 * Math.sin(d * 0.021 + 0.7) + 1.3 * Math.sin(d * 0.077) + 0.45 * Math.sin(d * 0.26 + 1.1));
+    for (let d = a; d < b - 0.01; d += step) {
+      const e = Math.min(b, d + step), xa = rx(d), xb = rx(e), on = vnoise(d * 0.09 + r * 31, 2.2);
+      if (on < 0.35) continue;                                          // the ridge sinks under the plain here
+      const wv = 0.12 + 0.2 * sstep(0.35, 0.7, on);
+      crackEdge(xa - wv, d, xb - wv, e, wv, MP.mareL, L_BASE + 0.004);
+      crackEdge(xa + 0.1, d, xb + 0.1, e, wv * 0.45, MP.mare, L_BASE + 0.004);
+    }
+  }
+  for (let s = 0; s < 2; s++) {
+    const sg = s ? 1 : -1;
+    for (let d = a + rr(0, 0.6); d < b; d += LOWQ ? 1.5 : 0.75) {
+      if (rand() > 0.6) continue;
+      const x = sg * (mareE(d, s) - rr(0.05, 0.6)), r = rr(0.07, 0.24);
+      if (mnFree(x, d, r)) mnBoulder(x, d, r, MP.mareL);
+    }
+    const j0 = Math.floor((a - MN_MARE - 14) / 20), j1 = Math.floor((b - MN_MARE - 5) / 20);
+    for (let j = j0; j <= j1; j++) if (marePit(j, s) && PIT.d >= a && PIT.d < b) mnPitLip(PIT.x, PIT.d, PIT.R);
+  }
+  for (let i = 0; i < 2; i++) {
+    if (rand() > 0.5) continue;
+    const x = (rand() < 0.5 ? -1 : 1) * rr(9.95, 10.6), d = rr(a + 1, b - 1), r = rr(0.25, 0.45);
+    if (mnFree(x, d, r * 1.1)) mnBoulder(x, d, r, MP.mareL);
+  }
+}
+
+// ---- lunar base 780–1000 ---------------------------------------------------------------------------
+// per chunk: [left-lower, left-upper, right-lower, right-upper] (lots between the cross roads)
+const MN_BASE_PLAN = {
+  19: [null, 'gate', null, 'gate'],
+  20: ['domes', 'pad', 'dish', 'domes'],
+  21: ['solar', 'hab', 'pad', 'tanks'],
+  22: ['array', 'farm', 'hangar', 'rovers'],
+  23: ['pad', 'domes', 'antenna', 'plant'],
+  24: ['tanks', 'dish', 'domes', 'solar'],
+};
+function mnBase(ch, k, d0, d1) {
+  const cr = d0 + 20;
+  mnCraterField(Math.max(d0, MN_BASE), d1, LOWQ ? 2 : 5, 0.5, 0, 4.4);
+  if (d0 >= MN_BASE) tireTracks(d0, d1, LOWQ ? 1 : 3);
+  const plan = MN_BASE_PLAN[k] || [];
+  for (let hi = 0; hi < 2; hi++) {
+    const la = hi ? cr + 2.0 : d0 + 1.2, lb = hi ? d1 - 1.2 : cr - 2.0;
+    if (la < MN_BASE + 2 || lb > MN_DRV - 1) continue;
+    for (const side of [-1, 1]) { const kind = plan[(side < 0 ? 0 : 2) + hi]; if (kind) mnLot(ch, kind, side, la, lb); }
+  }
+  // power and data lines on low trestles in the lane gaps (≤ 0.22: never tall), broken at every cross road
+  const a = Math.max(d0, MN_BASE + 3), b = Math.min(d1, MN_DRV - 1);
+  if (b > a) for (const x of [-2.75, 2.75]) {
+    for (const [s0, e0] of [[a, Math.min(b, cr - 2.4)], [Math.max(a, cr + 2.4), b]]) {
+      if (e0 - s0 < 1) continue;
+      frameId();
+      pipeD(x, s0, e0, 0.14, 0.07, x < 0 ? MP.orange : MP.steel, LOWQ ? 4 : 6);
+      for (let d = Math.ceil(s0 / 2.2) * 2.2 + 0.4; d < e0 - 0.2; d += 2.2) box(x - 0.16, d - 0.05, x + 0.16, d + 0.05, 0, 0.1, MP.steelD, MP.steelD);
+    }
+  }
+}
+// rover tracks wandering over the graded ground between the lanes (flat: the base is graded smooth)
+function tireTracks(a, b, n) {
+  frameId();
+  for (let i = 0; i < n; i++) {
+    const gx = (rand() < 0.5 ? -1 : 1) * rr(1.9, 3.6);
+    let x = gx, d = rr(a, b - 6), an = Math.PI / 2 + rr(-0.5, 0.5);
+    const L = rr(5, 14);
+    for (let s = 0; s < L && d < b - 0.8; s += 0.8) {
+      an += rr(-0.25, 0.25);
+      if (Math.abs(x) < 1.75) an += x < 0 ? -0.2 : 0.2;
+      if (Math.abs(x) > 3.75) an += x < 0 ? 0.2 : -0.2;
+      const nx = x + Math.cos(an) * 0.8, nd = d + Math.sin(an) * 0.8;
+      if (crossDist(nd) < 1.8 || nd < a) break;
+      for (const o of [-0.13, 0.13]) { const ox = -Math.sin(an) * o, od = Math.cos(an) * o; crackEdge(x + ox, d + od, nx + ox, nd + od, 0.035, MP.rut, 0.03); }
+      x = nx; d = nd;
+    }
+  }
+}
+// one lot: side ±1, stage range [a, b]; packed from |x| 6.9 outward (nearest the lanes shows best)
+function mnLot(ch, kind, side, a, b) {
+  const inner = side < 0 ? -6.9 : 6.9, X = (o) => inner + side * o, cd = (a + b) / 2;
+  const lo = (p, q) => Math.min(X(p), X(q)), hi = (p, q) => Math.max(X(p), X(q));
+  const pad = (p, q, pa, pb) => { setTile(T_SLAB); uvMode(2.2, 2.2); flat(lo(p, q), pa, hi(p, q), pb, L_BASE + 0.003, MP.sinter, 0.97); setTile(0); uvMode(0, 0); };
+  frameId();
+  switch (kind) {
+    case 'gate': {
+      // the base's perimeter berm (low: never tall), gaps for the lane and the cross road, a guard post,
+      // a lit sign, lamps
+      for (const [p, q] of [[0.3, 4.2], [5.4, 11]]) box(lo(p, q), a + 0.3, hi(p, q), a + 0.75, 0, 0.2, MP.regD, MP.reg);
+      pad(0.4, 3.6, a + 1.2, a + 4.8);
+      box(lo(1.0, 2.6), a + 1.8, hi(1.0, 2.6), a + 3.4, 0, 0.55, MP.white, MP.whiteD);
+      box(lo(1.0, 2.6), a + 1.76, hi(1.0, 2.6), a + 1.8, 0.28, 0.42, MP.lampW, MP.lampW);
+      shadowBox(lo(1.0, 2.6), a + 1.8, hi(1.0, 2.6), a + 3.4, 0.55);
+      for (const d of [cd + 1.4, cd + 4.4]) box(X(1.6) - 0.05, d - 0.05, X(1.6) + 0.05, d + 0.05, 0, 1.2, MP.steelD, MP.steelD);
+      box(X(1.6) - 0.06, cd + 1.2, X(1.6) + 0.06, cd + 4.6, 1.2, 1.8, MP.red, MP.white);             // sign board
+      shadowBox(X(1.6) - 0.06, cd + 1.2, X(1.6) + 0.06, cd + 4.6, 1.8);
+      lampPost(X(0.4), a + 1.0, 1.1); lampPost(X(0.4), b - 1.0, 1.1);
+      mast(X(5.2), cd + 3, 2.4);
+      break;
+    }
+    case 'domes': {
+      pad(0.3, 9.6, a + 0.4, b - 0.4);
+      const n = LOWQ ? 2 : 3;
+      const px = [X(1.75), X(5.0), X(2.3)], pd = [cd - 3.6, cd - 1.4, cd + 3.8], pr = [1.35, 1.6, 1.1];
+      for (let i = 0; i < n; i++) habDome(px[i], pd[i], pr[i], i === 2 ? 2 : 0);
+      tunnelBetween(px[0], pd[0], px[1], pd[1], 0.26);
+      if (n > 2) tunnelBetween(px[0], pd[0], px[2], pd[2], 0.26);
+      lampPost(X(0.5), cd + 1.0, 1.0);
+      break;
+    }
+    case 'pad': {
+      landingPad(X(3.25), cd, 2.7, rand() < 0.75);
+      break;
+    }
+    case 'dish': {
+      pad(0.4, 8.6, a + 0.5, b - 0.5);
+      const tx = X(2.4), td = cd - 1.4;
+      box(tx - 0.8, td - 0.8, tx + 0.8, td + 0.8, 0, 1.28, MP.sinterD, MP.sinter);                // the tower
+      box(tx - 0.95, td - 0.95, tx + 0.95, td + 0.95, 0, 0.22, MP.sinterD, MP.sinterL);
+      shadowBox(tx - 0.8, td - 0.8, tx + 0.8, td + 0.8, 1.28);
+      addDrift(ch, D_DISH, tx, 1.28, td, 0.5, 1);
+      sideStyle(T_OFFICE, 1.2, 0.9);
+      box(lo(5.6, 8.4), cd + 2.2, hi(5.6, 8.4), cd + 5.4, 0, 0.7, MP.white, MP.whiteD);            // the control block
+      plain();
+      shadowBox(lo(5.6, 8.4), cd + 2.2, hi(5.6, 8.4), cd + 5.4, 0.7);
+      addSpinner(ch, 0, X(7.0), GROUND_Y + 0.7, cd + 3.8, 2.2);
+      lampPost(X(0.5), cd - 5.4, 1.0);
+      break;
+    }
+    case 'array': {
+      // the phased-array radar: a wedge building, its slanted face (a dark octagonal array) toward us
+      pad(0.4, 8.8, a + 0.5, b - 0.5);
+      const x0 = lo(1.4, 7.4), x1 = hi(1.4, 7.4), dA = cd - 3.6, dM = cd - 0.6, dB = cd + 1.6, h0 = 0.62, h1 = 2.9;
+      box(x0, dA, x1, dB, 0, h0, MP.sinterD, MP.sinter);
+      box(x0, dM, x1, dB, h0, h1, MP.sinter, MP.sinterL);
+      checkTall(x0, dA, x1, dM, h1);
+      if (room(24)) {
+        const c = MP.sinterL, y0 = GROUND_Y + h0, y1 = GROUND_Y + h1;
+        vtx(x0, y0, dA, c, 1.05, 0, 0); vtx(x1, y0, dA, c, 1.05, 0, 0); vtx(x1, y1, dM, c, 1.05, 0, 0);
+        vtx(x0, y0, dA, c, 1.05, 0, 0); vtx(x1, y1, dM, c, 1.05, 0, 0); vtx(x0, y1, dM, c, 1.05, 0, 0);
+        vtx(x0, y0, dM, MP.sinter, 0.86, 0, 0); vtx(x0, y0, dA, MP.sinter, 0.86, 0, 0); vtx(x0, y1, dM, MP.sinter, 0.86, 0, 0);
+        vtx(x1, y0, dA, MP.sinter, 0.9, 0, 0); vtx(x1, y0, dM, MP.sinter, 0.9, 0, 0); vtx(x1, y1, dM, MP.sinter, 0.9, 0, 0);
+      }
+      const xc = (x0 + x1) / 2, sl = (h1 - h0) / (dM - dA), R = 1.15;
+      setTile(T_GLASS); uvMode(0.36, 0.36, false, xc - R, dA);
+      if (room(24)) for (let i = 0; i < 8; i++) {
+        const q0 = (i / 8) * TAU + Math.PI / 8, q1 = ((i + 1) / 8) * TAU + Math.PI / 8, dm = (dA + dM) / 2;
+        const ax = xc + Math.cos(q0) * R, ad = dm + Math.sin(q0) * R * 0.62, bx = xc + Math.cos(q1) * R, bd = dm + Math.sin(q1) * R * 0.62;
+        fv(xc, GROUND_Y + h0 + (dm - dA) * sl + 0.02, dm, MP.glass, 1); fv(ax, GROUND_Y + h0 + (ad - dA) * sl + 0.02, ad, MP.glass, 1); fv(bx, GROUND_Y + h0 + (bd - dA) * sl + 0.02, bd, MP.glass, 1);
+      }
+      setTile(0); uvMode(0, 0);
+      shadowBox(x0, dA, x1, dB, 2.2);
+      for (let i = 0; i < 2; i++) box(X(8.0) - 0.4, cd - 3 + i * 3.4, X(8.0) + 0.4, cd - 2.2 + i * 3.4, 0, 0.4, MP.red, MP.whiteD);
+      break;
+    }
+    case 'antenna': {
+      for (let i = 0; i < 5; i++) {
+        const x = X(1.3 + (i % 3) * 3.0 + (i > 2 ? 1.4 : 0)), d = cd - 4.6 + i * 2.3 + rr(-0.3, 0.3), h = rr(2.0, 3.3);
+        box(x - 0.04, d - 0.04, x + 0.04, d + 0.04, 0, h, MP.steel, MP.steel);
+        box(x - 0.2, d - 0.02, x + 0.2, d + 0.02, h - 0.34, h - 0.29, MP.steel, MP.steel);
+        box(x - 0.05, d - 0.05, x + 0.05, d + 0.05, h, h + 0.06, MP.lampR, MP.lampR);
+        if (!LOWQ) for (let q = 0; q < 3; q++) { const an = (q / 3) * TAU + 0.4 + i; wire(x, d, h * 0.9, x + Math.cos(an) * h * 0.42, d + Math.sin(an) * h * 0.42, 0.02, 0.011, MP.steelD); }
+        shadowBox(x - 0.04, d - 0.04, x + 0.04, d + 0.04, h);
+        box(x - 0.25, d + 0.3, x + 0.25, d + 0.7, 0, 0.3, MP.white, MP.whiteD);
+      }
+      // a lattice tower with its beacon
+      const tx = X(8.2), td = cd + 3.8, H = 3.7;
+      for (const [ox, od] of [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]]) box(tx + ox * 0.9 - 0.035, td + od * 0.9 - 0.035, tx + ox * 0.9 + 0.035, td + od * 0.9 + 0.035, 0, H - 0.1, MP.steel, MP.steel);
+      for (let y = 0.5, i = 0; y < H - 0.2; y += 0.6, i++) box(tx - 0.3, td - 0.3, tx + 0.3, td + 0.3, y, y + 0.08, i % 2 ? MP.red : MP.white, i % 2 ? MP.red : MP.white);
+      box(tx - 0.07, td - 0.07, tx + 0.07, td + 0.07, H - 0.1, H, MP.red, MP.lampR);
+      shadowBox(tx - 0.3, td - 0.3, tx + 0.3, td + 0.3, H);
+      break;
+    }
+    case 'solar': {
+      // rows of cell panels on posts, tilted toward the low sun
+      for (let r = 0; r < (LOWQ ? 3 : 5); r++) {
+        const p = 0.5 + r * 1.9, x0 = lo(p, p + 1.4), x1 = hi(p, p + 1.4);
+        solarRow(x0, x1, a + 0.8, b - 0.8);
+      }
+      break;
+    }
+    case 'tanks': {
+      pad(0.4, 9.2, a + 0.4, b - 0.4);
+      for (let i = 0; i < 3; i++) mnSphereTank(X(i === 1 ? 5.2 : 2.0), cd + (i - 1) * 4.4, rr(0.95, 1.1));
+      box(lo(0.5, 9.2), a + 0.5, hi(0.5, 9.2), a + 0.64, 0, 0.14, MP.sinterD, MP.sinterL);          // bund walls
+      box(lo(0.5, 9.2), b - 0.64, hi(0.5, 9.2), b - 0.5, 0, 0.14, MP.sinterD, MP.sinterL);
+      frameId(); pipeD(X(3.6), a + 1, b - 1, 0.24, 0.1, MP.hazard, 6);
+      break;
+    }
+    case 'hab': {
+      // habitat modules: long cylinders half buried under a regolith berm, joined by a node; radiators
+      for (let i = 0; i < 2; i++) {
+        const x = X(1.9 + i * 2.6), la = a + 1.2 + i * 0.8, lb = b - 1.4;
+        box(x - 0.78, la - 0.3, x + 0.78, lb + 0.3, 0, 0.22, MP.regD, MP.reg);                    // the berm
+        frame(x, 0, 0); tube(0, la, lb, 0.22, 0.52, 0.52, i ? MP.white : MP.whiteD, LOWQ ? 6 : 8); frameId();
+        for (let d = la + 0.6; d < lb - 0.4; d += 1.1) box(x - 0.04, d - 0.1, x + 0.04, d + 0.1, 0.73, 0.76, MP.lampW, MP.lampW);
+        shadowBox(x - 0.55, la, x + 0.55, lb, 0.74);
+      }
+      habDome(X(3.2), b + 0.2, 0.9, 0);
+      topStyle(T_ROWS, 0.3, 0.5);
+      for (let i = 0; i < 3; i++) box(X(7.2 + i * 0.7) - 0.05, cd - 3, X(7.2 + i * 0.7) + 0.05, cd + 3, 0, rr(1.0, 1.5), MP.white, MP.white);
+      plain();
+      break;
+    }
+    case 'farm': {
+      // hydroponic tunnels: glass half-cylinders glowing green from inside
+      for (let i = 0; i < (LOWQ ? 2 : 4); i++) {
+        const x = X(1.2 + i * 1.5);
+        frame(x, 0, 0); tube(0, a + 1, b - 1, 0.05, 0.55, 0.55, MP.glassG, LOWQ ? 5 : 7); frameId();
+        flat(x - 0.08, a + 1, x + 0.08, b - 1, 0.62, MP.lampG, 1.15);
+        box(x - 0.6, a + 0.7, x + 0.6, a + 1.0, 0, 0.66, MP.white, MP.whiteD);
+        shadowBox(x - 0.55, a + 1, x + 0.55, b - 1, 0.6);
+      }
+      break;
+    }
+    case 'hangar': {
+      pad(0.3, 9.4, a + 0.4, b - 0.4);
+      mnHangar(X(2.6), cd + 1.6);
+      mnHangar(X(6.8), cd + 1.6);
+      rover(X(1.4), cd - 3.6, 0.4); rover(X(4.2), cd - 4.2, -0.3);
+      lampPost(X(0.4), cd - 5.8, 1.0);
+      break;
+    }
+    case 'rovers': {
+      frameId(); flat(lo(0.3, 9.0), a + 0.5, hi(0.3, 9.0), b - 0.5, L_ROAD, MP.sinterD);
+      for (let i = 0; i < 8; i++) { const x = X(0.9 + (i % 4) * 1.15), d = cd + (i < 4 ? -3.6 : -0.8); if (rand() < 0.85) rover(x, d, 0); }
+      for (let i = 0; i < 4; i++) box(X(5.8 + (i % 2) * 1.0) - 0.36, cd + 2.4 + ((i / 2) | 0) * 1.6 - 0.5, X(5.8 + (i % 2) * 1.0) + 0.36, cd + 2.4 + ((i / 2) | 0) * 1.6 + 0.5, 0, 0.36, pick(P.cont), MP.whiteD);
+      break;
+    }
+    case 'plant': {
+      // regolith processing: a hopper fed by a conveyor, the furnace hall (its glowing vent), slag heaps
+      const hx = X(2.2), hd = cd - 3.2;
+      for (const [ox, od] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) box(hx + ox - 0.05, hd + od - 0.05, hx + ox + 0.05, hd + od + 0.05, 0, 1.2, MP.steelD, MP.steelD);
+      frame(hx, hd, 0); LR[0] = 0.2; LH[0] = 1.0; LK[0] = 0.8; LR[1] = 0.8; LH[1] = 1.9; LK[1] = 1.0; LR[2] = 0.8; LH[2] = 2.05; LK[2] = 1.05; lathe(0, 0, 3, 8, MP.orange, 0.4); frameId();
+      frame(X(4.3), hd + 1.8, side < 0 ? 0.9 : -0.9); box(-0.12, -2.4, 0.12, 0.4, 1.1, 1.22, MP.steel, MP.dark); frameId();   // the conveyor
+      box(lo(3.8, 8.6), cd + 0.6, hi(3.8, 8.6), cd + 5.4, 0, 1.1, MP.sinterD, MP.sinter);             // furnace hall
+      box(lo(4.4, 5.2), cd + 0.56, hi(4.4, 5.2), cd + 0.6, 0.3, 0.8, MP.lampW, MP.orange);
+      cyl(X(7.4), cd + 4.4, 0.24, 1.1, 2.6, 8, MP.steelD, MP.dark);
+      disc(X(7.4), cd + 4.4, 0.16, 0.16, 2.61, MP.orange, 8, 1.2);
+      shadowBox(lo(3.8, 8.6), cd + 0.6, hi(3.8, 8.6), cd + 5.4, 1.1); shadowDisc(X(7.4), cd + 4.4, 0.24, 2.6); shadowDisc(hx, hd, 0.8, 2.05);
+      for (let i = 0; i < 2; i++) { frame(X(1.6 + i * 1.6), cd + 3.4 + i * 1.3, 0); LR[0] = 0.8; LH[0] = 0; LK[0] = 0.8; LR[1] = 0; LH[1] = 0.45; LK[1] = 1.05; lathe(0, 0, 2, 7, MP.regD, 0, 1, 1, 0.3); frameId(); }
+      break;
+    }
+  }
+  frameId();
+}
+// a pressurised dome: footing ring, the shell (0 white habitat, 1 greenhouse glass, 2 regolith shield),
+// a lit window band, an airlock toward the camera
+function habDome(x, d, r, kind) {
+  const segs = LOWQ ? 10 : 14, c = kind === 1 ? MP.glassG : kind === 2 ? MP.reg : MP.white;
+  cyl(x, d, r * 1.04, 0, 0.14, segs, MP.sinterD, MP.sinterD, false);
+  frame(x, d, 0);
+  LR[0] = r; LH[0] = 0.12; LK[0] = 0.8;
+  LR[1] = r * 0.97; LH[1] = 0.12 + r * 0.3; LK[1] = 0.92;
+  LR[2] = r * 0.84; LH[2] = 0.12 + r * 0.58; LK[2] = 1.0;
+  LR[3] = r * 0.56; LH[3] = 0.12 + r * 0.84; LK[3] = 1.06;
+  LR[4] = 0; LH[4] = 0.12 + r * 0.98; LK[4] = 1.1;
+  lathe(0, 0, 5, segs, jit(c, 0.03, TC3), 0.1, 1, 1, kind === 2 ? 0.06 : 0);
+  if (kind !== 2) {
+    LR[0] = r * 0.985; LH[0] = 0.12 + r * 0.2; LK[0] = 1.15; LR[1] = r * 0.975; LH[1] = 0.12 + r * 0.27; LK[1] = 1.15;
+    lathe(0, 0, 2, segs, kind === 1 ? MP.lampG : MP.lampW, 0.1);
+  }
+  box(-0.28, -r - 0.5, 0.28, -r + 0.1, 0, 0.42, MP.whiteD, MP.white);                             // the airlock
+  box(-0.16, -r - 0.52, 0.16, -r - 0.48, 0.05, 0.34, MP.lampW, MP.lampW);
+  frameId();
+  shadowDisc(x, d, r * 0.9, 0.12 + r * 0.9);
+}
+function tunnelBetween(x0, d0, x1, d1, r) {
+  const L = Math.hypot(x1 - x0, d1 - d0), rot = Math.atan2(x0 - x1, d1 - d0);
+  frame(x0, d0, rot);
+  tube(0, 0, L, r, r, r, MP.whiteD, 6);
+  frameId();
+}
+// a landing pad of sintered regolith: hazard ring, scorch in the middle, edge lamps, a low blast berm;
+// often a lander standing on it
+function landingPad(x, d, r, lander) {
+  frameId();
+  const segs = LOWQ ? 14 : 22;
+  disc(x, d, r + 0.5, r + 0.5, L_BASE + 0.002, MP.sinterD, segs);
+  disc(x, d, r, r, L_BASE + 0.004, MP.sinter, segs);
+  ring(x, d, r * 0.78, r * 0.78, 0.12, L_ROAD, MP.hazard, segs);
+  disc(x, d, r * 0.42, r * 0.42, L_ROAD - 0.002, MP.dark, segs, 0.6);
+  for (let i = 0; i < 4; i++) { const an = (i / 4) * TAU + Math.PI / 4; frame(x + Math.cos(an) * r * 0.55, d + Math.sin(an) * r * 0.55, an); flat(-0.1, -0.35, 0.1, 0.35, L_MARK, MP.paint, 0.9); frameId(); }
+  for (let i = 0; i < 8; i++) { const an = (i / 8) * TAU, lx = x + Math.cos(an) * (r + 0.2), ld = d + Math.sin(an) * (r + 0.2); box(lx - 0.06, ld - 0.06, lx + 0.06, ld + 0.06, 0, 0.1, MP.steelD, i % 2 ? MP.lampW : MP.lampR); }
+  for (let i = 0; i < 14; i++) {
+    const an = (i / 14) * TAU, q = r + 0.75;
+    frame(x + Math.cos(an) * q, d + Math.sin(an) * q, an + Math.PI / 2);
+    box(-0.55, -0.18, 0.55, 0.18, 0, 0.2, MP.regD, MP.reg);
+    frameId();
+  }
+  if (lander) lunarLander(x, d, rr(0, TAU), rr(0.9, 1.1));
+}
+// a lander: the gold-foil descent stage on four splayed legs, the white crew cabin with dark windows, a
+// dish, thruster quads
+function lunarLander(x, d, rot, s) {
+  frame(x, d, rot);
+  for (let i = 0; i < 4; i++) {
+    const an = (i / 4) * TAU + Math.PI / 4, cx = Math.cos(an), sx = Math.sin(an);
+    box((cx * 0.95 - 0.04) * s, (sx * 0.95 - 0.04) * s, (cx * 0.95 + 0.04) * s, (sx * 0.95 + 0.04) * s, 0, 0.62 * s, MP.steel, MP.steel);
+    disc(cx * 1.05 * s, sx * 1.05 * s, 0.15 * s, 0.15 * s, L_ROAD + 0.004, MP.steel, 6);
+  }
+  for (let i = 0; i < 8; i++) { const an = (i / 8) * TAU + Math.PI / 8; PX[i] = Math.cos(an) * 0.78 * s; PD[i] = Math.sin(an) * 0.78 * s; }
+  prism(8, 0.36 * s, 0.84 * s, MP.gold, MP.goldD);
+  box(-0.46 * s, -0.4 * s, 0.46 * s, 0.34 * s, 0.84 * s, 1.36 * s, MP.whiteD, MP.white);
+  box(-0.3 * s, -0.43 * s, 0.3 * s, -0.4 * s, 1.08 * s, 1.26 * s, MP.glass, MP.glass);
+  box(-0.6 * s, 0.1 * s, -0.46 * s, 0.24 * s, 1.14 * s, 1.26 * s, MP.steelD, MP.steel); box(0.46 * s, 0.1 * s, 0.6 * s, 0.24 * s, 1.14 * s, 1.26 * s, MP.steelD, MP.steel);
+  cyl(0.24 * s, 0.2 * s, 0.18 * s, 1.44 * s, 1.47 * s, 7, MP.white, MP.whiteD);
+  box(0.23 * s, 0.19 * s, 0.25 * s, 0.21 * s, 1.36 * s, 1.44 * s, MP.steelD, MP.steelD);
+  frameId();
+  shadowDisc(x, d, 0.8 * s, 1.3 * s);
+}
+function solarRow(x0, x1, a, b) {
+  frameId();
+  const y0 = GROUND_Y + 0.28, y1 = GROUND_Y + 0.62, n = Math.max(1, Math.round((b - a) / 1.3));
+  checkTall(x0, a, x1, b, 0.62);
+  setTile(T_GLASS);
+  for (let i = 0; i < n; i++) {
+    const pa = a + (b - a) * i / n + 0.05, pb = a + (b - a) * (i + 1) / n - 0.05;
+    if (!room(6)) break;
+    const c = MP.panel;
+    vtx(x0, y0, pa, c, 1.12, x0 / 0.36, pa / 0.36); vtx(x1, y1, pa, c, 1.12, x1 / 0.36, pa / 0.36); vtx(x1, y1, pb, c, 1.12, x1 / 0.36, pb / 0.36);
+    vtx(x0, y0, pa, c, 1.12, x0 / 0.36, pa / 0.36); vtx(x1, y1, pb, c, 1.12, x1 / 0.36, pb / 0.36); vtx(x0, y0, pb, c, 1.12, x0 / 0.36, pb / 0.36);
+  }
+  setTile(0);
+  const xm = (x0 + x1) / 2;
+  for (let d = a + 0.6; d < b - 0.3; d += 2.6) box(xm - 0.04, d - 0.04, xm + 0.04, d + 0.04, 0, 0.44, MP.steelD, MP.steelD);
+  shadowBox(x0, a, x1, b, 0.5);
+}
+function mnSphereTank(x, d, r) {
+  const yc = r + 0.32;
+  frame(x, d, 0);
+  for (let i = 0; i < 6; i++) {
+    const an = (i / 6) * TAU + 0.3, lx = Math.cos(an) * r * 0.8, ld = Math.sin(an) * r * 0.8;
+    box(lx - 0.05, ld - 0.05, lx + 0.05, ld + 0.05, 0, yc, MP.steelD, MP.steelD);
+  }
+  LR[0] = 0; LH[0] = yc - r; LK[0] = 0.6;
+  LR[1] = r * 0.71; LH[1] = yc - r * 0.71; LK[1] = 0.74;
+  LR[2] = r; LH[2] = yc; LK[2] = 0.9;
+  LR[3] = r * 0.71; LH[3] = yc + r * 0.71; LK[3] = 1.02;
+  LR[4] = 0; LH[4] = yc + r; LK[4] = 1.1;
+  lathe(0, 0, 5, LOWQ ? 8 : 12, jit(MP.white, 0.03, TC3), 0);
+  LR[0] = r * 1.005; LH[0] = yc - 0.06; LK[0] = 0.95; LR[1] = r * 1.005; LH[1] = yc + 0.06; LK[1] = 0.95;
+  lathe(0, 0, 2, LOWQ ? 8 : 12, MP.orange, 0);
+  frameId();
+  shadowDisc(x, d, r * 0.9, yc + r * 0.4);
+}
+// a Quonset hangar under a regolith cover, its lit door toward the camera
+function mnHangar(x, d, w = 3.4, l = 4.4, h = 1.6) {
+  frame(x, d, 0);
+  checkTall(-w / 2, -l / 2, w / 2, l / 2, h);
+  const segs = 8;
+  if (room(segs * 12 + 12)) {
+    for (let i = 0; i < segs; i++) {
+      const a0 = (i / segs) * Math.PI, a1 = ((i + 1) / segs) * Math.PI, am = (a0 + a1) / 2;
+      const x0 = Math.cos(a0) * w / 2, y0 = Math.sin(a0) * h, x1 = Math.cos(a1) * w / 2, y1 = Math.sin(a1) * h;
+      const c = MP.reg, k = 0.8 + 0.25 * Math.cos(am - 2.2);
+      vtx(x1, GROUND_Y + y1, -l / 2, c, k, 0, 0); vtx(x0, GROUND_Y + y0, -l / 2, c, k, 0, 0); vtx(x0, GROUND_Y + y0, l / 2, c, k, 0, 0);
+      vtx(x1, GROUND_Y + y1, -l / 2, c, k, 0, 0); vtx(x0, GROUND_Y + y0, l / 2, c, k, 0, 0); vtx(x1, GROUND_Y + y1, l / 2, c, k, 0, 0);
+    }
+    for (let i = 0; i < segs; i++) {
+      const a0 = (i / segs) * Math.PI, a1 = ((i + 1) / segs) * Math.PI;
+      const x0 = Math.cos(a0) * w / 2, y0 = Math.sin(a0) * h, x1 = Math.cos(a1) * w / 2, y1 = Math.sin(a1) * h;
+      vtx(0, GROUND_Y, -l / 2, MP.whiteD, 1, 0, 0); vtx(x0, GROUND_Y + y0, -l / 2, MP.whiteD, 1, 0, 0); vtx(x1, GROUND_Y + y1, -l / 2, MP.whiteD, 1, 0, 0);
+    }
+  }
+  box(-w * 0.3, -l / 2 - 0.04, w * 0.3, -l / 2 + 0.01, 0, h * 0.62, MP.dark, MP.dark);
+  box(-w * 0.3, -l / 2 - 0.06, w * 0.3, -l / 2 - 0.03, h * 0.62, h * 0.68, MP.lampW, MP.lampW);
+  flat(-w / 2 + 0.2, -l / 2 - 1.7, w / 2 - 0.2, -l / 2, L_ROAD, MP.sinterD);
+  shadowBox(-w / 2, -l / 2, w / 2, l / 2, h * 0.85);
+  frameId();
+}
+// a six-wheeled pressurised rover: chassis, wheels, the cabin, a dish on a mast
+function rover(x, d, rot) {
+  frame(x, d, rot);
+  plain();
+  for (const sx of [-1, 1]) for (const dd of [-0.34, 0, 0.34]) box(sx * 0.2 - 0.05, dd - 0.09, sx * 0.2 + 0.05, dd + 0.09, 0, 0.14, MP.dark, MP.dark);
+  box(-0.17, -0.44, 0.17, 0.44, 0.08, 0.22, MP.steelD, MP.whiteD);
+  box(-0.15, 0.02, 0.15, 0.4, 0.22, 0.36, MP.white, MP.white);
+  box(-0.12, 0.4, 0.12, 0.42, 0.25, 0.33, MP.glass, MP.glass);
+  box(-0.01, -0.3, 0.01, -0.28, 0.22, 0.45, MP.steel, MP.steel);
+  disc(0, -0.29, 0.1, 0.1, 0.46, MP.white, 6);
+  shadowBox(-0.2, -0.44, 0.2, 0.44, 0.36);
+  frameId();
+}
+
+// ---- mass driver 1000–1240 ---------------------------------------------------------------------------
+// The launch rail runs in its trench on the right flank (x ≈ 9.4, the terrain's trench), under every cross
+// road (tunnel mouths at both ends of each open stretch): the rail beam, glowing coil arches every 1.3,
+// parapets along the trench, a payload sled racing up each stretch (drift 'sled'). The breech (a loading
+// gantry over the trench) at its start, the muzzle's flared coils at its end. On the left flank: the
+// capacitor banks that feed it, solar fields, radiators and the control tower.
+const MN_DRV_PLAN = { 25: ['control', 'capacitor'], 26: ['solar', 'capacitor'], 27: ['radiator', 'solar'], 28: ['capacitor', 'tower'], 29: ['solar', 'capacitor'], 30: ['radiator', null] };
+function mnDriver(ch, k, d0, d1) {
+  const cr = d0 + 20;
+  mnCraterField(Math.max(d0, MN_DRV), d1, LOWQ ? 2 : 5, 0.5, 0, 4.4);
+  tireTracks(Math.max(d0, MN_DRV), Math.min(d1, MN_MARE - 6), LOWQ ? 1 : 2);
+  // the open stretches of the rail in this chunk (between the tunnel mouths at every cross road)
+  for (const [s0, e0] of [[d0 - 20 + 2.6, cr - 2.6], [cr + 2.6, d1 + 20 - 2.6]]) {
+    const sa = Math.max(s0, MN_DRV_A + 0.5), sb = Math.min(e0, MN_DRV_B - 0.4);
+    const a = Math.max(sa, d0), b = Math.min(sb, d1);
+    if (b - a < 1) continue;
+    driverRail(a, b);
+    if (a === sa) tunnelMouth(a, -1);
+    // the chunk holding a stretch's end owns its sled (that chunk lives while any of the stretch shows)
+    if (b === sb) {
+      if (b < MN_DRV_B - 1) tunnelMouth(b, 1);
+      if (sb - sa > 4) addDrift(ch, D_SLED, MN_DRV_X, -0.72, sa + 0.4, 0, 1, sb - sa - 1.2, 40, (sb - sa) * 2.6);
+    }
+  }
+  if (d0 <= MN_DRV_A && d1 > MN_DRV_A) driverBreech();
+  if (d0 <= MN_DRV_B && d1 > MN_DRV_B) driverMuzzle();
+  const plan = MN_DRV_PLAN[k] || [];
+  for (let hi = 0; hi < 2; hi++) {
+    const la = hi ? cr + 2.0 : d0 + 1.2, lb = hi ? d1 - 1.2 : cr - 2.0;
+    if (la < MN_DRV + 1 || lb > MN_MARE - 4) continue;
+    if (plan[hi]) mnDrvLot(ch, plan[hi], la, lb);
+  }
+  // cables from the capacitor banks to the rail: flat conduits across the right lane gap (never tall)
+  for (let d = Math.ceil(d0 / 10) * 10 + 5; d < d1; d += 10) {
+    if (d < MN_DRV + 6 || d > MN_DRV_B - 4 || crossDist(d) < 3) continue;
+    frameId(); flat(-2, d - 0.08, 2, d + 0.08, L_ROAD - 0.003, MP.dark, 0.9);
+    flat(-40, d - 0.08, -6.6, d + 0.08, L_ROAD - 0.003, MP.dark, 0.9);
+    flat(6.6, d - 0.08, MN_DRV_X - 1.4, d + 0.08, L_ROAD - 0.003, MP.orange, 0.8);
+  }
+}
+function driverRail(a, b) {
+  const x = MN_DRV_X, f = -1.1;
+  frameId();
+  box(x - 0.24, a, x + 0.24, b, f, -0.8, MP.steelD, MP.steel);                                     // the rail beam
+  box(x - 0.2, a, x - 0.14, b, -0.8, -0.74, MP.lampC, MP.lampC); box(x + 0.14, a, x + 0.2, b, -0.8, -0.74, MP.lampC, MP.lampC);
+  for (const sx of [-1, 1]) box(x + sx * 1.42 - 0.08, a, x + sx * 1.42 + 0.08, b, -0.3, 0.16, MP.sinterD, MP.sinterL);   // parapets
+  for (let d = Math.ceil(a / 1.3) * 1.3 + 0.2; d < b - 0.2; d += 1.3) {
+    const big = ((d / 1.3) | 0) % 4 === 0;
+    for (const sx of [-1, 1]) box(x + sx * 0.62 - 0.07, d - 0.08, x + sx * 0.62 + 0.07, d + 0.08, f, 0.06, MP.steelD, MP.steel);
+    box(x - 0.69, d - 0.1, x + 0.69, d + 0.1, 0.06, 0.18, big ? MP.steel : MP.lampC, big ? MP.whiteD : MP.lampC);
+  }
+}
+// the end wall of an open stretch of trench (dir −1: its start, +1: its end) with the dark tunnel mouth
+function tunnelMouth(d, dir) {
+  const x = MN_DRV_X, t = d + dir * 0.3;
+  box(x - 1.5, Math.min(d, t), x + 1.5, Math.max(d, t), -1.1, 0.2, MP.sinterD, MP.sinter);
+  if (dir > 0) box(x - 0.8, d - 0.04, x + 0.8, d, -1.1, -0.2, MP.dark, MP.dark);
+}
+function driverBreech() {
+  const x = MN_DRV_X, d = MN_DRV_A + 3.5;
+  frameId();
+  box(x - 1.5, MN_DRV_A - 1.4, x + 1.5, MN_DRV_A + 0.5, -1.1, 0.5, MP.sinterD, MP.sinter);        // the loading block
+  box(x - 1.2, MN_DRV_A + 0.46, x + 1.2, MN_DRV_A + 0.5, -0.8, 0.2, MP.dark, MP.dark);
+  for (const lx of [x - 1.3, x + 1.3]) for (const ld of [d - 1.2, d + 1.2]) box(lx - 0.08, ld - 0.08, lx + 0.08, ld + 0.08, 0, 2.3, MP.hazard, MP.hazard);
+  box(x - 1.45, d - 1.35, x + 1.45, d + 1.35, 2.3, 2.5, MP.hazard, MP.steel);                     // the gantry
+  box(x - 0.4, d - 0.4, x + 0.4, d + 0.4, 2.0, 2.3, MP.steelD, MP.steel);
+  box(x - 0.03, d - 0.03, x + 0.03, d + 0.03, -0.7, 2.0, MP.steel, MP.steel);
+  shadowBox(x - 1.45, d - 1.35, x + 1.45, d + 1.35, 2.5);
+  box(x + 1.7, MN_DRV_A - 2.6, x + 4.4, MN_DRV_A + 6.5, 0, 1.3, MP.white, MP.whiteD);             // the payload store
+  shadowBox(x + 1.7, MN_DRV_A - 2.6, x + 4.4, MN_DRV_A + 6.5, 1.3);
+}
+function driverMuzzle() {
+  const x = MN_DRV_X, e = MN_DRV_B;
+  frameId();
+  for (let i = 0; i < 4; i++) {
+    const d = e - 4.6 + i * 1.3, w = 0.75 + i * 0.13, h = 0.2 + i * 0.28;
+    for (const sx of [-1, 1]) box(x + sx * w - 0.08, d - 0.1, x + sx * w + 0.08, d + 0.1, -1.1, h, MP.steelD, MP.steel);
+    box(x - w - 0.08, d - 0.12, x + w + 0.08, d + 0.12, h, h + 0.14, MP.lampC, MP.lampC);
+    shadowBox(x - w, d - 0.12, x + w, d + 0.12, h + 0.14);
+  }
+  box(x - 1.5, e - 0.2, x - 1.3, e + 0.4, -1.1, 0.3, MP.sinterD, MP.sinter); box(x + 1.3, e - 0.2, x + 1.5, e + 0.4, -1.1, 0.3, MP.sinterD, MP.sinter);
+}
+// the left flank of the driver complex: |x| ∈ [6.9, 14]
+function mnDrvLot(ch, kind, a, b) {
+  const X = (o) => -6.9 - o, cd = (a + b) / 2;
+  frameId();
+  switch (kind) {
+    case 'capacitor': {
+      // capacitor banks: dark cabinets in rows, cyan charge lights along their tops, insulator stacks
+      setTile(T_SLAB); uvMode(2.2, 2.2); flat(X(9.4), a + 0.4, X(0.3), b - 0.4, L_BASE + 0.003, MP.sinterD, 0.97); setTile(0); uvMode(0, 0);
+      for (let r = 0; r < 3; r++) {
+        const x = X(1.0 + r * 1.6);
+        box(x - 0.45, a + 1, x + 0.45, b - 1, 0, 0.62, MP.dark, MP.steelD);
+        flat(x - 0.06, a + 1.1, x + 0.06, b - 1.1, 0.625, MP.lampC, 1.2);
+        shadowBox(x - 0.45, a + 1, x + 0.45, b - 1, 0.62);
+        for (let d = a + 1.6; d < b - 1.2; d += 2.4) { cyl(x, d, 0.12, 0.62, 1.25, 6, MP.whiteD, MP.white); shadowDisc(x, d, 0.12, 1.25); }
+      }
+      break;
+    }
+    case 'solar': {
+      for (let r = 0; r < (LOWQ ? 3 : 4); r++) solarRow(X(0.6 + r * 1.9 + 1.4), X(0.6 + r * 1.9), a + 0.8, b - 0.8);
+      break;
+    }
+    case 'radiator': {
+      topStyle(T_ROWS, 0.3, 0.5);
+      for (let i = 0; i < 5; i++) { const x = X(1.2 + i * 0.75); box(x - 0.05, a + 1.2, x + 0.05, b - 1.2, 0.2, rr(1.3, 1.9), MP.white, MP.white); }
+      plain();
+      box(X(4.8), a + 0.9, X(0.8), a + 1.2, 0, 0.3, MP.steelD, MP.steel);
+      shadowBox(X(4.4), a + 1.2, X(1.1), b - 1.2, 1.6);
+      break;
+    }
+    case 'control': {
+      sideStyle(T_OFFICE, 1.1, 0.8);
+      box(X(5.4), cd - 3.2, X(1.2), cd + 2.8, 0, 1.3, MP.white, MP.whiteD);
+      plain();
+      box(X(3.6), cd - 1.6, X(1.8), cd + 1.2, 1.3, 2.3, MP.whiteD, MP.white);
+      box(X(3.66), cd - 1.62, X(1.74), cd - 1.58, 1.8, 2.15, MP.lampC, MP.lampC);
+      shadowBox(X(5.4), cd - 3.2, X(1.2), cd + 2.8, 1.3); shadowBox(X(3.6), cd - 1.6, X(1.8), cd + 1.2, 2.3);
+      addSpinner(ch, 0, X(2.7), GROUND_Y + 2.3, cd - 0.2, 1.7);
+      lampPost(X(0.4), cd - 5, 1.0); lampPost(X(0.4), cd + 5, 1.0);
+      break;
+    }
+    case 'tower': {
+      // the tracking tower: a lattice mast carrying a big dish, which follows the payloads up the rail
+      const tx = X(3.2), td = cd;
+      for (const [ox, od] of [[-0.35, -0.35], [0.35, -0.35], [-0.35, 0.35], [0.35, 0.35]]) box(tx + ox - 0.04, td + od - 0.04, tx + ox + 0.04, td + od + 0.04, 0, 1.9, MP.steel, MP.steel);
+      for (let y = 0.4; y < 1.9; y += 0.5) box(tx - 0.36, td - 0.36, tx + 0.36, td + 0.36, y, y + 0.05, MP.steelD, MP.steelD);
+      box(tx - 0.5, td - 0.5, tx + 0.5, td + 0.5, 1.9, 2.0, MP.steelD, MP.steel);
+      shadowBox(tx - 0.4, td - 0.4, tx + 0.4, td + 0.4, 2.0);
+      addDrift(ch, D_DISH, tx, 2.0, td, 0.3, 0.8);
+      break;
+    }
+  }
+  frameId();
+}
+
+// a hard white sun and no air: near-black fill (a little earthshine), no fog, black shadows, long ones
+// (shK: the sun stands low). Backdrop: black space, the galactic band, crisp stars and, low beside the
+// mare, the Earth — its day side toward the sun
+const MOON_TOD_SRC = [
+  { d: -60, sun: 0xfff8f0, sunI: 2.2, sky: 0x1c2230, gnd: 0x0c0d10, hemiI: 0.45, fog: 0x000000, near: 120, far: 320,
+    cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0.7, shK: 3.2, cloud: 0,
+    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xc6ceda, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
+    pSpace: 0x010103, pNeb: 0x262a3c, pX: 13, pZ: -14, pF: 17, pH: 4.2, pCover: 0.55, pAtmW: 0.03, pNebI: 0.9, pStar: 1.0, pCityI: 0.6, psun: [-0.7, 0.45, 0.55] },
+  { d: 520, sun: 0xfff8f0, sunI: 2.2, sky: 0x1c2230, gnd: 0x0c0d10, hemiI: 0.45, fog: 0x000000, near: 120, far: 320,
+    cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0.7, shK: 3.0, cloud: 0,
+    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xc6ceda, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
+    pSpace: 0x010103, pNeb: 0x262a3c, pX: 13, pZ: -14, pF: 17, pH: 4.2, pCover: 0.55, pAtmW: 0.03, pNebI: 0.9, pStar: 1.0, pCityI: 0.6, psun: [-0.7, 0.45, 0.55] },
+  { d: 800, sun: 0xfffaf4, sunI: 2.15, sky: 0x20263a, gnd: 0x0e0f12, hemiI: 0.5, fog: 0x000000, near: 120, far: 320,
+    cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0.68, shK: 2.8, cloud: 0,
+    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xc6ceda, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
+    pSpace: 0x010103, pNeb: 0x262a3c, pX: 13, pZ: -14, pF: 17, pH: 4.2, pCover: 0.55, pAtmW: 0.03, pNebI: 0.9, pStar: 1.0, pCityI: 0.6, psun: [-0.7, 0.45, 0.55] },
+  { d: 1180, sun: 0xfffaf4, sunI: 2.15, sky: 0x20263a, gnd: 0x0e0f12, hemiI: 0.5, fog: 0x000000, near: 120, far: 320,
+    cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0.68, shK: 2.8, cloud: 0,
+    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xc6ceda, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
+    pSpace: 0x010103, pNeb: 0x262a3c, pX: 13, pZ: -14, pF: 17, pH: 4.2, pCover: 0.55, pAtmW: 0.03, pNebI: 0.9, pStar: 1.0, pCityI: 0.6, psun: [-0.7, 0.45, 0.55] },
+  // the mare: the sun lower still (the longest shadows), a cold earthlit fill, the Earth big beside the arena
+  { d: 1275, sun: 0xfff4ea, sunI: 2.25, sky: 0x223050, gnd: 0x0c0e14, hemiI: 0.5, fog: 0x000000, near: 120, far: 320,
+    cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0.74, shK: 3.4, cloud: 0,
+    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xc6ceda, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
+    pSpace: 0x010103, pNeb: 0x2c2c48, pX: 12, pZ: -10, pF: 17, pH: 2.6, pCover: 0.55, pAtmW: 0.03, pNebI: 1.0, pStar: 1.1, pCityI: 0.8, psun: [-0.7, 0.45, 0.55] },
+];
+const MOON_CLOUD = { highlands: 0, rilles: 0, crater: 0, base: 0, driver: 0, mare: 0 };
+
+// =============================================================================
 // stage table
 // =============================================================================
 function genCoastal(w, ch, k, d0) {
@@ -6115,6 +7371,19 @@ export const WORLD_STAGES = {
     cloudShadowK: () => 0,
     deck: false,
     space: { body: 1, nebula: true, deep: true }, drift: true,
+  },
+  moon: {
+    id: 'moon', layout: MOON_LAYOUT, salt: 1737100,
+    clear: { from: MN_RIL, to: MN_MARE }, corridors: [MN_MIDBOSS, MN_ARENA],
+    midboss: MN_MIDBOSS, arena: MN_ARENA,
+    terrainH: moonH, groundColor: moonColor,
+    hasGround: () => true,
+    gen: genMoon,
+    water: null, flatCheck: true,
+    tod: makeTod(MOON_TOD_SRC), cloud: MOON_CLOUD,
+    cloudShadowK: () => 0,
+    deck: false,
+    space: { body: 1, band: true }, drift: true, noClouds: true, voidH: MN_SKIP, snap: moonSnap,
   },
 };
 // an unknown biome name would turn the low-cloud alpha into NaN (→ full opacity): check the tables

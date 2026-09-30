@@ -45,16 +45,16 @@ export const ENEMY = {
   s5_lander: { hp: 60, score: 2500, radius: 1.25, air: true, explode: 1.8, debris: 14, medal: 1, prewarm: 4 },
   // mid-boss: two drills and the crown, then the heart (sealed under its blast plates — not a target —
   // until two parts are gone or 18 s have passed). The body is armour and never a target (bodyTarget:
-  // false); hp is only a backstop. keepOff holds the jet 8.5 below it: the drills reach ~3.6 in front of
-  // it, so they stay beyond shoot()'s point-blank rule. hull: the carapace aft of the crown.
+  // false); hp is only a backstop. keepOff holds the jet 9.5 below it: the drills reach ~4.5 in front of
+  // it, so they stay beyond shoot()'s point-blank rule. hull: the carapace just aft of the crown.
   selenite: {
-    hp: 9999, score: 40000, radius: 2.4, air: false, explode: 3.4, debris: 32, midboss: true, noRevenge: true, bodyTarget: false, keepOff: 8.5, prewarm: 1,
+    hp: 9999, score: 40000, radius: 3.0, air: false, explode: 3.6, debris: 32, midboss: true, noRevenge: true, bodyTarget: false, keepOff: 9.5, prewarm: 1,
     parts: [
       { key: 'drillL', hp: 105, score: 5000, medals: 2, big: 1.6 }, { key: 'drillR', hp: 105, score: 5000, medals: 2, big: 1.6 },
       { key: 'crown', hp: 150, score: 8000, medals: 3, big: 1.8 },
       { key: 'core', hp: 640, score: 40000, medals: 3, core: true },
     ],
-    hull: { hw: 1.5, z0: -3.2, z1: -1.9 },
+    hull: { hw: 1.9, z0: -5.0, z1: -4.1 },
   },
   // boss: parts in hit-test order. The tide emitters and the mirror start sealed (not targets) and count in
   // the HP bar from the start, like the heart (sealed until phase 3). hull: the crescent's back behind the
@@ -531,7 +531,7 @@ function seleniteAI() {
         s.fightT += dt;
         const tx = clamp(v.pToGx(P.x) * 0.35 + Math.sin(s.fightT * 0.5) * 1.2, -1.8, 1.8);
         e.gx += clamp(tx - e.gx, -1.2 * dt, 1.2 * dt);
-        if (Math.random() < 0.35) dust(g, e.gx + (Math.random() < 0.5 ? -1.62 : 1.62), e.gz - 2.4, 0.9, 1);
+        if (Math.random() < 0.35) dust(g, e.gx + (Math.random() < 0.5 ? -2.0 : 2.0), e.gz - 3.0, 1.0, 1);
         if (s.fightT > SN_FIGHT) { s.mode = 'sink'; s.mt = 0; s.leaving = true; g.audio.play('warning', { vol: 0.3 }); break; }
         if (s.burrows < SN_BURROW.length && s.fightT > SN_BURROW[s.burrows] && s.spin[0] === 0 && s.spin[1] === 0) {
           s.burrows++; s.mode = 'sink'; s.mt = 0;
@@ -866,7 +866,7 @@ function sunLance(e, dt, g, M, fr) {
   const s = e.s, o = M.obj, mu = o.userData;
   s.gunT += dt;
   if (s.gun === 'track') {                                  // follow the jet, the beam faint
-    o.rotation.y += clamp(wrapA(mirrorAim(g, e, M) - o.rotation.y), -1.1 * dt, 1.1 * dt);
+    o.rotation.y += clamp(wrapA(mirrorAim(g, e, M) - o.rotation.y), -1.6 * dt, 1.6 * dt);
     mu.setBeam(0.12, 0.35); mu.setCharge(0.2);
     if (s.gunT > 1.4) {
       s.gun = 'lock'; s.gunT = 0;

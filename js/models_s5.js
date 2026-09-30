@@ -27,7 +27,7 @@
 //               twin gun pods, descent-engine flame (setThrust), and a cargo drop pod slung
 //               underneath (userData.setPod(y, visible): its height below the lander)
 //   S5_SKIMMER  crescent-winged skimmer (air): the garrison's emblem as a fighter
-//   SELENITE    mid-boss tunnelling machine (ground, 5 draw calls): a tracked, armoured
+//   SELENITE    mid-boss tunnelling machine (ground, 5 draw calls, shown at 1.25 scale): a tracked, armoured
 //               carapace; two drill bits (parts drillL / drillR, spun with setSpin), the selenite
 //               crystal crown on its back (part crown) and the crystal heart under two blast
 //               plates (part core: setOpen(0..1) blows the plates open and raises the heart)
@@ -122,15 +122,15 @@ function crystal(b, base, dir, len, r, seed, dim = 1) {
     return GL(scl(MB, (k > 0.66 ? 0.95 : k > 0.33 ? 0.62 : 0.4) * dim), 0.55);
   }, null, null, { phase: seed });
 }
-/** faceted glowing gem (icosahedron, stretched in y), centre (0, cy, 0); dead = dark and cracked */
-function gemGB(r, sy, cy, seed, dead = false) {
+/** faceted glowing gem (icosahedron, stretched in y), centre (0, cy, 0), glow × dim; dead = dark and cracked */
+function gemGB(r, sy, cy, seed, dead = false, dim = 1) {
   const b = new GB();
   const geo = new THREE.IcosahedronGeometry(r, 1);
   const p = geo.attributes.position.array;
   for (let i = 0; i < p.length; i += 9) {
     const k = hash3(i / 9, seed, 3.1);
     const st = dead ? (k > 0.82 ? GL(EM.emberDim, 0.3) : S(lin(k > 0.4 ? '#20242b' : '#30353e')))
-      : k > 0.7 ? GL(MBH, 0.55) : GL(scl(MB, k > 0.35 ? 0.75 : 0.45), 0.55);
+      : k > 0.7 ? GL(scl(MBH, dim), 0.55) : GL(scl(MB, (k > 0.35 ? 0.75 : 0.45) * dim), 0.55);
     const d = (v) => (dead ? [p[v] * (0.88 + k * 0.18), p[v + 1] * sy * 0.62 + cy * 0.8, p[v + 2] * (0.88 + k * 0.18)] : [p[v], p[v + 1] * sy + cy, p[v + 2]]);
     b.triO(d(i), d(i + 3), d(i + 6), [0, cy, 0], st);
   }
@@ -547,6 +547,7 @@ function createSkimmer() {
 //   body (the closed / blown-open carapace: two geometries), drill bits L / R (one geometry, the left
 //   mirrored; they spin about their own axis), the crystal crown, the crystal heart (rises when open)
 // =============================================================================
+const SL_K = 1.25;                // the whole machine is built at 1 and shown at SL_K (the pivot's scale)
 const SL = {
   DRILL: [1.04, 1.02, -2.2],     // right drill base (left mirrored); the part sits mid-bit
   DRILL_MID: 0.85,               // part origin ahead of the base (the bit's middle)
@@ -636,11 +637,12 @@ function buildSeleniteCrown() {   // crystal cluster (origin on the socket)
   T.forEach(([x, z, up, len, r], k) => crystal(b, [x * 0.5, 0.1, z * 0.5], [x, up, z], len, r, 2.7 + k * 1.9, 0.45));
   return b;
 }
-function buildSeleniteHeart(dead) { return gemGB(0.46, 1.35, 0.0, 5.3, dead); }
+function buildSeleniteHeart(dead) { return gemGB(0.46, 1.35, 0.0, 5.3, dead, 0.45); }
 function createSelenite() {
-  const { g, pivot, ud } = enemyShell('selenite', 2.4, '#3d4656');
+  const { g, pivot, ud } = enemyShell('selenite', 2.4 * SL_K, '#3d4656');
   ud.ground = true; ud.midboss = true;
-  ud.halfExtents = { x: 2.0, z: 4.2 };
+  ud.halfExtents = { x: 2.0 * SL_K, z: 4.2 * SL_K };
+  pivot.scale.setScalar(SL_K);
   const hullMat = bodyMat(0.64, 0.28);
   const closedGeo = GG('ext:s5:selenite.body', () => buildSeleniteBody(false));
   const openGeo = GG('ext:s5:selenite.bodyOpen', () => buildSeleniteBody(true));
@@ -656,7 +658,7 @@ function createSelenite() {
     const mesh = new THREE.Mesh(intact, m);
     mesh.position.z = SL.DRILL_MID;
     if (sg < 0) mesh.scale.x = -1;
-    const part = makePart(sg < 0 ? 'drillL' : 'drillR', 0.75, [{ mesh, intact, wreck, sag: [0.25, -0.2, 0.1 * sg] }], [new THREE.Vector3(0, 0, SL.DRILL_MID - 1.95)]);
+    const part = makePart(sg < 0 ? 'drillL' : 'drillR', 0.75 * SL_K, [{ mesh, intact, wreck, sag: [0.25, -0.2, 0.1 * sg] }], [new THREE.Vector3(0, 0, SL.DRILL_MID - 1.95)]);
     part.position.set(SL.DRILL[0] * sg, SL.DRILL[1], SL.DRILL[2] - SL.DRILL_MID);
     pivot.add(part);
     drills.push(mesh);
@@ -669,7 +671,7 @@ function createSelenite() {
   const crownW = wreckGeo('ext:s5:selenite.crown', buildSeleniteCrown, { keep: (x, y) => 0.36 - y, crumple: 0.08, seed: 53, dir: [0, 1, 0], shards: 12, shardSize: 0.2, band: 0.3 });
   const crownMesh = new THREE.Mesh(crownI, crownMat);
   crownMesh.position.y = -SL.CROWN_UP;
-  const crown = makePart('crown', 0.9, [{ mesh: crownMesh, intact: crownI, wreck: crownW }], [new THREE.Vector3(0, 1.3 - SL.CROWN_UP, 0)]);
+  const crown = makePart('crown', 0.9 * SL_K, [{ mesh: crownMesh, intact: crownI, wreck: crownW }], [new THREE.Vector3(0, 1.3 - SL.CROWN_UP, 0)]);
   crown.position.set(SL.CROWN[0], SL.CROWN[1] + SL.CROWN_UP, SL.CROWN[2]);
   pivot.add(crown);
   // core: the heart rises out of its well when the plates blow (setOpen)
@@ -677,7 +679,7 @@ function createSelenite() {
   const heartI = GG('ext:s5:selenite.heart', () => buildSeleniteHeart(false)), heartD = GG('ext:s5:selenite.heartDead', () => buildSeleniteHeart(true));
   const heart = new THREE.Mesh(heartI, heartMat);
   let dead = false;
-  const core = makePart('core', 0.8, [{ mesh: heart, intact: heartI, wreck: heartD }], [new THREE.Vector3(0, 0, 0)], { onDestroyed: (d) => { dead = d; } });
+  const core = makePart('core', 0.8 * SL_K, [{ mesh: heart, intact: heartI, wreck: heartD }], [new THREE.Vector3(0, 0, 0)], { onDestroyed: (d) => { dead = d; } });
   core.position.set(SL.CORE[0], SL.CORE[1] + SL.CORE_UP, SL.CORE[2]);
   pivot.add(core);
   let open = 0;
@@ -690,13 +692,13 @@ function createSelenite() {
   ud.parts = { drillL, drillR, crown, core };
   const mats = [hullMat, ...drillL.userData.materials, ...drillR.userData.materials, crownMat, heartMat];
   ud.setFlash = flashFn(mats);
-  ud.muzzles = [new THREE.Vector3(-1.04, 1.02, -4.15), new THREE.Vector3(1.04, 1.02, -4.15), new THREE.Vector3(0, 3.2, 1.45)];
+  ud.muzzles = [new THREE.Vector3(-1.04, 1.02, -4.15).multiplyScalar(SL_K), new THREE.Vector3(1.04, 1.02, -4.15).multiplyScalar(SL_K), new THREE.Vector3(0, 3.2, 1.45).multiplyScalar(SL_K)];
   /** drill k (0 left, 1 right) spins at v (0 … 1: idle … full: the tell before a volley) */
   ud.setSpin = (k, v) => { spinV[k] = v; };
   let rumble = 0;
   /** 0 … 1: the machine shudders (burrowing, erupting) */
   ud.setRumble = (v) => { rumble = v; };
-  ud.reset = () => { spinV[0] = spinV[1] = 0; rumble = 0; core.userData.setOpen(0); for (const d of drills) d.rotation.set(0, 0, 0); pivot.position.set(0, 0, 0); };
+  ud.reset = () => { spinV[0] = spinV[1] = 0; rumble = 0; core.userData.setOpen(0); for (const d of drills) d.rotation.set(0, 0, 0); pivot.position.set(0, 0, 0); pivot.scale.setScalar(SL_K); };
   ud.update = (dt, t) => {
     for (let k = 0; k < 2; k++) {
       const pt = k ? drillR : drillL;
@@ -886,7 +888,7 @@ function buildSeleneMirror() {   // the solar mirror (origin on the gimbal; the 
     for (let k = 0; k < n; k++) {
       const a0 = (k * TAU) / n, a1 = ((k + 1) * TAU) / n;
       const P = (rr, a) => [Math.cos(a) * rr, Math.sin(a) * rr, -0.07 + rr * rr * 0.04];
-      const st = ((k + r) % 3 === 0) ? GL(SUN, 0.5) : ((k + r) % 3 === 1) ? GL(scl(SUN, 0.5), 0.45) : LN.goldLt;
+      const st = ((k + r) % 3 === 0) ? GL(scl(SUN, 0.55), 0.5) : ((k + r) % 3 === 1) ? GL(scl(SUN, 0.3), 0.45) : LN.goldLt;
       b.quadN(P(RS[r] + 0.03, a0 + 0.03), P(RS[r + 1] - 0.03, a0 + 0.03), P(RS[r + 1] - 0.03, a1 - 0.03), P(RS[r] + 0.03, a1 - 0.03), [0, 0, -1], st);
     }
   }
@@ -900,8 +902,8 @@ function buildSeleneMirror() {   // the solar mirror (origin on the gimbal; the 
 // the emitter at the dish's focus (mirror-part local)
 const SE_FOCUS = new THREE.Vector3(0, SE_MIR_Y + Math.sin(SE_MIR_TILT) * SE_FOCUS_D, -Math.cos(SE_MIR_TILT) * SE_FOCUS_D);
 function buildSeleneHeart(dead) {
-  const b = gemGB(0.62, 1.3, 0.0, 9.1, dead);
-  if (!dead) for (let k = 0; k < 5; k++) { const a = (k * TAU) / 5 + 0.4; crystal(b, [Math.cos(a) * 0.4, -0.5, Math.sin(a) * 0.4], [Math.cos(a) * 0.6, 1, Math.sin(a) * 0.6], 0.9, 0.16, 7 + k); }
+  const b = gemGB(0.62, 1.3, 0.0, 9.1, dead, 0.55);
+  if (!dead) for (let k = 0; k < 5; k++) { const a = (k * TAU) / 5 + 0.4; crystal(b, [Math.cos(a) * 0.4, -0.5, Math.sin(a) * 0.4], [Math.cos(a) * 0.6, 1, Math.sin(a) * 0.6], 0.9, 0.16, 7 + k, 0.6); }
   return b;
 }
 const SE_LIFT = [[-3.2, -3.6], [3.2, -3.6], [-5.0, -0.4], [5.0, -0.4], [-1.3, 0.2], [1.3, 0.2]];
@@ -1033,13 +1035,13 @@ function createSelene() {
     for (const b of bays) b.userData.setOpen(0);
     for (const h of horns) h.rotation.y = Math.PI;
     for (const bt of batteries) bt.rotation.y = Math.PI;
-    mirror.rotation.y = 0; hover = 1;
+    mirror.rotation.y = Math.PI; hover = 1;
   };
   ud.reset();
   ud.update = (dt, t) => {
     const pulse = 0.8 + Math.sin(t * 3.1) * 0.2;
     for (let i = 0; i < allMats.length; i++) allMats[i].uEmitScale.value = pulse;
-    mirMat.uEmitScale.value = mirror.userData.destroyed ? 0.3 : 0.7 + charge * 2.4 * (0.85 + Math.sin(t * 37) * 0.15);
+    mirMat.uEmitScale.value = mirror.userData.destroyed ? 0.3 : 0.75 + charge * 1.5 * (0.85 + Math.sin(t * 37) * 0.15);
     coreMat.uEmitScale.value = core.userData.destroyed ? 0.5 : (0.5 + heartUp * 0.8) * (1 + Math.sin(t * 6) * 0.15);
     heart.rotation.y += dt * (0.3 + heartUp * 0.9);
     if (beam.visible) beamMat.color.setScalar(beamG * (0.85 + Math.sin(t * 53) * 0.15));

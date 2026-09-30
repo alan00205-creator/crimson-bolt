@@ -51,7 +51,7 @@
 import * as THREE from 'three';
 import {
   GB, GG, G, M, S, DEG, TAU, lit, lin, rgb, GL, EM, scl, hash3, bodyMat, additiveMat, flashFn, enemyShell,
-  syncMuzzles, hazardDrape, makePart, destructiblePart, buildFlame,
+  hazardDrape, makePart, destructiblePart, buildFlame,
 } from './modelkit.js';
 
 // =============================================================================
@@ -227,7 +227,7 @@ function createRaider() {
   const { g, pivot, ud } = enemyShell('s6_raider', 1.2, '#54443a');
   const mat = bodyMat(0.55, 0.3), rockMat = bodyMat(0.85, 0.08);
   const rock = new THREE.Mesh(GG('ext:s6:rock', buildRock), rockMat);
-  rock.scale.setScalar(0.92);
+  rock.scale.setScalar(1.0);   // the same size as the loose rock it becomes (s6_rock)
   pivot.add(rock);
   const craft = new THREE.Group(); craft.name = 'craft'; craft.scale.setScalar(RD_K);
   craft.add(new THREE.Mesh(GG('ext:s6:raider', buildRaiderCraft), mat));
@@ -556,7 +556,7 @@ function createFlare() {
 // the eye (part core, in its socket on the head: setOpen raises it out of the armour and lights it), the two
 // dorsal gun spines (parts spineA on bone BAS_SPINE[0], spineB on BAS_SPINE[1]; twin barrels firing out of
 // either flank) and the barbed tail stinger (part tail, on the last bone).
-export const BAS_N = 10, BAS_BS = 1.15, BAS_SPINE = [3, 6];
+const BAS_N = 10, BAS_BS = 1.15, BAS_SPINE = [3, 6];   // stage6.js mirrors BAS_N / BAS_BS
 const BAS_Z0 = 0.45, BAS_Z1 = BAS_BS * (BAS_N - 1) + 0.25;   // the coils run from the neck to the last bone
 const BAS_HEAD = [0, 0];   // the head's triangles in the body GB (skinned wholly to bone 0: its crest reaches back)
 const BAS_HK = 1.3;          // the head's scale
@@ -822,7 +822,8 @@ function buildHeliosHull() {
   // ---- the hull: silver deck plates, brass bevels, bronze flanks with glowing heat vents, a dark keel
   const d0 = b.n;
   b.loft(HE_HULL.map((sec) => ring10(sec)), (i, j) => {
-    if (j === 0) return i === 0 ? K.hullDk : (i & 1) ? K.plateLt : K.plate;
+    if (j === 0) return i === 0 ? K.hullDk : (i & 1) ? K.plate : K.plateDk;           // darker deck plates than the fighters':
+    // the corona's glare is bright, the battleship reads as a dark hull with bright trim
     if (j === 1 || j === 9) return i === 0 ? K.brassDk : (i & 1) ? K.brass : K.brassDk;
     if (j === 2 || j === 8) return i === 2 || i === 5 ? G_SUND : i === 0 ? K.hullXDk : K.hull;
     if (j === 3 || j === 7) return K.hullDk;
@@ -852,7 +853,7 @@ function buildHeliosHull() {
   // ---- the spine to the bridge, the bridge tower (a gold window band facing forward), masts, a dish
   b.block({ x: 0, y: 0.66, z: 1.85, w: 0.9, d: 1.4, h: 0.2, tw: 0.8, td: 1.3, top: K.plate, side: K.hullDk });
   b.decal([[-0.06, 0.865, 1.2], [0.06, 0.865, 1.2], [0.06, 0.865, 2.5], [-0.06, 0.865, 2.5]], G_SUN);
-  b.block({ x: 0, y: 0.66, z: 3.5, w: 2.0, d: 1.9, h: 0.52, tw: 1.8, td: 1.7, bev: 0.06, top: K.plateLt, bevS: K.brass, side: K.hull, front: K.hullDk });
+  b.block({ x: 0, y: 0.66, z: 3.5, w: 2.0, d: 1.9, h: 0.52, tw: 1.8, td: 1.7, bev: 0.06, top: K.plate, bevS: K.brass, side: K.hull, front: K.hullDk });
   b.block({ x: 0, y: 1.18, z: 3.65, w: 1.3, d: 1.15, h: 0.4, tw: 1.1, td: 0.95, bev: 0.05, top: K.plate, bevS: K.brassLt, side: K.hullDk });
   b.decal([[-0.62, 1.5, 3.02], [0.62, 1.5, 3.02], [0.6, 1.3, 3.08], [-0.6, 1.3, 3.08]], G_SUN, [0, 0.3, -1]);
   b.decal([[-0.9, 1.1, 2.58], [0.9, 1.1, 2.58], [0.88, 0.92, 2.6], [-0.88, 0.92, 2.6]], G_SUND, [0, 0.3, -1]);
@@ -879,7 +880,7 @@ function buildHeliosHull() {
 function buildHeliosTurret() {   // part-local, twin barrels along −z
   const b = new GB();
   b.lathe([0, -0.02, 0], [0, 1, 0], [[0, 0.56], [0.1, 0.55], [0.18, 0.44], [0.22, 0.0]], 8, (i, j) => (i === 0 ? K.hullDk : i === 1 ? ((j & 1) ? K.brass : K.brassLt) : K.hullXDk), null, null, { phase: Math.PI / 8 });
-  b.block({ x: 0, y: 0.12, z: 0.06, w: 0.78, d: 0.9, h: 0.34, tw: 0.62, td: 0.72, oz: 0.06, bev: 0.05, top: K.plateLt, bevS: K.brass, side: K.hull, front: K.hullDk });
+  b.block({ x: 0, y: 0.12, z: 0.06, w: 0.78, d: 0.9, h: 0.34, tw: 0.62, td: 0.72, oz: 0.06, bev: 0.05, top: K.plate, bevS: K.brass, side: K.hull, front: K.hullDk });
   for (const x of [-0.15, 0.15]) {
     b.lathe([x, 0.28, -0.36], [0, 0, -1], [[0, 0.075], [0.66, 0.062], [0.66, 0.08], [0.8, 0.08], [0.8, 0.035]], 6, (i) => (i === 2 ? K.brassLt : K.hullDk), null, G_SUNH, { phase: Math.PI / 6 });
   }

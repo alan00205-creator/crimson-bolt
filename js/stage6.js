@@ -20,7 +20,7 @@
 //   helios      boss, the corona battleship: turrets, flare launchers (solar flares that burst into rings) and
 //               its prow gun; then the corona wings swing out (focused volleys from their ray tips, prominences
 //               arcing back across the screen); then the petals open on the captive star in its heart
-// Stage-1 carriers bring the items.
+// Stage-1 carriers bring most of the items (a comet or a sail carries one now and then).
 import { STAGE_META } from './defs.js';
 import { F } from './fx.js';
 import { fireTimer, bez, W, makeTimeline, midbossEvent, bossDefeated } from './stage.js';
@@ -37,7 +37,7 @@ export const ENEMY = {
   s6_skimmer: { hp: 5, score: 300, radius: 0.8, air: true, explode: 0.9, debris: 6, medal: 0.2, prewarm: 16 },
   s6_raider: { hp: 22, score: 1200, radius: 1.2, air: true, explode: 1.4, debris: 10, medal: 0.6, prewarm: 6 },
   s6_rock: { hp: 14, score: 250, radius: 0.95, air: true, explode: 1.2, debris: 9, noRevenge: true, prewarm: 8 },
-  s6_sail: { hp: 40, score: 2000, radius: 1.3, air: true, explode: 1.6, debris: 12, medal: 1, prewarm: 5 },
+  s6_sail: { hp: 40, score: 2000, radius: 1.4, air: true, explode: 1.6, debris: 12, medal: 1, prewarm: 5 },
   s6_comet: { hp: 64, score: 3000, radius: 1.2, air: true, explode: 1.9, debris: 14, medal: 1, prewarm: 4 },
   s6_flare: { hp: 5, score: 100, radius: 0.55, air: true, explode: 0.9, debris: 3, noRevenge: true, noHpSeg: true, prewarm: 8 },
   // mid-boss: the kill is the eye (the core), sunk in its armoured socket until the spines and the stinger
@@ -295,7 +295,7 @@ function skipAI(dir, zf, speed = 4.4, hop = 3.0, w = 2.3, ph = 0) {
 // out of either flank as the coils sway, the stinger spits homing venom, the head hisses big-orb fans; once
 // the guns are gone (or it tires of waiting) the eye rises out of its armour: the petrifying gaze — a line of
 // sparks tracks the jet, locks (the telegraph) and a stream of needles runs down it.
-const BAS_N = 10, BAS_BS = 1.15;          // the model's bone chain (models_s6.js)
+const BAS_N = 10, BAS_BS = 1.15;          // the model's bone chain (as models_s6.js builds it)
 const BA_ROW = 8.4;                       // the figure of eight's mean row below the top edge
 const BA_OPEN = 16;                       // fight time at which the eye opens even with guns left
 const BA_FIGHT = 46;                      // fight time at which it gives up and slithers away
@@ -701,7 +701,7 @@ function heliosAI() {
         s.promT = (s.mode === 'p2' ? 4.6 : 6.5) / fr;
         for (const w of s.wg) {
           if (!live(w)) continue;
-          for (const k of [0, 4]) {
+          for (let k = 0; k <= 4; k += 4) {         // the outermost ray tips
             const m = g.muzzlePos(w.obj, k), mx = m.x, mz = m.z, inward = mx > e.x ? -1 : 1;
             for (let q = 0; q < 2; q++) prominence(g, mx, mz, Math.PI + inward * (0.35 + q * 0.3), 5.0 + q * 0.6, 4.8);
           }

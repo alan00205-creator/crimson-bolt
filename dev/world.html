@@ -28,7 +28,7 @@
   button:hover { background: rgba(255, 255, 255, 0.14); }
   button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .biomes button { flex: 1 1 30%; font-size: 12px; padding: 4px 6px; }
-  .stages button { flex: 1 1 30%; font-weight: 600; letter-spacing: 0.03em; }
+  .stages button { flex: 1 1 22%; font-weight: 600; letter-spacing: 0.03em; padding: 5px 4px; }
   .stats { font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--dim); white-space: pre; margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
   .stats b { color: var(--ink); font-weight: 600; }
   .warn { color: #ffb14a; }
@@ -47,7 +47,7 @@
 <button id="toggle">☰ World</button>
 <div id="panel">
   <h1><b>赤電</b> World preview</h1>
-  <p class="sub">Scrolling terrain · biomes · water · clouds · time of day</p>
+  <p class="sub">Scrolling terrain · biomes · water · clouds · space · time of day</p>
   <div class="row btns stages" id="stages"></div>
   <div class="row"><label>Distance <output id="dOut">0</output></label><input id="dist" type="range" min="0" max="1600" step="1" value="0"></div>
   <div class="row biomes btns" id="jumps"></div>
@@ -62,7 +62,7 @@
   </div>
   <div class="stats" id="stats"></div>
   <div class="stats" id="scanOut"></div>
-  <div class="keys">Keys: 1/2/3 stage · ←/→ scrub ±10 · F fly · Q quality · B bloom · P placeholders · L zones · S scan · H hide UI</div>
+  <div class="keys">Keys: 1–9 stage · ←/→ scrub ±10 · F fly · Q quality · B bloom · P placeholders · L zones · S scan · H hide UI</div>
 </div>
 <script type="module">
 import * as THREE from 'three';
@@ -287,7 +287,7 @@ $('scan').addEventListener('click', () => showScan(scan()));
 const stagesEl = $('stages'), jumps = $('jumps');
 for (const id of STAGE_IDS) {
   const b = document.createElement('button');
-  b.id = 'stage-' + id; b.textContent = id;
+  b.id = 'stage-' + id; b.textContent = `${STAGE_IDS.indexOf(id) + 1} ${id}`;
   b.addEventListener('click', () => setStage(id, 0));
   stagesEl.appendChild(b);
 }
@@ -340,7 +340,7 @@ function statsText() {
     `world calls <b class="${warnC}">${w.calls}</b> / 70   tris <b class="${warnT}">${(w.tris / 1000).toFixed(1)}k</b> / 150k\n` +
     `frame calls <b>${stats.total.calls}</b>   tris <b>${(stats.total.tris / 1000).toFixed(1)}k</b>\n` +
     `chunks <b>${i.activeChunks}</b>  built <b>${i.builds}</b>  last <b>${i.lastBuildMs.toFixed(1)}ms</b>  max <b>${i.maxBuildMs.toFixed(1)}ms</b>\n` +
-    `violations <b class="${i.violations ? 'warn' : ''}">${i.violations}</b>   water <b>${i.water ? 'on' : 'off'}</b>   deck <b>${i.deck ? 'on' : 'off'}</b>`;
+    `violations <b class="${i.violations ? 'warn' : ''}">${i.violations}</b>   water <b>${i.water ? 'on' : 'off'}</b>   deck <b>${i.deck ? 'on' : 'off'}</b>   space <b>${i.space ? 'on' : 'off'}</b>`;
 }
 
 // --- loop -----------------------------------------------------------------------

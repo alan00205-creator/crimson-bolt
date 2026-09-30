@@ -1625,9 +1625,17 @@ void main() {
     vec3 surf = mix(uOcean, uOcean * 1.7 + vec3(0.0, 0.035, 0.045), shelf);
     vec3 grd = mix(uLand, uLand2, smoothstep(0.42, 0.66, m2.g * 0.6 + m.b * 0.4));
     surf = mix(surf, grd * (0.82 + 0.36 * m2.r), land);
-    vec4 c1 = textureGrad(uNoise, uv * 2.0 + vec2(0.0, uScroll.x * 0.004) + (m.gb - 0.5) * 0.2, gx * 2.0, gy * 2.0);
+    // clouds: masses and swirls, and on HIGH a finer octave that breaks their edges into cumulus fields
+    vec2 cuv = uv * 2.0 + vec2(0.0, uScroll.x * 0.004) + (m.gb - 0.5) * 0.12;
+    vec4 c1 = textureGrad(uNoise, cuv, gx * 2.0, gy * 2.0);
+#ifndef LOW
+    vec4 c2 = textureGrad(uNoise, cuv * 3.0 + (c1.rb - 0.5) * 0.15, gx * 6.0, gy * 6.0);
+    float cv = c1.g * 0.52 + c1.r * 0.2 + c2.g * 0.28;
+    float cloud = smoothstep(0.96 - uLook.x * 0.76, 1.04 - uLook.x * 0.76, cv);
+#else
     float cv = c1.g * 0.62 + c1.r * 0.38;
     float cloud = smoothstep(0.98 - uLook.x * 0.8, 1.12 - uLook.x * 0.8, cv);
+#endif
     float spec = pow(max(dot(nn, normalize(uSun - dir)), 0.0), 60.0) * (1.0 - land) * (1.0 - cloud) * day;
     pc = surf * (0.04 + 0.96 * lit) + vec3(1.0, 0.9, 0.78) * spec * 0.45;
     pc = mix(pc, uCloud * (0.03 + 0.9 * lit), cloud * 0.9);
@@ -5571,7 +5579,7 @@ const OP = {
   hull: C(0x49505c), hullD: C(0x2e343d), hullL: C(0x5d6571), plate: C(0x6d7582), armour: C(0x959ca6), dark: C(0x1c2027),
   gold: C(0xbf9646), goldD: C(0x86662c), silver: C(0xb4bac2), white: C(0xd2d6dc),
   panel: C(0x22356a), frame: C(0x8e96a0), radiator: C(0xc2c7cd),
-  red: C(0xb83a2e), orange: C(0xd07a2c), hazard: C(0xd2ac32),
+  red: C(0xb83a2e), redD: C(0x6e2e2a), orange: C(0xd07a2c), hazard: C(0xd2ac32), deck: C(0x3a4049),
   lampR: C(0xff5a44), lampC: C(0x8eeeff), ember: C(0xffa04a), burnt: C(0x2c2826),
 };
 
@@ -5690,6 +5698,12 @@ function sledGeo() {
   tube(0, 0.5, 0.95, 0.3, 0.2, 0.05, OP.silver, 8);
   tube(0, -0.95, -0.8, 0.3, 0.12, 0.2, OP.dark, 8);
   for (let i = 0; i < 3; i++) { const dd = -0.55 + i * 0.4; solidBox(-0.23, dd, 0.23, dd + 0.09, 0.08, 0.53, OP.lampC, 1.25); }
+  // the streak of ionised light it leaves along the rail
+  if (room(12)) {
+    const c = OP.lampC, y = GROUND_Y + 0.3;
+    vtx(-0.14, y, -0.95, c, 1.25, 0, 0); vtx(0.14, y, -0.95, c, 1.25, 0, 0); vtx(0.03, y, -3.4, c, 0.6, 0, 0);
+    vtx(-0.14, y, -0.95, c, 1.25, 0, 0); vtx(0.03, y, -3.4, c, 0.6, 0, 0); vtx(-0.03, y, -3.4, c, 0.6, 0, 0);
+  }
 }
 
 // =============================================================================
@@ -5848,7 +5862,7 @@ function stationChunk(ch, k, a, b) {
     // the deck: a gunmetal base (panel joints from the atlas), and on it long armour strips in
     // segments (dark seams between), conduits in the channels between the strips
     topStyle(T_SLAB, 2.2, 2.2);
-    box(xa, A, xb, B, 0, OR_DECK, OP.hullD, OP.hull, true);
+    box(xa, A, xb, B, 0, OR_DECK, OP.hullD, OP.deck, true);
     plain();
     const strips = [[3.95, 5.9], [6.35, 8.9], [9.4, 12.7]];
     for (let si = 0; si < 3; si++) {
@@ -5860,8 +5874,10 @@ function stationChunk(ch, k, a, b) {
         if (s1 - s0 > 0.3) {
           const tone = hash2(Math.round(dd * 3) + 5, si + side * 3);
           topStyle(tone < 0.55 ? T_SHUTTER : T_SLAB, 1.2, 0.8);
-          box(ha, s0, hb, s1, OR_DECK, OR_DECK + 0.1 + 0.08 * (si & 1), OP.hullD, tone < 0.2 ? OP.armour : tone < 0.7 ? OP.plate : OP.hullL, true);
+          box(ha, s0, hb, s1, OR_DECK, OR_DECK + 0.1 + 0.08 * (si & 1), OP.hullD, tone < 0.2 ? OP.armour : tone < 0.55 ? OP.plate : tone < 0.84 ? OP.hullL : OP.redD, true);
           plain();
+          // a running light at the plate's near end now and then (the brightest vertex colour: bloom)
+          if (tone > 0.35 && tone < 0.5 && !LOWQ) box((ha + hb) / 2 - 0.12, s0 + 0.08, (ha + hb) / 2 + 0.12, s0 + 0.2, OR_DECK + 0.1, OR_DECK + 0.2, OP.hullD, si === 2 ? OP.lampR : OP.lampC);
         }
         dd = e;
       }
@@ -5876,13 +5892,21 @@ function stationChunk(ch, k, a, b) {
     const ex = side * (OR_TRENCH + 0.35);
     flat(Math.min(ex, ex + side * 0.3), A, Math.max(ex, ex + side * 0.3), B, OR_DECK + 0.004, OP.hazard, 0.9);
     box(Math.min(x0, x0 + side * 0.22), A, Math.max(x0, x0 + side * 0.22), B, OR_DECK, OR_DECK + 0.1, OP.hullD, OP.hullL);
-    for (let dd = Math.ceil(A / 3) * 3 + 1.5; dd < B - 0.2; dd += 3) box(x0 - 0.02 - (side < 0 ? 0 : 0), dd - 0.1, x0 + 0.02, dd + 0.1, OR_DECK - 0.4, OR_DECK - 0.24, OP.lampC, OP.lampC);
+    for (let dd = Math.ceil(A / 3) * 3 + 1.5; dd < B - 0.2; dd += 3) {
+      flat(Math.min(x0, x0 + side * 0.22) + 0.03, dd - 0.45, Math.max(x0, x0 + side * 0.22) - 0.03, dd + 0.45, OR_DECK + 0.104, OP.lampC, 1.25);
+      box(x0 - 0.02, dd - 0.1, x0 + 0.02, dd + 0.1, OR_DECK - 0.4, OR_DECK - 0.24, OP.lampC, OP.lampC);
+    }
     // greebles on the deck: vents, hatches, raised blocks, armour bands
     const ng = LOWQ ? 10 : 24;
     for (let i = 0; i < ng; i++) {
       const gx = side * rr(OR_TRENCH + 1.0, 12.4), gd = rr(A + 0.6, B - 0.6), r = rand();
-      if (r < 0.3) { frame(gx, gd, 0); flat(-rr(0.2, 0.5), -rr(0.2, 0.6), rr(0.2, 0.5), rr(0.2, 0.6), OR_DECK + 0.006, OP.dark, 0.9); frameId(); }
-      else if (r < 0.5) { disc(gx, gd, rr(0.2, 0.4), 0, OR_DECK + 0.006, OP.hullL, 8); }
+      if (r < 0.22) { frame(gx, gd, 0); flat(-rr(0.2, 0.5), -rr(0.2, 0.6), rr(0.2, 0.5), rr(0.2, 0.6), OR_DECK + 0.006, OP.dark, 0.9); frameId(); }
+      else if (r < 0.32) {                                                        // a vent glowing from inside
+        const w = rr(0.3, 0.6), l = rr(0.5, 1.2);
+        flat(gx - w, gd - l, gx + w, gd + l, OR_DECK + 0.006, OP.dark, 0.9);
+        for (let q = -l + 0.15; q < l - 0.1; q += 0.3) flat(gx - w + 0.08, gd + q, gx + w - 0.08, gd + q + 0.12, OR_DECK + 0.01, OP.lampC, 1.1);
+      }
+      else if (r < 0.5) { const rd = rr(0.2, 0.4); disc(gx, gd, rd, rd, OR_DECK + 0.006, OP.hullL, 8); }
       else if (r < 0.85) { const w = rr(0.25, 0.8), l = rr(0.3, 1.4), h = rr(0.08, 0.3); box(gx - w / 2, gd - l / 2, gx + w / 2, gd + l / 2, OR_DECK, OR_DECK + h, OP.hullD, jit(OP.plate, 0.06, TC3)); }
       else { const l = rr(1.5, 3.5); box(gx - 0.14, gd - l / 2, gx + 0.14, gd + l / 2, OR_DECK, OR_DECK + 0.05, OP.hullD, OP.armour); }
     }
@@ -6021,11 +6045,11 @@ const ORBIT_TOD_SRC = [
   // earth-lit: the day side under the play area, the limb and its blue glow across the top
   { d: -60, sun: 0xfff4e8, sunI: 2.5, sky: 0x1c2640, gnd: 0x4a78b4, hemiI: 1.05, fog: 0x05080f, near: 52, far: 130,
     cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0,
-    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xb6c0cc, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
+    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xa6b0bc, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
     pSpace: 0x020309, pNeb: 0x243a7a, pX: 0, pZ: 26, pF: 17, pH: 0.07, pCover: 0.5, pAtmW: 0.007, pNebI: 0.1, pStar: 0.8, pCityI: 0, psun: [-0.3, 0.8, -0.5] },
   { d: 380, sun: 0xfff4e8, sunI: 2.5, sky: 0x1c2640, gnd: 0x4a78b4, hemiI: 1.05, fog: 0x05080f, near: 52, far: 130,
     cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0,
-    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xb6c0cc, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
+    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xa6b0bc, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
     pSpace: 0x020309, pNeb: 0x243a7a, pX: 4, pZ: 26, pF: 17, pH: 0.07, pCover: 0.55, pAtmW: 0.007, pNebI: 0.1, pStar: 0.8, pCityI: 0.1, psun: [-0.4, 0.45, -0.8] },
   // debris storm: over the night side (city lights), the sun rising beyond the limb, red nebula
   { d: 470, sun: 0xffe2c8, sunI: 2.3, sky: 0x241a26, gnd: 0x2c3e66, hemiI: 1.0, fog: 0x0a0608, near: 52, far: 130,
@@ -6080,7 +6104,7 @@ const MN_RIL = 300, MN_CRA = 560, MN_BASE = 780, MN_DRV = 1000, MN_MARE = 1240;
 const MN_MIDBOSS = { d0: 560, d1: 780, x: 5.5 };
 const MN_ARENA = { d0: 1240, d1: Infinity, x: 9 };
 const MN_VOID = -9, MN_SKIP = -7.5;        // a drop into space; grid cells entirely below MN_SKIP are not drawn
-const MN_DRV_X = 9.4, MN_DRV_A = 1004, MN_DRV_B = 1236;   // the mass driver's rail (right flank) and its ends
+const MN_DRV_X = 9.0, MN_DRV_A = 1004, MN_DRV_B = 1236;   // the mass driver's rail (right flank) and its ends
 
 // lunar palette (regolith kept mid-toned: the glowing bullets need a ground darker than themselves)
 const MP = {
@@ -6318,6 +6342,8 @@ function moonAlbedo(x, d, out) {
   // rays of a young crater far off-screen (sun side), streaking across the highlands and the mare
   const ra = Math.atan2(d + 260, x + 180) * 38, ry = ra - Math.floor(ra);
   mixInto(out, MP.ejecta, sstep(0.86, 0.97, ry) * sstep(0.35, 0.7, vnoise(x * 0.09, d * 0.03)) * 0.4 * (w0 + w3 * 0.8 + w1 * 0.5));
+  // the great crater's floor: old impact melt, smoother and a touch darker than the plains outside
+  if (MW[2] > 0 && ax < 8.5) mixInto(out, MP.regD, MW[2] * 0.22 * (1 - sstep(6.8, 8.5, ax)));
   // tracked-over dust along the graded base
   if (w2 > 0 && ax > 7.2) mixInto(out, MP.dust, sstep(0.55, 0.8, vnoise(x * 0.4, d * 0.4)) * 0.25 * w2);
   return out;
@@ -6724,7 +6750,22 @@ function mnGreatCrater(ch, k, a, b) {
       if (!LOWQ && rand() < 0.25) { const x = sg * (e + rr(0.9, 3.2)), r = rr(0.1, 0.3); if (mnFree(x, d, r)) mnBoulder(x, d, r, MP.wall); }
     }
   }
-  for (let d = Math.ceil(a / 16) * 16 + 4; d < b; d += 16) for (const s of [-1, 1]) if (d > 566 && d < 774) { const x = s * 7.9; if (mnFree(x, d, 0.3)) mast(x, d, 0.9); }
+  for (let d = Math.ceil(a / 16) * 16 + 4; d < b; d += 16) for (const s of [-1, 1]) if (d > 566 && d < 774) { const x = s * 7.4; if (mnFree(x, d, 0.3)) mast(x, d, 0.9); }
+  // the fractured floor: long cracks running with the walls, a few across, each with a pale lip
+  frameId();
+  for (let i = 0; i < (LOWQ ? 2 : 4); i++) {
+    let x = (rand() < 0.5 ? -1 : 1) * rr(2, 6.6), d = rr(a, b - 4), an = Math.PI / 2 + rr(-0.35, 0.35) + (rand() < 0.25 ? 1.2 : 0);
+    const L = rr(6, 18);
+    for (let t = 0; t < L; t += 0.8) {
+      an += rr(-0.3, 0.3);
+      const nx = x + Math.cos(an) * 0.8, nd = d + Math.sin(an) * 0.8;
+      if (nd >= b || nd < a || Math.abs(nx) > 7) break;
+      crackEdge(x - 0.05, d, nx - 0.05, nd, 0.07, MP.regL, L_BASE + 0.006);
+      crackEdge(x + 0.03, d, nx + 0.03, nd, 0.045, MP.dark, L_BASE + 0.008);
+      if (!LOWQ && rand() < 0.1) { const ba = an + (rand() < 0.5 ? -1 : 1) * rr(0.7, 1.2), bl = rr(0.6, 1.5); crackEdge(nx, nd, nx + Math.cos(ba) * bl, nd + Math.sin(ba) * bl, 0.03, MP.dark, L_BASE + 0.009); }
+      x = nx; d = nd;
+    }
+  }
   if (k === 17) tippedLander(-8.4, 694);
 }
 // a lander on its side: the octagon tilted into the regolith, legs in the air, a dark scorch
@@ -6800,6 +6841,13 @@ function mnBase(ch, k, d0, d1) {
   }
   // power and data lines on low trestles in the lane gaps (≤ 0.22: never tall), broken at every cross road
   const a = Math.max(d0, MN_BASE + 3), b = Math.min(d1, MN_DRV - 1);
+  for (let i = 0; i < (LOWQ ? 2 : 5); i++) {                              // crates, cable reels, marker cones
+    const x = (rand() < 0.5 ? -1 : 1) * (rand() < 0.5 ? rr(1.5, 2.3) : rr(3.2, 4.1)), d = rr(a, b), r = rand();
+    if (b <= a || crossDist(d) < 2.6) continue;
+    if (r < 0.45) { frame(x, d, rr(0, TAU)); for (let j = 0; j < 3; j++) box(j * 0.26 - 0.26 - 0.11, -0.11, j * 0.26 - 0.26 + 0.11, 0.11, 0, j === 1 ? 0.22 : 0.2, MP.steelD, j === 1 ? MP.orange : MP.whiteD); frameId(); }
+    else if (r < 0.7) { cyl(x, d, 0.18, 0, 0.16, 8, MP.orange, MP.dark); disc(x, d, 0.06, 0.06, 0.165, MP.steel, 6); }
+    else for (let j = 0; j < 3; j++) cone(x + j * 0.3, d, 0.07, 0, 0.2, 5, MP.orange);
+  }
   if (b > a) for (const x of [-2.75, 2.75]) {
     for (const [s0, e0] of [[a, Math.min(b, cr - 2.4)], [Math.max(a, cr + 2.4), b]]) {
       if (e0 - s0 < 1) continue;
@@ -7155,7 +7203,7 @@ function mnDriver(ch, k, d0, d1) {
     // the chunk holding a stretch's end owns its sled (that chunk lives while any of the stretch shows)
     if (b === sb) {
       if (b < MN_DRV_B - 1) tunnelMouth(b, 1);
-      if (sb - sa > 4) addDrift(ch, D_SLED, MN_DRV_X, -0.72, sa + 0.4, 0, 1, sb - sa - 1.2, 40, (sb - sa) * 2.6);
+      if (sb - sa > 4) addDrift(ch, D_SLED, MN_DRV_X, -0.72, sa + 0.4, 0, 1.3, sb - sa - 1.4, 34, (sb - sa) * 1.5);
     }
   }
   if (d0 <= MN_DRV_A && d1 > MN_DRV_A) driverBreech();
@@ -7299,6 +7347,73 @@ const MOON_TOD_SRC = [
 const MOON_CLOUD = { highlands: 0, rilles: 0, crater: 0, base: 0, driver: 0, mare: 0 };
 
 // =============================================================================
+// SOLAR VOYAGE / GALACTIC STORM / EDGE OF INFINITY (stages 6–8): PLACEHOLDER worlds on the space kit,
+// so the eight-stage flow never falls back to the coast. Each is a backdrop configuration, lighting
+// bands and a sparse drift layer — nothing more; the world task for these stages replaces this section
+// (SPEC-8 'Worlds': Mars → asteroid belt → Jupiter → Saturn's rings → the Sun's corona; nebulae,
+// clusters, dust lanes, the galactic core; the cosmic web, warped space, a black hole).
+// =============================================================================
+const SOLAR_LAYOUT = [
+  { biome: 'mars',    from: 0,    to: 320 },
+  { biome: 'belt',    from: 320,  to: 700 },
+  { biome: 'jupiter', from: 700,  to: 1000 },
+  { biome: 'saturn',  from: 1000, to: 1240 },
+  { biome: 'corona',  from: 1240, to: Infinity },
+];
+const GALAXY_LAYOUT = [
+  { biome: 'nebula',   from: 0,    to: 420 },
+  { biome: 'clusters', from: 420,  to: 800 },
+  { biome: 'dust',     from: 800,  to: 1240 },
+  { biome: 'core',     from: 1240, to: Infinity },
+];
+const COSMOS_LAYOUT = [
+  { biome: 'void',    from: 0,    to: 420 },
+  { biome: 'web',     from: 420,  to: 800 },
+  { biome: 'warp',    from: 800,  to: 1240 },
+  { biome: 'horizon', from: 1240, to: Infinity },
+];
+const SPACE_LANE = { d0: -Infinity, d1: Infinity, x: 5 };
+// a sparse drift layer: a few tumblers beside the lanes and deeper down (types by stage: rocks in the
+// solar system, shards and wrecks further out)
+function genSpaceDrift(w, ch, k, d0) {
+  const solar = S.id === 'solar', n = LOWQ ? 3 : 7, belt = solar && d0 + 20 > 320 && d0 + 20 < 700;
+  for (let i = 0; i < (belt ? n * 2 : n); i++) {
+    const d = rr(d0, d0 + CHUNK), y = rand() < 0.35 ? rr(0.8, 2.8) : -rr(2.5, 14), x = (rand() < 0.5 ? -1 : 1) * rr(5.4 - Math.min(0, y) * 0.12, 16);
+    const r = rand(), type = solar ? (r < 0.8 ? D_ROCK : D_SAT) : r < 0.5 ? D_SHARD : r < 0.75 ? D_WRECK : D_ROCK;
+    addDrift(ch, type, x, y, d, rr(0.12, 0.6), type === D_ROCK ? rr(0.4, belt ? 1.8 : 1.2) : rr(0.6, 1.1), rr(0.2, 0.8));
+  }
+}
+const SPACE_CLOUD = { mars: 0, belt: 0, jupiter: 0, saturn: 0, corona: 0, nebula: 0, clusters: 0, dust: 0, core: 0, void: 0, web: 0, warp: 0, horizon: 0 };
+const spaceKey = (d, sun, sunI, sky, hemiI, o) => ({ d, sun, sunI, sky, gnd: 0x101218, hemiI, fog: 0x000000, near: 52, far: 130,
+  cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0, ...o });
+// the solar system: a red planet under the play area (the kit's earth body in Martian colours), then
+// tan and gold cloud-tops for the giants, then the Sun's glare
+const SOLAR_TOD_SRC = [
+  spaceKey(-60, 0xfff0e0, 2.4, 0x302420, 1.0, { pOcean: 0x5a2a1c, pLand: 0x9a4a2a, pLand2: 0xc07a48, pCloud: 0xd8b8a0, pAtmos: 0xd88a6a, pGlow: 0xffb080, pSpace: 0x030204, pNeb: 0x3a2a30, pX: 0, pZ: 26, pF: 17, pH: 0.09, pCover: 0.12, pAtmW: 0.004, pNebI: 0.5, pStar: 0.9, pCityI: 0, psun: [-0.4, 0.8, -0.4] }),
+  spaceKey(300, 0xfff0e0, 2.4, 0x302420, 1.0, { pOcean: 0x5a2a1c, pLand: 0x9a4a2a, pLand2: 0xc07a48, pCloud: 0xd8b8a0, pAtmos: 0xd88a6a, pGlow: 0xffb080, pSpace: 0x030204, pNeb: 0x3a2a30, pX: 6, pZ: 30, pF: 17, pH: 0.3, pCover: 0.12, pAtmW: 0.004, pNebI: 0.5, pStar: 0.9, pCityI: 0, psun: [-0.5, 0.5, -0.7] }),
+  spaceKey(420, 0xfff4e8, 2.3, 0x282430, 1.0, { pOcean: 0x5a2a1c, pLand: 0x9a4a2a, pLand2: 0xc07a48, pCloud: 0xd8b8a0, pAtmos: 0xd88a6a, pGlow: 0xffb080, pSpace: 0x030305, pNeb: 0x30303a, pX: 30, pZ: 40, pF: 17, pH: 3, pCover: 0.12, pAtmW: 0.004, pNebI: 0.7, pStar: 1.0, pCityI: 0, psun: [-0.5, 0.5, -0.7] }),
+  spaceKey(760, 0xfff4e8, 2.3, 0x2c2a26, 1.0, { pOcean: 0x6a5038, pLand: 0x8a7050, pLand2: 0xa08868, pCloud: 0x9a8a70, pAtmos: 0xd8b890, pGlow: 0xffc890, pSpace: 0x030305, pNeb: 0x30303a, pX: 0, pZ: 26, pF: 17, pH: 0.12, pCover: 0.75, pAtmW: 0.01, pNebI: 0.4, pStar: 0.8, pCityI: 0, psun: [-0.4, 0.8, -0.4] }),
+  spaceKey(1060, 0xfff0d8, 2.3, 0x2c2a22, 1.0, { pOcean: 0x7a6a44, pLand: 0x9a8858, pLand2: 0xb0a070, pCloud: 0xa89a78, pAtmos: 0xe0c890, pGlow: 0xffd890, pSpace: 0x040304, pNeb: 0x3a3428, pX: -4, pZ: 28, pF: 17, pH: 0.15, pCover: 0.8, pAtmW: 0.01, pNebI: 0.4, pStar: 0.8, pCityI: 0, psun: [-0.4, 0.8, -0.4] }),
+  spaceKey(1200, 0xfff0d8, 2.3, 0x2c2a22, 1.0, { pOcean: 0x7a6a44, pLand: 0x9a8858, pLand2: 0xb0a070, pCloud: 0xa89a78, pAtmos: 0xe0c890, pGlow: 0xffd890, pSpace: 0x040304, pNeb: 0x3a3428, pX: -8, pZ: 30, pF: 17, pH: 0.2, pCover: 0.8, pAtmW: 0.01, pNebI: 0.4, pStar: 0.8, pCityI: 0, psun: [-0.4, 0.8, -0.4] }),
+  spaceKey(1275, 0xffe0b0, 2.6, 0x3a2410, 1.2, { pOcean: 0xa08a5a, pLand: 0xc8b078, pLand2: 0xe0cc98, pCloud: 0xf0e2c0, pAtmos: 0xffb060, pGlow: 0xffa040, pSpace: 0x140804, pNeb: 0x6a3010, pX: -40, pZ: 50, pF: 17, pH: 6, pCover: 0.8, pAtmW: 0.01, pNebI: 1.2, pStar: 0.5, pCityI: 0, psun: [-0.4, 0.8, -0.4] }),
+];
+// the galaxy: nebula gas in three moods, then the core's golden glow
+const GALAXY_TOD_SRC = [
+  spaceKey(-60, 0xf0e8ff, 2.3, 0x2a1c3a, 1.1, { pSpace: 0x050210, pNeb: 0x7a2a8a, pNebI: 0.9, pStar: 1.0 }),
+  spaceKey(380, 0xf0e8ff, 2.3, 0x2a1c3a, 1.1, { pSpace: 0x050210, pNeb: 0x7a2a8a, pNebI: 0.9, pStar: 1.0 }),
+  spaceKey(460, 0xe8f4ff, 2.3, 0x1a2a3a, 1.1, { pSpace: 0x020610, pNeb: 0x1e6a8a, pNebI: 0.8, pStar: 1.2 }),
+  spaceKey(840, 0xfff0e0, 2.3, 0x2a2418, 1.1, { pSpace: 0x060402, pNeb: 0x6a4a2a, pNebI: 0.7, pStar: 0.9 }),
+  spaceKey(1275, 0xffe8c0, 2.5, 0x3a2a10, 1.2, { pSpace: 0x100804, pNeb: 0xa0702e, pNebI: 0.8, pStar: 1.1 }),
+];
+// the edge of the universe: almost nothing, then a cold violet warp, then the dark before the horizon
+const COSMOS_TOD_SRC = [
+  spaceKey(-60, 0xe8eeff, 2.2, 0x141a2a, 1.0, { pSpace: 0x010104, pNeb: 0x1a2440, pNebI: 0.5, pStar: 0.55 }),
+  spaceKey(460, 0xe8eeff, 2.2, 0x141a2a, 1.0, { pSpace: 0x010104, pNeb: 0x243a6a, pNebI: 0.8, pStar: 0.7 }),
+  spaceKey(840, 0xf0e8ff, 2.2, 0x201430, 1.0, { pSpace: 0x040108, pNeb: 0x4a2a7a, pNebI: 0.9, pStar: 0.6 }),
+  spaceKey(1275, 0xffe8f0, 2.3, 0x1a1020, 1.1, { pSpace: 0x000000, pNeb: 0x5a2040, pNebI: 0.7, pStar: 0.35 }),
+];
+
+// =============================================================================
 // stage table
 // =============================================================================
 function genCoastal(w, ch, k, d0) {
@@ -7384,6 +7499,27 @@ export const WORLD_STAGES = {
     cloudShadowK: () => 0,
     deck: false,
     space: { body: 1, band: true }, drift: true, noClouds: true, voidH: MN_SKIP, snap: moonSnap,
+  },
+  solar: {   // PLACEHOLDER (see its section)
+    id: 'solar', layout: SOLAR_LAYOUT, salt: 1496000,
+    clear: { from: Infinity, to: -Infinity }, corridors: [SPACE_LANE],
+    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, OP.hullD), hasGround: () => false, gen: genSpaceDrift,
+    water: null, flatCheck: false, tod: makeTod(SOLAR_TOD_SRC), cloud: SPACE_CLOUD, cloudShadowK: () => 0, deck: false,
+    space: { body: 1, band: true, deep: true }, drift: true, noClouds: true,
+  },
+  galaxy: {  // PLACEHOLDER (see its section)
+    id: 'galaxy', layout: GALAXY_LAYOUT, salt: 2600000,
+    clear: { from: Infinity, to: -Infinity }, corridors: [SPACE_LANE],
+    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, OP.hullD), hasGround: () => false, gen: genSpaceDrift,
+    water: null, flatCheck: false, tod: makeTod(GALAXY_TOD_SRC), cloud: SPACE_CLOUD, cloudShadowK: () => 0, deck: false,
+    space: { nebula: true, band: true, deep: true }, drift: true, noClouds: true,
+  },
+  cosmos: {  // PLACEHOLDER (see its section)
+    id: 'cosmos', layout: COSMOS_LAYOUT, salt: 1380000,
+    clear: { from: Infinity, to: -Infinity }, corridors: [SPACE_LANE],
+    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, OP.hullD), hasGround: () => false, gen: genSpaceDrift,
+    water: null, flatCheck: false, tod: makeTod(COSMOS_TOD_SRC), cloud: SPACE_CLOUD, cloudShadowK: () => 0, deck: false,
+    space: { nebula: true, band: true, deep: true }, drift: true, noClouds: true,
   },
 };
 // an unknown biome name would turn the low-cloud alpha into NaN (→ full opacity): check the tables

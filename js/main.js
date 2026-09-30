@@ -34,7 +34,9 @@ window.addEventListener('keydown', (e) => {
   if (!typing && /^(Arrow|Key[WASDXKPQE]$|Space|Shift|Escape|Enter)/.test(e.code)) setTouchUI(false);
   // A held Enter must not auto-repeat a focused button's click: its repeats would confirm a
   // purchase (or QUIT / RESTART) that the first press only armed.
-  if (e.repeat && (e.code === 'Enter' || e.code === 'NumpadEnter') && e.target.closest && e.target.closest('button')) e.preventDefault();
+  // Nor submit a name box for the board: NO on CONTINUE (or QUIT) focuses one under the held key,
+  // and a repeat there would confirm the prefilled name before anything could be typed.
+  if (e.repeat && (e.code === 'Enter' || e.code === 'NumpadEnter') && e.target.closest && e.target.closest('button, form.entry')) e.preventDefault();
 }, { capture: true });
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const landscapeLock = matchMedia('(orientation: landscape) and (max-height: 500px)');
@@ -52,13 +54,13 @@ const store = {
 };
 const settings = Object.assign({ music: 0.7, sfx: 0.8, muted: false, quality: 'auto', shake: !reducedMotion, haptics: true, touchSens: 1 }, store.get('settings', {}));
 if (![0.85, 1, 1.2].includes(settings.touchSens)) settings.touchSens = 1; // old drag-sensitivity values
-let hiScore = Number(store.get('hi', 0)) || 0;
+let hiScore = 0; // HI-SCORE shown (syncHi sets it at boot)
 
 // Wallet + hangar: store 'hangar' → { money, owned: [aircraft ids], equipped, paints: { <aircraft>:
 // [paint ids owned] }, paint: { <aircraft>: paint equipped }, upgrades: { <upgrade>: level } }.
 // Always sanitised (bolt always owned, equipped must be owned, money a finite whole number ≥ 0,
 // 'std' always owned and the fallback paint, levels 0..prices.length, unknown ids dropped), so a
-// wallet saved before paints / upgrades existed loads with the defaults. Like saveHi(), every
+// wallet saved before paints / upgrades existed loads with the defaults. Like the board, every
 // change re-reads storage first so two tabs can't overwrite each other's CR. If storage is
 // unavailable (or a write fails) the wallet keeps working in memory for this session.
 const MONEY_MAX = 999999999;
@@ -169,12 +171,16 @@ function writeRanking(list) {
   return rankMem;
 }
 function lastName() { return cleanName(store.get('rankName', '')) || NAME_DEFAULT; }
-// HI-SCORE follows the top of the board (and still reads the old 'hi' key of existing players).
+// HI-SCORE is the top of the board, or the old 'hi' key when that is higher (an existing player's
+// record from before the board). Only a run offered to the board raises it on disk (syncHi below;
+// clearRecords zeroes it), so a tab closed on a results or CONTINUE screen can't leave behind a HI
+// that the board lacks. During a run the HUD shows a higher score as HI; the title reverts to this.
+function storedHi() { const v = Math.floor(Number(store.get('hi', 0))); return Number.isFinite(v) && v > 0 ? v : 0; }
 function syncHi() {
   const top = readRanking().length ? rankMem[0].score : 0;
-  const best = Number(store.get('hi', 0)) || 0;
+  const best = storedHi();
   if (top > best) store.set('hi', top);
-  hiScore = Math.max(hiScore, best, top);
+  hiScore = Math.max(best, top);
   ui.setHi(hiScore);
 }
 const today = () => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
@@ -183,7 +189,7 @@ const today = () => { const d = new Date(), p = (n) => String(n).padStart(2, '0'
 // was cleared, and whether it has been offered. A run ends — and is offered once — at GAME OVER,
 // at QUIT / RESTART from the pause menu and at TITLE from the results; NEXT STAGE / NEXT LOOP and
 // hiding the page keep it going.
-let run = null; // { best, clear, offered }
+let run = null; // { best, clear, offered, mark (the score at its last results / continue, for NEW RECORD) }
 function trackBest() { if (run && game.score > run.best) run.best = game.score; }
 // Record the run that just ended. Returns { rank, t } when it made the top RANK_MAX (the row is
 // saved at once under the last used name; the name entry only renames it), else null.
@@ -489,7 +495,10 @@ function menuNav() {
   const ok = input.take('padConfirm'), back = input.take('padBack');
   const tabPrev = input.take('tabPrev'), tabNext = input.take('tabNext');
   if (!up && !down && !left && !right && !ok && !back && !tabPrev && !tabNext) return;
-  if (entry && (back || (ok && document.activeElement === entry.input))) { commitEntry(back); return; }
+  if (entry && (back || (ok && document.activeElement === entry.input))) {
+    if (back || !(performance.now() - entry.focusAt < ENTRY_GAP)) commitEntry(back);
+    return;
+  }
   if ((left || right || tabPrev || tabNext) && !$('hangar').hidden) {
     stepHangarTab(left || tabPrev ? -1 : 1);
     if (!up && !down && !ok && !back) return;
@@ -599,7 +608,7 @@ function startGame({ loop = 1, stage = 0, keepScore = false } = {}) {
   audio.setMusicDuck(1);
   pendingContinue = -1;
   commitEntry(false, false);
-  if (!keepScore) { endRunMoney(); applyLoadout(); run = { best: 0, clear: false, offered: false }; }
+  if (!keepScore) { endRunMoney(); applyLoadout(); run = { best: 0, clear: false, offered: false, mark: 0 }; }
   game.resetRun({ keepScore, loop, stage });
   const st = game.stage;
   state = 'playing';
@@ -706,14 +715,16 @@ function gameOver() {
   if (rec) showEntry($('go-entry'), rec, () => focusFirst('gameover'));
   else { $('go-entry').hidden = true; focusFirst('gameover'); }
 }
-// Persist the best score seen (including runs that were continued, which reset the score).
-// Returns true when this run's current score is a new record.
+// The HI on the results / GAME OVER screen and their NEW RECORD test, at a save point of the run
+// (a stage's results, a continue, the game over). Memory only: the run's score reaches the stored
+// HI through the board when the run ends (offerRun → syncHi). Returns true when the score beats
+// the stored HI and this run's earlier save points (a continue zeroes the score in between).
 function saveHi() {
-  const best = Number(store.get('hi', 0)) || 0;
-  const cand = Math.floor(Math.max(hiScore, game.score));
-  const isNew = game.score > best;
-  if (cand > best) store.set('hi', cand);
-  hiScore = Math.max(cand, best);
+  const best = Math.max(storedHi(), run ? run.mark : 0);
+  const score = Math.floor(game.score);
+  const isNew = score > best;
+  if (run) run.mark = Math.max(run.mark, score);
+  hiScore = Math.max(hiScore, best, score);
   ui.setHi(hiScore); // updateHud only shows a HI that the score passes during play
   return isNew;
 }
@@ -814,15 +825,18 @@ function showRecord(rec, next) {
 // screen). Its row is already saved under the prefilled name (the last one used), so leaving the
 // page here loses nothing; confirming only renames it. Enter / OK confirms the box, Esc / B keeps
 // the prefilled name, and RETRY / TITLE with a name typed but not confirmed keep what is typed.
-let entry = null; // { form, input, t, rank, prefill, done }
+let entry = null; // { form, input, t, rank, prefill, done, focusAt }
+// A submit this soon after the box took the focus is the tail of the press that opened it (Enter
+// pressed twice on CONTINUE › NO), not a name being confirmed.
+const ENTRY_GAP = 250;
 function showEntry(form, rec, done) {
   const box = form.querySelector('.entry-name');
-  entry = { form, input: box, t: rec.t, rank: rec.rank, prefill: lastName(), done };
+  entry = { form, input: box, t: rec.t, rank: rec.rank, prefill: lastName(), done, focusAt: -Infinity };
   box.value = entry.prefill;
   ui.showEntry(form, rec.rank);
   // keyboard / gamepad: the box has the focus (typing replaces the name, A confirms it); touch:
   // tapping the box brings up the soft keyboard
-  if (!touchUI) setTimeout(() => { if (entry && entry.input === box) { box.focus({ preventScroll: true }); box.select(); } }, 30);
+  if (!touchUI) setTimeout(() => { if (entry && entry.input === box) { box.focus({ preventScroll: true }); box.select(); entry.focusAt = performance.now(); } }, 30);
 }
 // keep: the prefilled name, not the box; then: go on (focus RETRY, the title, the new run).
 function commitEntry(keep = false, then = true) {
@@ -1146,12 +1160,11 @@ function bindUI() {
       case 'rank-clear': if (state === 'title' && !$('ranking').hidden) clearRecords(b); break;
       case 'back': closePanel(); break;
       case 'resume': resume(); break;
-      // (both bank the run's CR and offer the run to the board)
-      case 'restart': if (!confirmTwice(b)) break; audio.play('confirm'); if (game.score > 0) saveHi(); endRun(() => startGame()); break;
+      // (both bank the run's CR and offer the run to the board, which keeps HI-SCORE)
+      case 'restart': if (!confirmTwice(b)) break; audio.play('confirm'); endRun(() => startGame()); break;
       case 'quit':
         if (state === 'paused' && !confirmTwice(b)) break;
         audio.play('select');
-        if (game.score > 0) saveHi();
         endRun(() => toTitle());
         break;
       case 'retry': audio.play('confirm'); startGame(); break;
@@ -1207,7 +1220,7 @@ function bindUI() {
   // body.typing (touch): no layout change or rotate hint for the soft keyboard meanwhile.
   for (const f of document.querySelectorAll('form.entry')) {
     const box = f.querySelector('.entry-name');
-    f.addEventListener('submit', (e) => { e.preventDefault(); if (entry && entry.form === f) commitEntry(); });
+    f.addEventListener('submit', (e) => { e.preventDefault(); if (entry && entry.form === f && !(performance.now() - entry.focusAt < ENTRY_GAP)) commitEntry(); });
     box.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && entry && entry.form === f) { e.preventDefault(); commitEntry(true); }
     });
@@ -1216,9 +1229,10 @@ function bindUI() {
     box.addEventListener('focus', () => { document.body.classList.toggle('typing', touchUI); setTimeout(() => { if (document.activeElement === box) box.select(); }, 0); });
     box.addEventListener('blur', () => { document.body.classList.remove('typing'); resize(); });
   }
-  window.addEventListener('pagehide', () => { bankMoney(); if (game.score > 0) saveHi(); });
+  // (hiding the page keeps the run going: its CR is banked, its score waits for the board)
+  window.addEventListener('pagehide', () => { bankMoney(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { if (state === 'playing' || state === 'resuming') pause(); bankMoney(); if (state === 'paused' && game.score > 0) saveHi(); audio.suspend(); }
+    if (document.hidden) { if (state === 'playing' || state === 'resuming') pause(); bankMoney(); audio.suspend(); }
     else if (state !== 'paused') audio.resume();
   });
   window.addEventListener('blur', () => { if (state === 'playing' || state === 'resuming') pause(); updateFocusNote(); });

@@ -105,9 +105,12 @@ export class UI {
       this.el.lives.innerHTML = '<i class="icon-ship"></i>'.repeat(k) + (x > 6 ? `<span class="hud-label">+${x - 6}</span>` : '');
     });
   }
+  // (7 icons, then a count: TITAN with the 起始炸彈 upgrade holds up to 8, and on the keyboard
+  // layout the B button's count is hidden; touch shows at most 6 icons beside the joystick)
   setBombs(n) {
     this.set('bombs', n, (x) => {
-      this.el.bombs.innerHTML = '<i class="icon-bomb">B</i>'.repeat(Math.max(0, Math.min(x, 7)));
+      const k = Math.max(0, Math.min(x, 7));
+      this.el.bombs.innerHTML = '<i class="icon-bomb">B</i>'.repeat(k) + (x > 7 ? `<span class="hud-label">+${x - 7}</span>` : '');
       this.el.bombCount.textContent = String(x);
       this.el.bombBtn.classList.toggle('empty', x <= 0);
     });
@@ -368,12 +371,13 @@ export class UI {
         r.b.style.setProperty('--ac-dim', rgba(pt.hex, 0.24));
         if (!r.msg && r.b.dataset.armed !== '1') r.desc.textContent = pt.desc;
       }
-      const owned = have.includes(pt.id), on = owned && w.paint[sel] === pt.id;
-      tag(r, ...(on ? ['on', '使用中'] : owned ? ['own', '已擁有'] : price(pt.price, !acOwned || w.money < pt.price)));
+      // (a jet not bought yet flies no paint: its free scheme is just 出廠, nothing is 使用中)
+      const owned = have.includes(pt.id), on = acOwned && owned && w.paint[sel] === pt.id;
+      tag(r, ...(on ? ['on', '使用中'] : !acOwned && pt.price === 0 ? ['own', '出廠'] : owned ? ['own', '已擁有'] : price(pt.price, !acOwned || w.money < pt.price)));
       r.b.classList.toggle('sel', pt.id === h.paint);
       r.b.classList.toggle('locked', !acOwned);
       r.b.setAttribute('aria-current', String(on));
-      r.b.setAttribute('aria-label', `塗裝 ${pt.zh}，${on ? '使用中' : owned ? '已擁有' : `${MONEY.label} ${fmt(pt.price)}`}${acOwned ? '' : `（需先擁有${sac.zh}）`}。${pt.desc}`);
+      r.b.setAttribute('aria-label', `塗裝 ${pt.zh}，${on ? '使用中' : !acOwned && pt.price === 0 ? '出廠塗裝' : owned ? '已擁有' : `${MONEY.label} ${fmt(pt.price)}`}${acOwned ? '' : `（需先擁有${sac.zh}）`}。${pt.desc}`);
     }
     // upgrades: level pips, the next level's price or MAX
     for (const u of UPGRADES) {

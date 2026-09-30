@@ -149,6 +149,9 @@ body:not(.touch) #stick { display: none; }
 #btn-bomb.empty { opacity: 0.35; filter: grayscale(0.7); }
 #btn-bomb:active { transform: scale(0.94); }
 body:not(.touch) #btn-bomb { display: none; }
+/* touch: the B button carries the exact count, so the bomb row stops at 6 icons and keeps clear of
+   the joystick (TITAN with 起始炸彈 holds up to 8; the keyboard layout shows 7 icons and '+1') */
+body.touch #bombs .icon-bomb:nth-child(n+7), body.touch #bombs .hud-label { display: none; }
 /* hold-to-focus (aircraft with option drones): above the bomb button, same thumb */
 .pad-r { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 #btn-focus { --ac: var(--violet); pointer-events: auto; width: 54px; height: 54px; border-radius: 50%; cursor: pointer; touch-action: none;

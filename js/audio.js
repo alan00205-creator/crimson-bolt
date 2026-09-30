@@ -690,7 +690,7 @@ function iGlass(E, b, t, m, dur, vel, pan) {
   mi.gain.setTargetAtTime(f * 0.12, t, 0.05);
   mod.connect(mi); mi.connect(car.frequency);
   const a = E.gain(0);
-  pluck(a.gain, t, 0.1 * vel, 0.24);
+  pluck(a.gain, t, 0.112 * vel, 0.24);
   car.connect(a);
   const sh = E.osc('sine', f * 5.43, t, t + 0.35);
   const sg = E.gain(0);
@@ -1695,7 +1695,7 @@ const FANFARE7 = {
 // Stage 8 (B-flat minor): the dawn motif on brass over timpani — B-flat, F, B-flat an octave up,
 // then D turning to D-flat (major to minor) — and a choir swelling on B-flat minor.
 const FANFARE8 = {
-  song: 'stage8', lead: iBrass, toms: 'timp', v: 0.55, pad: [46, 53, 58, 61], choir: true, gtr: 46,
+  song: 'stage8', lead: iBrass, toms: 'timp', v: 0.46, pad: [46, 53, 58, 61], choir: true, gtr: 46,
   seq: [0, 70, 65, 4, 4, 77, 70, 4, 8, 82, 77, 3, 11, 86, 82, 1, 12, 85, 82, 8],
 };
 const BUY_NOTES = [74, 78, 81, 86];
@@ -1957,8 +1957,8 @@ const ARP = {
   arpS:     { v: 'arp',  p: '0120120120120123', vel: 0.75 },    // climbs grouped in 3s (stage 6's hemiola)
   bellS3:   { v: 'bell', p: '0..2..4..5..4...', vel: 0.62 },    // sunlight, in 3s
   warp:     { v: 'arp',  p: '0123456701234567', vel: 0.6 },     // two-octave sweeps (stage 7's warp)
-  glassA:   { v: 'glass', p: '0.3.1.4.2.5.3.6.', vel: 0.6 },    // crystal clusters
-  glassS:   { v: 'glass', p: '0...3...5...4...', vel: 0.66 },   // the same, sparse
+  glassA:   { v: 'glass', p: '0.3.1.4.2.5.3.6.', vel: 0.66 },    // crystal clusters
+  glassS:   { v: 'glass', p: '0...3...5...4...', vel: 0.72 },   // the same, sparse
   arpQ:     { v: 'arp',  p: '0235023502350235', vel: 0.72 },    // pulsar: root, fifth and their octaves (stage 8)
   bellQ:    { v: 'bell', p: '0...2...3...5...', vel: 0.62 },    // the same in slow bells
 };
@@ -2657,7 +2657,7 @@ const SONGDEF = {
       },
       A: {
         chords: 'Fm Fm Db C Fm Fm Gb C', leadV: 'dlead',
-        lead: HELIOS_A + 'c6:1 c6:1 c6:1 c6:1 eb6:2 f6:2 gb6:6 f6:2 | eb6:2 db6:2 c6:2 bb5:2 ab5:4 f5:4 |' +
+        lead: HELIOS_A + 'c6:1 c6:1 c6:1 c6:1 eb6:2 f6:2 gb6:2 f6:6 | eb6:2 db6:2 c6:2 bb5:2 ab5:4 f5:4 |' +
               'gb5:2 bb5:2 db6:4 gb6:6 f6:2 | e6:4 g6:4 e6:2 c6:2 bb5:2 g5:2',
         bass: 'burn*2 pump*2 burn*2 pump*2', drums: 'thA*3 thB thA*3 fS', crash: [0],
         gtr: 'ch16*2 half*2 ch16*2 half*2', stab: 'hA none hA hA hA none hA hA',
@@ -2820,7 +2820,7 @@ const SONGDEF = {
       A2: {
         chords: 'Bbm Gb Bbm Ab Gb Db F Bbm',
         lead: COSMOS_A + 'gb5:2 db6:2 gb6:4 f6:2 eb6:2 db6:4 | f6:6 eb6:2 db6:4 f6:4 |' +
-              'e6:4 c6:4 a5:4 c6:4 | bb5:8 r:2 f5:2 gb5:2 ab5:2',
+              'f6:4 c6:4 a5:4 c6:4 | bb5:8 r:2 f5:2 gb5:2 ab5:2',
         bass: 'fifths*7 build', drums: 'cosA*3 cosB cosA*3 fT', crash: [0, 4],
         gtr: 'ch8*3 syn ch8*2 push hit', arp: 'arpQ*8',
         p2: { harm: 1, drums: 'cosB*3 bC cosB*3 fT', arp: 'bellQ*8' },
@@ -2852,18 +2852,19 @@ const SONGDEF = {
 
   // OMEGA, the core at the end of everything: the grand finale. D minor — the first stage's home
   // key — rising to E minor (the first boss's) for the last climb, 175 BPM, the whole battle
-  // kit at once. The intro is the Dies irae on brass and choir over timpani; then the core's
-  // pulse on the driven lead over gallop and hammer blasts; the hero's theme returns — stage 1's
-  // call on the pulse lead, harmonised, over 16th double kick; the hymn (brass and choir on the
-  // Dies irae in rising sequence, half time with timpani, a hammer blast under its second half);
-  // and the final ascent in E minor on the pulse lead over blasts and gallop, pivoting home
-  // through B-flat and A. 4-bar intro, 32-bar loop: A B(the hero) C(hymn) D(ascent, E minor).
+  // kit at once. The intro tolls the Dies irae in half notes on brass and choir over timpani;
+  // then the core's pulse on the driven lead over gallop and hammer blasts; the hero's theme
+  // returns — stage 1's call on the pulse lead, harmonised, over 16th double kick; the hymn
+  // (brass and choir on the Dies irae in rising sequence, half time with timpani, a hammer blast
+  // under its second half); and the final ascent in E minor on the pulse lead over blasts and
+  // gallop, pivoting home through B-flat and A. 4-bar intro, 32-bar loop: A B(the hero) C(hymn)
+  // D(ascent, E minor).
   boss8: {
     bpm: 175, key: 2, minor: true, delay: 0.75, intro: ['I'], loop: ['A', 'B', 'C', 'D'],
     S: {
       I: {
-        chords: 'Dm Dm Bb A', leadV: 'brass', padV: 'choir', pad: 1,
-        lead: DIES_IRAE + 'd5:4 f5:4 bb5:8 | a5:4 c#6:4 e6:8',
+        chords: 'Dm Bb C A', leadV: 'brass', padV: 'choir', pad: 1,
+        lead: 'f5:8 e5:8 | f5:8 d5:8 | e5:8 c5:8 | d5:8 c#5:8',
         bass: 'hold*2 halves build', drums: 'omI*2 bH fD', crash: [0], rise: 2,
         gtr: 'hold*2 half ch16', stab: 'hA none hA hD',
       },

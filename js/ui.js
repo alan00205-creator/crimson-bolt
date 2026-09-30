@@ -27,7 +27,7 @@ export class UI {
       d.className = 'popup';
       d.style.opacity = '0';
       this.el.popups.appendChild(d);
-      this.popPool.push({ el: d, t: 0, life: 0, x: 0, y: 0, active: false });
+      this.popPool.push({ el: d, t: 0, life: 0, x: 0, y: 0, sx: 0, sy: 0, medals: 0, sum: 0, tLast: 0, active: false });
     }
     this.flashV = 0;
     this.bannerTimer = null;
@@ -162,25 +162,39 @@ export class UI {
 
   // --- floating score popups (projected from world by caller) ---------------------------------
   popup(text, sx, sy, cls = '') {
+    // medals picked up in a quick run on one spot (a boss kill's medal rush) count up in one
+    // popup, "★×N total", instead of piling up into an unreadable smear
+    const medal = cls === 'medal' ? Number(String(text).replace(/,/g, '')) : 0;
+    if (medal > 0) {
+      for (const q of this.popPool) {
+        if (!q.active || !q.medals || q.t - q.tLast > 0.3 || Math.abs(q.sx - sx) > 48 || Math.abs(q.sy - sy) > 48) continue;
+        q.medals++; q.sum += medal; q.tLast = q.t; q.life = q.t + 0.9;
+        q.el.className = 'popup medal many';
+        q.el.textContent = `★×${q.medals} ${fmt(q.sum)}`;
+        return;
+      }
+    }
     let p = null;
     for (const q of this.popPool) { if (!q.active) { p = q; break; } }
     if (!p) { p = this.popPool[0]; for (const q of this.popPool) if (q.t > p.t) p = q; }
-    // stack popups that land on the same spot (e.g. a burst of medals) instead of overprinting
+    // stack popups that land on the same spot instead of overprinting
     let near = 0;
     for (const q of this.popPool) if (q.active && q.t < 0.3 && Math.abs(q.x - sx) < 24 && Math.abs(q.y - sy) < 24) near++;
     p.active = true; p.t = 0; p.life = 0.9; p.x = sx; p.y = sy - 16 * Math.min(near, 3);
+    p.sx = sx; p.sy = sy; p.medals = medal > 0 ? 1 : 0; p.sum = medal; p.tLast = 0;
     p.el.className = 'popup ' + cls;
     p.el.textContent = text;
   }
+  // Rise for the first 0.36 s, fade over the last 0.27 s (a merged medal counter lives on).
   updatePopups(dt) {
     for (const p of this.popPool) {
       if (!p.active) continue;
       p.t += dt;
-      const k = p.t / p.life;
-      if (k >= 1) { p.active = false; p.el.style.opacity = '0'; continue; }
-      const y = p.y - 26 * Math.min(1, k * 2.5);
+      const left = p.life - p.t;
+      if (left <= 0) { p.active = false; p.el.style.opacity = '0'; continue; }
+      const y = p.y - 26 * Math.min(1, p.t / 0.36);
       p.el.style.transform = `translate(${p.x}px, ${y}px) translate(-50%, -50%)`;
-      p.el.style.opacity = String(k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3);
+      p.el.style.opacity = String(left > 0.27 ? 1 : left / 0.27);
     }
   }
   clearPopups() { for (const p of this.popPool) { p.active = false; p.el.style.opacity = '0'; } }

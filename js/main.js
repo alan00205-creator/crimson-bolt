@@ -254,6 +254,7 @@ function applyQualityLevel() {
   resize();
 }
 
+const wideMQ = matchMedia('(min-width: 900px)'); // the side panels' CSS breakpoint (.side)
 function resize() {
   const iw = window.innerWidth, ih = window.innerHeight;
   const maxAspect = 0.64;
@@ -261,12 +262,14 @@ function resize() {
   viewEl.style.width = w + 'px';
   viewEl.style.flex = '0 0 auto';
   const side = Math.max(0, (iw - w) / 2);
+  const sides = side >= 220 && wideMQ.matches;
   for (const id of ['side-l', 'side-r']) {
     const el = $(id);
     el.style.width = side + 'px';
     if (id === 'side-l') el.style.left = '0'; else el.style.right = '0';
-    el.hidden = side < 220;
+    el.hidden = !sides;
   }
+  document.body.classList.toggle('sides', sides); // the in-view key legend (#keys) shows only without them
   W = w; H = ih;
   needsRender = true;
   if (!renderer) return;

@@ -23,7 +23,6 @@
 import { STAGE_META } from './defs.js';
 import { F } from './fx.js';
 import { W, makeTimeline, midbossEvent, bossDefeated, faceYaw } from './stage.js';
-import * as S3 from './stage3.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -56,6 +55,20 @@ export const ENEMY = {
       { key: 'eye', hp: 640, core: true, score: 50000 },
     ],
   },
+  // boss: parts in hit-test order. The eyes, the star (core) and the heart start sealed (not targets) and count in the HP
+  // bar from the start. The star is not the unit's core: destroying it starts the last phase; the heart is. hull: a
+  // box just up-screen of the centre (behind the star, never in front of a part), so shots through the sealed cage
+  // spark off the machine.
+  omega: {
+    hp: 1, score: 0, radius: 5.5, air: true, explode: 4, debris: 40, boss: true, model: 'omega', prewarm: 1,
+    parts: [
+      { key: 'pylon', list: true, hp: 250, score: 6000, medals: 2, big: 1.8 },
+      { key: 'eye', list: true, hp: 290, score: 12000, medals: 3, big: 2.0 },
+      { key: 'core', hp: 1250, score: 150000, medals: 6, big: 3.4 },
+      { key: 'heart', hp: 1150, core: true, score: 500000 },
+    ],
+    hull: { hw: 1.1, z0: -2.5, z1: -1.2 },
+  },
 };
 
 const MIDBOSS_AT = 590;
@@ -81,6 +94,20 @@ function fireTimerS(s, key, dt, g, interval, first) {
 }
 /** the jet can be touched by the stage right now (pulls, ambush placement) */
 const jetFree = (g) => g.player.alive && g.player.entering <= 0 && g.phase !== 'bossdead' && g.phase !== 'clear';
+/** bend bullet i sideways: an acceleration c across its path (c > 0 curls it clockwise on screen) — a constant
+ *  acceleration on a plain bullet (eb.ax / eb.az), so it costs nothing per frame and bombs, grazes and cancels treat it
+ *  like any other */
+function curve(g, i, c) {
+  if (i < 0) return;
+  const b = g.eb, sp = Math.hypot(b.vx[i], b.vz[i]) || 1;
+  b.ax[i] = (c * b.vz[i]) / sp; b.az[i] = (-c * b.vx[i]) / sp;
+}
+/** how many units of a type are alive */
+function countType(g, type) {
+  let n = 0;
+  for (const e of g.enemies) if (e.alive && !e.dying && e.type === type) n++;
+  return n;
+}
 
 // --------------------------------------------------------------------------------
 // shared effects (constant colour / option tables: nothing is allocated per frame)
@@ -586,6 +613,369 @@ function spawnSentinel(g) {
 }
 
 // --------------------------------------------------------------------------------
+// boss: OMEGA, the final core
+// --------------------------------------------------------------------------------
+// It comes out of the black hole at the top of the screen: a point of light swelling into the machine as it glides
+// down, space falling in round it.
+// p1 the pylons: in turn each crystal flares (the tell) and fires a needle burst at the jet; now and then all four
+//    throw orbs that curl round the machine (an orrery), and light leaks out of the cage as rings of big orbs
+//    → p2 once the pylons are gone (or after 44 s): the halo widens and its three eyes open as it turns. Each eye
+//    tracks the jet (a faint beam), locks (the beam flares: the telegraph) and fires a needle stream down the line;
+//    the halo's twelve nodes shed orbs as it turns (a slow galaxy)
+//    → p3 once the eyes are gone (or after 42 s): the cage opens on the star — stellar wind (four curling arms),
+//    supernovas (two rings at once, a flower), starfall (aimed needle fans), breathers; below 60 % it casts
+//    singularity mines out at the jet's flanks
+//    → p4 when the star dies: the field is wiped, the lights turn crimson and the singularity comes out of the cinder.
+//    It pulls at the jet (gently: never more than a seventh of its slow speed); the event horizon — motes on a great
+//    circle round it, then orbs there falling in, crossing and flying out — alternates with Hawking radiation (rings of
+//    needles) and a spiral of curling orbs.
+// Parts left alive keep firing in the later phases at a reduced rate.
+const OM_P1 = 44, OM_P2 = 42, OM_ENTER = 7.0, OM_FALL = 3.4;
+const OM_PULL = 0.9, OM_HZ_R = 9.5, OM_HZ_N = 20;
+const RED_A = [2.6, 0.4, 0.5, 1], RED_B = [0.7, 0.05, 0.1, 0];              // the end's crimson
+const HZ_A = [2.2, 0.5, 0.6, 0.9], HZ_B = [1.6, 0.3, 0.4, 0.6];             // horizon motes
+const HZR_A = [0.12, 0.01, 0.03, 0.2], HZR_B = [0.4, 0.05, 0.1, 0.35];      // … and its circle (faint)
+const IN_A = [1.2, 1.5, 2.4, 0.9], IN_B = [0.2, 0.3, 0.8, 0];               // light falling into the hole
+/** the yaw a part must turn to (in the unit's yawed frame) to face the jet */
+function partAim(g, e, pt) { return wrapA(Math.atan2(-(g.player.x - pt.x), -(g.player.z - pt.z)) - e.yaw); }
+/** space falling in on (x, z): streaks from a ring of radius r0..r1 toward it */
+function infall(g, x, z, r0, r1, n, col0, col1, sp = 7) {
+  const p = g.fx.p;
+  for (let i = 0; i < n; i++) {
+    const a = rnd(0, TAU), r = rnd(r0, r1);
+    p.emit(x + Math.sin(a) * r, 0.2, z + Math.cos(a) * r, -Math.sin(a) * sp, 0, -Math.cos(a) * sp, r / sp * 0.9, 0.3, 0.12, col0, col1, F.GLOW, 0, OPT_IN);
+  }
+}
+function omegaAI() {
+  return (e, dt, g) => {
+    const s = e.s, ud = e.mesh.userData, v = g.view;
+    if (!s.init) {
+      s.init = true; s.mode = 'enter'; s.fixedYaw = true; s.yaw = Math.PI; e.invuln = true; e.armored = true;
+      s.pt = 0; s.ph = 0; s.a = 0; s.b = 0; s.c = 0; s.sway = 0; s.unf = 0; s.open = 0; s.grow = 0; s.end = 0; s.pyk = 0; s.lens = 0;
+      // station: the crown's tips (≈ e.z − 7) stay below the boss bar. It comes out of the black hole above it
+      s.baseZ = Math.max(v.zTop + 12.5, zAtRow(v, BAR_ROW, 0.3) + 7.2);
+      s.z0 = Math.max(v.zTop + 4, s.baseZ - 6.5); e.x = 0; e.z = s.z0;
+      s.py = [0, 1, 2, 3].map((i) => g.partByKey(e, 'pylon' + i));
+      s.eye = [0, 1, 2].map((i) => g.partByKey(e, 'eye' + i));
+      s.core = g.partByKey(e, 'core'); s.heart = g.partByKey(e, 'heart');
+      s.es = s.eye.map((pt, k) => ({ st: 'idle', t: 1.2 + k * 1.5, mt: 0, ang: 0 }));
+      for (const pt of s.eye) if (pt) pt.dead = true;          // shut until phase 2
+      if (s.core) s.core.dead = true;                          // caged until phase 3
+      if (s.heart) s.heart.dead = true;                        // not yet
+      if (ud.reset) ud.reset();
+      if (ud.setSpin) ud.setSpin(2.4, 5);
+      e.mesh.scale.setScalar(0.06);
+      g.fx.p.emit(0, 0.4, s.z0, 0, 0, 0, 0.8, 1, 9, WH_A, IN_B, F.FLARE, 0, NO_DRAG);
+      g.audio.play('lock', { vol: 0.6, pitch: -14 });
+    }
+    // HP bar: every part (sealed ones count at full health)
+    let hp = 0, max = 0;
+    for (let i = 0; i < e.parts.length; i++) { const pt = e.parts[i]; max += pt.maxHp; hp += Math.max(0, pt.hp); }
+    g.ui.setBossHP(hp / max);
+    if (e.dying) { omegaDeath(e, dt, g); return; }
+
+    if (s.mode === 'enter') {                  // out of the hole: a point of light swelling into the machine
+      const k = ease(e.t / OM_ENTER);
+      e.z = s.z0 + (s.baseZ - s.z0) * k;
+      e.mesh.scale.setScalar(0.06 + 0.94 * ease(e.t / (OM_ENTER - 1.5)));
+      if (ud.setSpin) ud.setSpin(0.25 + 2.2 * (1 - k), 1.1 + 4 * (1 - k));
+      if (Math.random() < 0.8) infall(g, e.x, e.z, 7, 14, 1, IN_A, IN_B, 9);
+      s.lens -= dt;
+      if (s.lens <= 0 && e.t < OM_ENTER - 1.5) { s.lens = 0.45; g.fx.p.emit(e.x, 0.1, e.z, 0, 0, 0, 0.7, 30, 2, IN_B, IN_A, F.RING, 0, OPT_FLAT); }
+      if (e.t > OM_ENTER - 1.2 && !s.lit) { s.lit = true; g.fx.p.emit(e.x, 0.5, e.z, 0, 0, 0, 0.6, 3, 18, WH_A, ST_B, F.FLARE, 0, NO_DRAG); g.shake.add(0.5); g.audio.play('warning', { vol: 0.5 }); }
+      if (e.t > OM_ENTER) { s.mode = 'p1'; s.ph = 0; e.invuln = false; e.mesh.scale.setScalar(1); if (ud.setSpin) ud.setSpin(0.25, 1.1); }
+      return;
+    }
+    s.pt += dt; s.ph += dt;
+    // movement: a slow drift that widens as it loses its armament
+    const want = s.mode === 'p1' ? 1.2 : s.mode === 'p2' ? 1.8 : s.mode === 'p3' ? 2.4 : 1.6;
+    s.sway += (want - s.sway) * Math.min(1, dt * 0.4);
+    e.x = Math.sin(s.pt * 0.23) * s.sway;
+    e.z = s.baseZ + Math.sin(s.pt * 0.37) * 0.5;
+
+    // phase changes
+    let nPy = 0, nEye = 0;
+    for (let i = 0; i < 4; i++) if (live(s.py[i])) nPy++;
+    for (let i = 0; i < 3; i++) if (live(s.eye[i])) nEye++;
+    if (s.mode === 'p1' && (!nPy || s.ph > OM_P1)) {
+      s.mode = 'p2'; s.ph = 0;
+      g.audio.play('warning', { vol: 0.5 }); g.shake.add(0.35);
+      if (ud.setSpin) ud.setSpin(0.42, 1.4);
+    }
+    if (s.mode !== 'p1' && s.unf < 1) {        // the halo widens, the eyes open
+      s.unf = Math.min(1, s.unf + dt / 1.6);
+      if (ud.setUnfold) ud.setUnfold(smooth(s.unf));
+      for (const pt of s.eye) if (pt && !pt.obj.userData.destroyed) { pt.obj.userData.setOpen(smooth((s.unf - 0.3) / 0.7)); if (s.unf > 0.6) pt.dead = false; }
+    }
+    if (s.mode === 'p2' && s.unf >= 1 && (!nEye || s.ph > OM_P2)) {
+      s.mode = 'p3'; s.ph = 0; s.cyc = 0; s.mineT = 5;
+      g.shake.add(0.6); g.ui.flash(0.35); g.audio.play('explodeL'); g.audio.play('warning', { vol: 0.5 });
+      for (let k = 0; k < 3; k++) { const pt = s.eye[k]; if (pt) pt.obj.userData.setBeam(0); }
+    }
+    // the cage over the star
+    s.open += ((s.mode === 'p3' ? 1 : 0) - s.open) * Math.min(1, dt * 1.6);
+    if (s.core && !s.core.obj.userData.destroyed && s.core.obj.userData.setOpen) s.core.obj.userData.setOpen(s.open);
+    if (s.mode === 'p3' && s.core && s.core.dead && !s.core.obj.userData.destroyed && s.open > 0.6) { s.core.dead = false; starBurst(g, e.x, e.z - 0.8, 20, 1.6); }
+    if (s.mode === 'p3' && s.core && s.core.obj.userData.destroyed) {          // the star dies: the fall
+      s.mode = 'fall'; s.ph = 0;
+      g.cancelBullets(0, 0, 999, true);
+      for (let k = 0; k < 4; k++) { const pt = s.py[k]; if (pt && !pt.dead) pt.fireT = 2; }
+      g.fx.explosion(e.x, 1.2, e.z - 0.8, 4.5, { debris: 30, color: ud.debrisColor });
+      g.fx.shockwave(e.x, 0.1, e.z - 0.8, 26, [2.8, 2.4, 1.6, 1], 0.9);
+      g.fx.p.emit(e.x, 0.6, e.z - 0.8, 0, 0, 0, 0.5, 3, 20, WH_A, ST_B, F.FLARE, 0, NO_DRAG);
+      g.ui.flash(0.8); g.shake.add(0.9); g.audio.play('explodeL'); g.haptic([60, 40, 90]);
+    }
+    if (s.mode === 'fall') {                   // the lights go crimson, the singularity comes out of the cinder
+      const k = s.ph / OM_FALL;
+      s.end = Math.min(1, k * 1.4);
+      if (ud.setEnd) ud.setEnd(s.end);
+      if (ud.setSpin) ud.setSpin(0.42 + k * 0.5, 1.4 + k * 2);
+      s.grow = smooth((s.ph - 1.0) / 2.2);
+      if (s.heart) s.heart.obj.userData.setGrow(s.grow);
+      if (Math.random() < 0.9) infall(g, e.x, e.z - 0.8, 3, 9, 1, RED_A, RED_B, 8);
+      if (s.ph > 1.4 && !s.rose) { s.rose = true; g.audio.play('warning', { vol: 0.55 }); g.shake.add(0.4); }
+      if (s.ph > OM_FALL) {
+        s.mode = 'p4'; s.ph = 0; s.cyc = 0; e.armored = false;
+        if (s.heart) s.heart.dead = false;
+        g.fx.shockwave(e.x, 0.1, e.z - 0.8, 18, [2.6, 0.4, 0.6, 1], 0.7);
+        g.audio.play('explodeL', { vol: 0.8 });
+      }
+      return;
+    }
+    // the singularity pulls at the jet
+    if (s.mode === 'p4' && jetFree(g)) {
+      const p = g.player, dx = e.x - p.x, dz = (e.z - 0.8) - p.z, d = Math.hypot(dx, dz);
+      if (d > 1) { const f = (OM_PULL * dt) / d; p.x += dx * f; p.z += dz * f; }
+      if (Math.random() < 0.6) infall(g, e.x, e.z - 0.8, 4, 12, 1, RED_A, RED_B, 7);
+    }
+
+    // aiming is free (firing is gated below): the eyes track the jet in the halo's turning frame
+    const halo = ud.halo, hy = halo ? halo.rotation.y : 0;
+    if (!g.canFire(e)) {
+      for (let k = 0; k < 3; k++) { const pt = s.eye[k], es = s.es[k]; if (pt) { pt.obj.userData.setBeam(0); pt.obj.userData.setCharge(0); } if (es.st !== 'idle') { es.st = 'idle'; es.t = 1.5; } }
+      return;
+    }
+    const fr = g.diff.fr, hard = g.diff.level >= 2;
+    const late = s.mode === 'p1' ? 1 : s.mode === 'p2' ? 0.7 : 0.5;         // leftover guns slow down
+    // pylons, in turn: the crystal flares (0.35 s), then a 3-round needle burst at the jet
+    if (nPy) {
+      s.pyT = (s.pyT ?? 1.4) - dt * late;
+      if (s.pyT <= 0 && !s.pyF) {
+        s.pyT = 1.05 / fr;
+        for (let q = 0; q < 4 && !s.pyF; q++) { s.pyk = (s.pyk + 1) % 4; if (live(s.py[s.pyk])) { s.pyF = s.py[s.pyk]; s.pyFt = 0.35; s.pyQ = 0; } }
+        if (s.pyF) { const m = g.muzzlePos(s.pyF.obj); g.fx.p.emit(m.x, 0.5, m.z, 0, 0, 0, 0.4, 0.4, 2.2, ST_A, ST_B, F.FLARE, 0, NO_DRAG); }
+      }
+      if (s.pyF) {
+        s.pyFt -= dt;
+        if (s.pyF.dead) s.pyF = null;
+        else if (s.pyFt <= 0) {
+          s.pyFt = 0.09; s.pyQ++;
+          const m = g.muzzlePos(s.pyF.obj), mx = m.x, mz = m.z;
+          if (s.pyQ === 1) s.pyAng = g.aim(mx, mz);
+          g.shoot(mx, mz, s.pyAng, 9.2, g.BK.NEEDLE);
+          if (s.pyQ >= 3) s.pyF = null;
+        }
+      }
+    }
+    if (s.mode === 'p1') {
+      // the orrery: all four crystals throw four orbs out round the machine, curling in toward it and away again
+      s.orT = (s.orT ?? 3.2) - dt;
+      if (s.orT <= 0) {
+        s.orT = 4.6 / fr; s.b += 0.5;
+        for (let q = 0; q < 4; q++) {
+          const pt = live(s.py[q]);
+          if (!pt) continue;
+          const m = g.muzzlePos(pt.obj), mx = m.x, mz = m.z, rad = Math.atan2(mx - e.x, mz - e.z);
+          for (let j = 0; j < 4; j++) curve(g, g.shoot(mx, mz, rad + Math.PI / 2 + (j - 1.5) * 0.28, 4.0 + j * 0.35), -2.2);
+        }
+        g.audio.play('lock', { vol: 0.35, pitch: 2 });
+      }
+      // light leaking from the cage: a ring of big orbs
+      s.rgT = (s.rgT ?? 5.0) - dt;
+      if (s.rgT <= 0) { s.rgT = 6.4 / fr; s.a += 0.17; g.ring(e.x, e.z - 0.8, hard ? 20 : 18, 3.4, s.a, g.BK.BIG); }
+      return;
+    }
+    // the eyes: track (a faint beam), lock (the beam flares: the telegraph), a needle stream down the locked line
+    for (let k = 0; k < 3; k++) {
+      const pt = live(s.eye[k]), es = s.es[k];
+      if (!pt) continue;
+      const o = pt.obj, u = o.userData;
+      es.mt += dt;
+      if (es.st === 'idle') {
+        es.t -= dt * late;
+        u.setBeam(0); u.setCharge(Math.max(0, u.charge - dt * 3));
+        o.rotation.y += clamp(wrapA(partAim(g, e, pt) - hy - o.rotation.y), -1.2 * dt, 1.2 * dt);
+        if (es.t <= 0 && s.unf >= 1) { es.st = 'track'; es.mt = 0; }
+      } else if (es.st === 'track') {
+        o.rotation.y += clamp(wrapA(partAim(g, e, pt) - hy - o.rotation.y), -1.8 * dt, 1.8 * dt);
+        u.setBeam(0.25); u.setCharge(0.2);
+        if (es.mt > 0.6) { es.st = 'lock'; es.mt = 0; es.ang = o.rotation.y + hy + e.yaw - Math.PI; es.ry = o.rotation.y + hy; g.audio.play('lock', { vol: 0.45, pitch: -3 + k * 2 }); }
+      } else if (es.st === 'lock') {             // the line is fixed in the world while the halo turns under it
+        o.rotation.y = es.ry - hy;
+        const q = Math.min(1, es.mt / 0.7);
+        u.setBeam(0.4 + 0.6 * q * (0.85 + Math.sin(es.mt * 40) * 0.15)); u.setCharge(0.3 + 0.7 * q);
+        if (es.mt > 0.75) { es.st = 'fire'; es.mt = 0; es.ft = 0; u.setBeam(0); g.audio.play('missile', { vol: 0.6, pitch: -4 }); g.shake.add(0.12); }
+      } else {
+        o.rotation.y = es.ry - hy;
+        u.setCharge(Math.max(0, 1 - es.mt / 0.5));
+        es.ft -= dt;
+        while (es.ft <= 0 && es.mt < 0.55) { es.ft += 0.05; const m = g.muzzlePos(o); g.shoot(m.x, m.z, es.ang, 13, g.BK.NEEDLE); }
+        if (es.mt > 0.6) { es.st = 'idle'; es.t = (3.6 + k * 0.4) / fr; }
+      }
+    }
+    if (s.mode === 'p2') {
+      // the halo's clockwork: half its nodes in turn shed an orb out along the way it turns (a slow galaxy)
+      s.ckT = (s.ckT ?? 1.0) - dt;
+      if (s.ckT <= 0 && halo) {
+        s.ckT = 0.55 / fr; s.ck = (s.ck || 0) ^ 1;
+        for (let k = s.ck; k < 12; k += 2) {
+          const m = g.muzzlePos(halo, k), mx = m.x, mz = m.z, rad = Math.atan2(mx - e.x, mz - (e.z - 0.8));
+          g.shoot(mx, mz, rad - 0.85, 3.8);
+        }
+      }
+      return;
+    }
+    const cx0 = e.x, cz0 = e.z - 0.8;          // the centre as the camera sees it (the star sits 1.45 up)
+    if (s.mode === 'p3') {
+      if (!s.core || s.core.dead) return;
+      const cm = g.muzzlePos(s.core.obj), cx = cm.x, cz = cm.z;
+      s.cyc += dt;
+      const cyc = s.cyc % 12, dir = Math.floor(s.cyc / 12) & 1 ? -1 : 1;
+      s.ct = (s.ct || 0) - dt;
+      if (cyc < 4.2) {                          // stellar wind: four arms of curling orbs
+        if (s.ct <= 0) { s.ct = 0.21 / fr; s.a += 0.23 * dir; for (let k = 0; k < 4; k++) curve(g, g.shoot(cx, cz, s.a + (k * TAU) / 4, 4.4), 1.4 * dir); }
+      } else if (cyc > 5.4 && cyc < 8.6) {      // supernovas: two rings at once, a flower
+        if (s.ct <= 0) {
+          s.ct = 1.3 / fr; s.b += 0.4;
+          const n = hard ? 16 : 14;
+          g.ring(cx, cz, n, 3.5, s.b, g.BK.BIG); g.ring(cx, cz, n, 4.9, s.b + Math.PI / n);
+          g.fx.p.emit(cx, 0.4, cz, 0, 0, 0, 0.3, 1.5, 6, ST_A, ST_B, F.RING, 0, OPT_FLAT);
+          g.audio.play('hitArmor', { vol: 0.4, pitch: -6 });
+        }
+      } else if (cyc > 9.2 && cyc < 10.6) {     // starfall: aimed needle fans
+        if (s.ct <= 0) { s.ct = 0.55 / fr; g.fan(cx, cz, g.aim(cx, cz), hard ? 9 : 7, 0.95, 8.2, g.BK.NEEDLE); }
+      }
+      // below 60 %: singularity mines cast out at the jet's flanks
+      if (s.core.hp < s.core.maxHp * 0.6) {
+        s.mineT -= dt;
+        if (s.mineT <= 0 && countType(g, 's8_mine') < 4) {
+          s.mineT = 7.5 / fr;
+          for (const sx of [-1, 1]) g.spawn('s8_mine', { x: cx + sx * 1.2, z: cz, ai: mineAI(sx * 2.8, 1.4, 2.6, 5) });
+          g.audio.play('missile', { vol: 0.5, pitch: -8 });
+        }
+      }
+      return;
+    }
+    // p4, the singularity (heart): the event horizon, Hawking radiation, the spiral
+    const heart = live(s.heart);
+    if (!heart) return;
+    const rage = heart.hp < heart.maxHp * 0.35;
+    s.cyc += dt;
+    const period = rage ? 8 : 10, cyc = s.cyc % period;
+    if (cyc < 0.1 && !s.hzOn) {                 // the horizon: motes on a great circle, then orbs there falling in
+      s.hzOn = true; s.hzT = 0.9; s.hzA = rnd(0, TAU);
+      for (let q = 0; q < OM_HZ_N; q++) {
+        const a = s.hzA + (q * TAU) / OM_HZ_N;
+        g.fx.p.emit(cx0 + Math.sin(a) * OM_HZ_R, 0.15, cz0 + Math.cos(a) * OM_HZ_R, 0, 0, 0, 0.9, 0.2, 0.9, HZ_A, HZ_B, F.GLOW, 0, NO_DRAG);
+      }
+      g.fx.p.emit(cx0, 0.1, cz0, 0, 0, 0, 0.9, OM_HZ_R / 0.39, OM_HZ_R / 0.39 * 0.98, HZR_A, HZR_B, F.RING, 0, OPT_FLAT);
+      g.audio.play('lock', { vol: 0.5, pitch: -10 });
+    }
+    if (cyc > 0.5) s.hzOn = false;
+    if (s.hzT > 0) {
+      s.hzT -= dt;
+      if (s.hzT <= 0) {
+        for (let q = 0; q < OM_HZ_N; q++) {
+          const a = s.hzA + (q * TAU) / OM_HZ_N;
+          g.shoot(cx0 + Math.sin(a) * OM_HZ_R, cz0 + Math.cos(a) * OM_HZ_R, a + Math.PI, 4.2);
+        }
+        g.audio.play('hitArmor', { vol: 0.6, pitch: -12 });
+      }
+    }
+    s.ct = (s.ct || 0) - dt;
+    if (cyc > 2.4 && cyc < 4.6) {               // Hawking radiation: rings of needles, half a step apart
+      if (s.ct <= 0) { s.ct = 0.55 / fr; s.c += 0.5; g.ring(cx0, cz0, hard ? 16 : 14, 6.4, s.c * TAU / 14, g.BK.NEEDLE); }
+    } else if (cyc > 5 && cyc < 8.2 - (rage ? 1.6 : 0)) {   // the spiral: six arms of curling orbs, the curl alternating
+      if (s.ct <= 0) {
+        s.ct = (rage ? 0.15 : 0.19) / fr; s.a += 0.23;
+        for (let k = 0; k < 6; k++) curve(g, g.shoot(cx0, cz0, s.a + (k * TAU) / 6, 4.0), (k & 1 ? 1.4 : -1.4));
+      }
+    }
+    if (rage) {                                  // the end: aimed big-orb fans between everything
+      s.rfT = (s.rfT ?? 2) - dt;
+      if (s.rfT <= 0) { s.rfT = 3.0 / fr; g.fan(cx0, cz0, g.aim(cx0, cz0), 5, 0.8, 5.6, g.BK.BIG); }
+    }
+  };
+}
+// Death: everything falls in — the halo, the ring, the pylons and the spars drawn into the heart as space pours in —
+// then it collapses to a point, a blinding flash, and the last star goes supernova: rings of light running out over the
+// whole screen, the medals. Then nothing but the black hole.
+function omegaDeath(e, dt, g) {
+  const s = e.s, ud = e.mesh.userData;
+  if (!s.dieT) for (let k = 0; k < 3; k++) { const pt = s.eye[k]; if (pt) { pt.obj.userData.setBeam(0); pt.obj.userData.setCharge(0); } }
+  s.dieT = (s.dieT || 0) + dt;
+  const t = s.dieT, cx = e.x, cz = e.z - 0.8;
+  if (t < 2.4) {
+    const k = t / 2.4;
+    if (ud.setCollapse) ud.setCollapse(k);
+    if (ud.setEnd) ud.setEnd(1);
+    if (ud.setSpin) ud.setSpin(0.6 + k * 3, 2 + k * 6);
+    if (ud.setFlash) ud.setFlash(Math.max(0, Math.sin(t * (18 + k * 30))) * (0.25 + k * 0.4));
+    infall(g, cx, cz, 5, 16, 3, k < 0.5 ? IN_A : RED_A, k < 0.5 ? IN_B : RED_B, 10 + k * 8);
+    g.shake.add(dt * (0.6 + k));
+    s.boomT = (s.boomT || 0) - dt;
+    if (s.boomT <= 0) {
+      s.boomT = 0.16 - k * 0.08;
+      const a = rnd(0, TAU), r = rnd(1.5, 6) * (1 - k * 0.7);
+      g.fx.explosion(cx + Math.sin(a) * r, 0.4, cz + Math.cos(a) * r, rnd(0.9, 1.6), { debris: 4, color: ud.debrisColor });
+      g.audio.play('explodeM', { vol: 0.55, pan: clamp((cx + Math.sin(a) * r) / 9, -1, 1) });
+    }
+  } else if (!s.point) {
+    s.point = true;                               // a point: the flash
+    g.ui.flash(1); g.shake.add(0.5);
+    g.fx.p.emit(cx, 0.6, cz, 0, 0, 0, 0.35, 6, 0.5, WH_A, WH_B, F.GLOW, 0, NO_DRAG);
+    g.audio.play('bomb', { vol: 0.7 });
+  }
+  if (s.point) e.mesh.scale.setScalar(Math.max(0.01, 1 - (t - 2.4) / 0.25));
+  if (t > 2.65 && !s.nova) {                      // the supernova
+    s.nova = true;
+    g.fx.explosion(cx, 0.6, cz, 2.6, { debris: 40, color: ud.debrisColor });
+    g.fx.p.emit(cx, 0.6, cz, 0, 0, 0, 0.7, 5, 26, WH_A, WH_B, F.GLOW, 0, NO_DRAG);
+    g.fx.shockwave(cx, 0.1, cz, 46, [3, 2.8, 2.4, 1], 1.4);
+    g.fx.shockwave(cx, 0.1, cz, 34, [2.8, 2.0, 0.9, 1], 1.1);
+    g.fx.shockwave(cx, 0.1, cz, 24, [2.6, 0.5, 0.7, 1], 0.9);
+    g.fx.shockwave(cx, 0.1, cz, 14, [1.2, 1.8, 3.0, 1], 0.7);
+    g.fx.p.emit(cx, 0.7, cz, 0, 0, 0, 1.0, 4, 30, WH_A, ST_B, F.FLARE, 0, NO_DRAG);
+    starBurst(g, cx, cz, 40, 2.6);
+    g.ui.flash(1); g.shake.add(1);
+    g.audio.play('bossDown'); g.audio.play('explodeL');
+    g.haptic([100, 60, 260]);
+    for (let i = 0; i < 24; i++) g.dropItem('medal', cx + rnd(-6, 6), cz + rnd(-4, 4));
+  }
+  if (s.nova) {                                   // echoes of it running out across the dark
+    s.echoT = (s.echoT ?? 0.5) - dt;
+    if (s.echoT <= 0 && t < 5.2) { s.echoT = 0.55; const k = (t - 2.65) / 2.6; g.fx.shockwave(cx, 0.1, cz, 30 + k * 20, [2.2 - k, 1.8 - k, 2.4 - k * 0.8, 0.8], 1.2); starBurst(g, cx + rnd(-4, 4), cz + rnd(-3, 3), 6, 1.4); }
+  }
+  if (t > 5.8) {
+    e.alive = false;
+    g.ui.boss(false);
+  }
+}
+function spawnOmega(g) {
+  const e = g.spawn('omega', { x: 0, z: g.view.zTop - 6, ai: omegaAI() });
+  e.onDeath = () => { e.s.dieT = 0; bossDefeated(g, e); };
+  e.onPartDestroyed = (en, pt) => {
+    if (pt.key === 'pylon1' || pt.key === 'pylon3') g.dropItem('P', pt.x, pt.z, { color: g.player.main });
+    else if (pt.key === 'eye0') g.dropItem('B', pt.x, pt.z);
+    else if (pt.key === 'eye1') g.dropItem('P', pt.x, pt.z, { color: g.player.main });
+    else if (pt.key === 'eye2') g.dropItem('S', pt.x, pt.z, { sub: g.player.sub || 'H' });
+    else if (pt.key === 'core') { g.dropItem('P', pt.x - 1, pt.z, { color: g.player.main }); g.dropItem('B', pt.x + 1, pt.z); }
+    starBurst(g, pt.x, pt.z, pt.key === 'core' ? 30 : 12, pt.key === 'core' ? 2 : 1.2);
+  };
+  return e;
+}
+
+// --------------------------------------------------------------------------------
 // spawn helpers for this stage's units (the stage-1 ones come from W)
 // --------------------------------------------------------------------------------
 const W8 = {
@@ -624,7 +1014,6 @@ const W8 = {
   },
 };
 
-// Stand-in until OMEGA lands: stage 3's SERAPH.
 // --------------------------------------------------------------------------------
 // Stage 8 timeline (distance in stage units; ~7 units/s)
 // --------------------------------------------------------------------------------
@@ -691,10 +1080,9 @@ const TIMELINE = makeTimeline((at) => {
 
 export const STAGE = {
   ...STAGE_META[7],
-  placeholder: true,
   timeline: TIMELINE,
   midbossAt: MIDBOSS_AT, bossAt: BOSS_AT,
-  spawnBoss: (g) => S3.STAGE.spawnBoss(g), // stand-in for OMEGA
+  spawnBoss: spawnOmega,
   // the Architects' machines harden through the web and the warped space
   hpSeg: (d) => (d < 420 ? 1 : d < 800 ? 1.15 : 1.3),
   scroll: 7, warnScroll: 3, bossScroll: 2.2,

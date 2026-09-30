@@ -519,18 +519,17 @@ function buildSentinelEye(dead) {   // part-local, centred on the socket
   }, null, null, { phase: Math.PI / 14 });
   return b;
 }
-function buildSentinelIris() {   // part-local: six petals closing over the eye (a low dome, split)
+function buildSentinelIris() {   // part-local: six petals closing over the eye (a dome of radius 0.8 round it, split)
   const b = new GB();
-  const P = [[0.0, 0.0], [0.32, 0.28], [0.64, 0.5], [0.94, 0.58]];     // [radius, height] across a petal
+  const TH = [0, 28, 56, 82, 102].map((d) => d * DEG), R = 0.8;
+  const P = (a, th) => [Math.cos(a) * R * Math.sin(th), R * Math.cos(th), Math.sin(a) * R * Math.sin(th)];
   for (let k = 0; k < 6; k++) {
-    const a0 = (k * TAU) / 6 + 0.04, a1 = ((k + 1) * TAU) / 6 - 0.04;
-    for (let i = 0; i < P.length - 1; i++) {
-      const [r0, h0] = P[i], [r1, h1] = P[i + 1], y0 = 0.62 - h0, y1 = 0.62 - h1;
-      const A = [Math.cos(a0) * r0, y0, Math.sin(a0) * r0], B = [Math.cos(a1) * r0, y0, Math.sin(a1) * r0];
-      const C = [Math.cos(a1) * r1, y1, Math.sin(a1) * r1], D = [Math.cos(a0) * r1, y1, Math.sin(a0) * r1];
-      const st = i === 2 ? K.platDk : i === 1 ? ((k & 1) ? K.obsLt : K.obs) : K.obs;
-      b.quadO(A, B, C, D, [0, -1.2, 0], st);
-      b.quadO(A, B, C, D, [0, 2.4, 0], K.obsXDk);
+    const a0 = (k * TAU) / 6 + 0.035, a1 = ((k + 1) * TAU) / 6 - 0.035;
+    for (let i = 0; i < TH.length - 1; i++) {
+      const A = P(a0, TH[i]), B = P(a1, TH[i]), C = P(a1, TH[i + 1]), D = P(a0, TH[i + 1]);
+      const st = i === 3 ? K.platDk : i === 2 ? K.plat : (k & 1) ? K.obsLt : K.obs;
+      b.quadO(A, B, C, D, [0, 0, 0], st);
+      b.quadO(A, B, C, D, scl(centroid([A, B, C, D]), 40), K.obsXDk);      // the inside
     }
   }
   return b;
@@ -621,6 +620,383 @@ function createSentinel() {
   return g;
 }
 
+// =============================================================================
+// OMEGA — boss: the final core (≈ 11 across the halo's eyes, 12 long from the prow to the crown)
+// =============================================================================
+// A mandala lying under the camera: a star caged at its centre, everything else turning round it.
+// Hierarchy:
+//   pivot ┬ base (the obsidian platform: four spars out along the diagonals to the pylon mounts, the crown of rays
+//         │   behind, the prow in front with the Ω inlaid)
+//         ├ gimbal ─ ringA (an armillary ring round the core: tilted, precessing, spinning)
+//         ├ halo (the great ring, flat, turning: userData.muzzles 0–11 are the twelve nodes round its rim; setUnfold
+//         │   widens it) ─ eye0..2 (parts: lenses on the halo under an iris; setOpen, setBeam, setCharge; rotation.y
+//         │   aims one in the halo's turning frame)
+//         ├ pylon0..3 (parts: monoliths on the mounts, a crystal of starlight floating over each — the muzzle)
+//         ├ core (part: the star under four petals of its cage; setOpen folds them out)
+//         └ heart (the core part of the unit: the singularity at the very centre — a black sphere in a crimson
+//             accretion disc and its glow; hidden until setGrow brings it out)
+// userData.setEnd(0..1) turns every light from starlight to the crimson of the end; setCollapse(0..1) draws the
+// whole machine in on itself (the death).
+const OM_CORE_Y = 1.45;
+const OM_PYLON_R = 5.1;
+const OM_HALO = [4.05, 4.45], OM_HALO_Y = 0.72, OM_EYE_R = 4.25;
+const OM_EYE_A = [Math.PI / 2, Math.PI / 2 + TAU / 3, Math.PI / 2 + (2 * TAU) / 3];
+const OM_PETAL_R = 1.72, OM_PETAL_T = 80 * DEG;
+const OM_HINGE = [0, OM_PETAL_R * Math.cos(OM_PETAL_T), OM_PETAL_R * Math.sin(OM_PETAL_T) * Math.cos(Math.PI / 4)];   // core-local
+const SUNF = rgb(1.0, 0.56, 0.2, 2.6);           // the star's cooler granules
+function buildOmegaBase() {
+  const b = new GB();
+  // the platform: an octagon, a platinum inlay ring with starlight ticks
+  const oct = [];
+  for (let k = 0; k < 8; k++) { const a = ((k + 0.5) * TAU) / 8; oct.push([Math.cos(a) * 2.55, Math.sin(a) * 2.55]); }
+  b.plate(oct, -0.36, 0.12, K.obs, K.obsLt, K.obsXDk);
+  washer(b, [0, 0.13, 0], [0, 1, 0], 1.98, 2.22, 0.02, 32, (f, j) => (f === 2 ? (j % 4 === 0 ? G_STARD : K.platLt) : K.plat));
+  // the prow: a tongue of plate toward the player with the Ω inlaid in starlight (its round top toward +z, the
+  // back: after the boss is turned to face the jet it reads upright on the screen)
+  b.plate([[-1.25, -2.2], [1.25, -2.2], [0.8, -4.3], [-0.8, -4.3]], -0.3, 0.1, K.obs, K.obsLt, K.obsXDk);
+  const cz = -3.05, rO = 0.5, A0 = -52 * DEG, A1 = 232 * DEG, NA = 10;
+  for (let k = 0; k < NA; k++) {
+    const a0 = A0 + ((A1 - A0) * k) / NA, a1 = A0 + ((A1 - A0) * (k + 1)) / NA;
+    strip(b, Math.cos(a0) * rO, cz + Math.sin(a0) * rO, Math.cos(a1) * rO, cz + Math.sin(a1) * rO, 0.105, 0.055, G_STAR);
+  }
+  for (const sx of [-1, 1]) {
+    const x0 = Math.cos(sx > 0 ? A0 : A1) * rO, z0 = cz + Math.sin(A0) * rO;
+    strip(b, x0, z0, x0 + sx * 0.3, z0 - 0.02, 0.105, 0.05, G_STAR);
+  }
+  const f0 = b.n;
+  // the spars out to the pylon mounts (both on the +x side, then mirrored): platinum-topped beams with a seam
+  for (const a of [Math.PI / 4, -Math.PI / 4]) {
+    const c = Math.cos(a), s = Math.sin(a);
+    b.block({ x: c * 3.55, y: -0.3, z: s * 3.55, w: 0.72, d: 2.5, h: 0.44, tw: 0.52, td: 2.3, bev: 0.08, top: K.plat, side: K.obs, bevS: K.platDk, ry: Math.PI / 2 - a });
+    strip(b, c * 2.45, s * 2.45, c * 4.6, s * 4.6, 0.145, 0.05, G_STARD);
+    b.lathe([c * OM_PYLON_R, -0.34, s * OM_PYLON_R], [0, 1, 0], [[0, 0.86], [0.3, 0.86], [0.44, 0.66]], 6, (i) => (i === 1 ? K.platDk : K.obs), null, K.obsLt, { phase: Math.PI / 6 });
+  }
+  // the crown: rays fanned out behind the core (the middle one on the centre line, added after the mirror)
+  for (let i = 1; i <= 3; i++) {
+    const a = Math.PI / 2 - i * 0.27, c = Math.cos(a), s = Math.sin(a), px = -s, pz = c, r0 = 2.35, L = 6.4 - i * 0.42;
+    b.spike([[c * r0 + px * 0.3, -0.05, s * r0 + pz * 0.3], [c * r0, 0.34, s * r0], [c * r0 - px * 0.3, -0.05, s * r0 - pz * 0.3]], [c * L, 0.06, s * L],
+      (k) => (k === 0 ? K.platLt : k === 1 ? K.plat : K.obs));
+    strip(b, c * (r0 + 0.3), s * (r0 + 0.3), c * (L - 0.6), s * (L - 0.6), 0.2, 0.03, i === 3 ? G_STARD : K.platDk, 0.01);
+  }
+  // the prow's flanking blades
+  b.spike([[1.15, -0.05, -2.1], [1.35, 0.25, -1.95], [1.55, -0.05, -1.8]], [2.4, 0.05, -3.9], (k) => (k === 1 ? K.plat : K.platLt));
+  b.mirrorX(f0);
+  b.spike([[-0.34, -0.05, 2.35], [0, 0.4, 2.35], [0.34, -0.05, 2.35]], [0, 0.08, 7.0], (k) => (k === 1 ? K.platLt : K.plat));
+  strip(b, 0, 2.7, 0, 6.3, 0.21, 0.045, G_STAR, 0.015);
+  return b;
+}
+function buildOmegaRingA() {   // the armillary ring (its own plane: xz), ticks of starlight round it like a dial
+  const b = new GB();
+  washer(b, [0, 0, 0], [0, 1, 0], 2.48, 2.72, 0.09, 40, (f, j) => {
+    if (f === 2) return j % 5 === 0 ? G_STAR : (j & 1) ? K.plat : K.platLt;
+    if (f === 0) return j % 5 === 0 ? G_STARD : K.obsDk;
+    return f === 1 ? K.obs : K.platDk;
+  });
+  return b;
+}
+function buildOmegaHalo() {   // the great ring (halo-local), its twelve rim nodes and the three eye sockets
+  const b = new GB();
+  washer(b, [0, 0, 0], [0, 1, 0], OM_HALO[0], OM_HALO[1], 0.12, 48, (f, j) => {
+    if (f === 2) return j % 4 === 0 ? G_STARD : (j & 1) ? K.plat : K.platLt;
+    if (f === 1) return j % 4 === 2 ? K.platDk : K.obs;
+    return f === 0 ? K.obsDk : K.obsLt;
+  });
+  for (let k = 0; k < 12; k++) {
+    const a = (k * TAU) / 12 + TAU / 24, c = Math.cos(a), s = Math.sin(a), px = -s * 0.13, pz = c * 0.13, r = OM_HALO[1];
+    b.spike([[c * r + px, 0.1, s * r + pz], [c * r, 0.2, s * r], [c * r - px, 0.1, s * r - pz], [c * r, -0.1, s * r]], [c * (r + 0.42), 0.04, s * (r + 0.42)],
+      (q) => (q === 0 ? G_STARD : q === 1 ? K.plat : K.platDk));
+  }
+  for (const a of OM_EYE_A) {
+    const c = Math.cos(a), s = Math.sin(a);
+    b.lathe([c * OM_EYE_R, 0.1, s * OM_EYE_R], [0, 1, 0], [[0, 0.95], [0.1, 0.95], [0.16, 0.82]], 10, (i) => (i === 0 ? K.gilt : K.giltDk), null, K.obs, { phase: Math.PI / 10 });
+  }
+  return b;
+}
+function buildOmegaEye(dead) {   // part-local: the lens housing, the eye looking up and out (toward −z: its aim)
+  const b = new GB();
+  b.lathe([0, -0.1, 0], [0, 1, 0], [[0, 0.62], [0.22, 0.72], [0.36, 0.66], [0.44, 0.5]], 10, (i, j) => (dead ? ((j & 1) ? K.obsDk : K.obs) : i === 1 ? ((j & 1) ? K.plat : K.platLt) : K.obs), K.obsDk, null, { phase: Math.PI / 10 });
+  const ed = nrm([0, 0.8, -0.6]), r = dead ? 0.42 : 0.5, th = [0, 13, 28, 45, 70, 110, 180].map((d) => d * DEG);
+  b.lathe([0, 0.36, 0], ed, th.map((a) => [r * Math.cos(a), r * Math.sin(a) + 1e-4]), 12, (i, j) => {
+    if (dead) return i < 3 && j % 3 === 0 ? G_EMBER : K.obsXDk;
+    if (i === 0) return K.glass;
+    if (i === 1) return G_STARH;
+    if (i === 2) return G_STAR;
+    if (i === 3) return (j & 1) ? G_STARD : K.gilt;
+    return K.obs;
+  }, null, null, { phase: Math.PI / 12 });
+  return b;
+}
+function buildOmegaPylon() {   // part-local, its origin at mid-height: a monolith, a pyramidion, a crystal floating over it
+  const b = new GB();
+  const sq = (y, w) => [[0, y, -w], [w, y, 0], [0, y, w], [-w, y, 0]];
+  b.loft([sq(-1.3, 0.56), sq(-0.2, 0.46), sq(0.55, 0.4), sq(0.72, 0.42), sq(1.0, 0.36)], (i, j) => {
+    if (i === 2) return G_STARD;                                                   // a band of starlight
+    return (j === 0 || j === 3) ? (i === 3 ? K.platLt : K.plat) : (i === 3 ? K.obsLt : K.obs);
+  }, K.obsDk, null);
+  b.spike(sq(1.0, 0.36), [0, 1.38, 0], (j) => (j === 0 || j === 3 ? K.platLt : K.obsLt));
+  // the crystal (an elongated octahedron) of starlight
+  const c = [0, 1.95, 0], w = 0.2, h = 0.42;
+  const V = [[w, 0, 0], [0, 0, w], [-w, 0, 0], [0, 0, -w]].map((p) => [p[0] + c[0], c[1], p[2] + c[2]]);
+  for (let k = 0; k < 4; k++) {
+    b.triO(V[k], V[(k + 1) % 4], [c[0], c[1] + h, c[2]], c, k & 1 ? G_STAR : G_STARH);
+    b.triO(V[k], V[(k + 1) % 4], [c[0], c[1] - h, c[2]], c, k & 1 ? G_STARD : G_STAR);
+  }
+  return b;
+}
+function buildOmegaCore(dead) {   // part-local: the star (dead: a cinder cracked with embers)
+  const b = new GB();
+  sphere(b, dead ? 1.12 : 1.25, [0, 0, 0], 2, (n, k) => {
+    if (dead) return k > 0.86 ? G_EMBER : k > 0.5 ? K.obsDk : K.obsXDk;
+    return k > 0.72 ? G_STARH : k > 0.3 ? G_STAR : GL(SUNF, 0.45);
+  }, dead ? 6.1 : 5.2);
+  return b;
+}
+function buildOmegaPetal() {   // hinge-local: a quarter of the cage over the +z side of the core, hinged at its foot
+  const b = new GB();
+  const NT = 4, NP = 3, R = OM_PETAL_R;
+  const pt = (t, p) => { const th = (t / NT) * OM_PETAL_T, ph = ((p / NP) - 0.5) * (88 * DEG); return [R * Math.sin(th) * Math.sin(ph) - OM_HINGE[0], R * Math.cos(th) - OM_HINGE[1], R * Math.sin(th) * Math.cos(ph) - OM_HINGE[2]]; };
+  const cen = [-OM_HINGE[0], -OM_HINGE[1], -OM_HINGE[2]];
+  for (let t = 0; t < NT; t++) {
+    for (let p = 0; p < NP; p++) {
+      const A = pt(t, p), B = pt(t, p + 1), C = pt(t + 1, p + 1), D = pt(t + 1, p);
+      const st = p === 1 ? (t === 3 ? K.gilt : t === 2 ? G_STARD : K.platLt) : (t === 3 ? K.giltDk : K.obsLt);
+      b.quadO(A, B, C, D, cen, st);
+      b.quadO(A, D, C, B, [cen[0] + 20 * (A[0] - cen[0]), cen[1] + 20 * (A[1] - cen[1]), cen[2] + 20 * (A[2] - cen[2])], K.obsXDk);   // inside
+    }
+  }
+  return b;
+}
+function buildOmegaHeart(dead) {   // the singularity: a black sphere, a crimson rim where it bends the light
+  const b = new GB();
+  sphere(b, dead ? 0.7 : 0.95, [0, 0, 0], 1, (n, k) => {
+    if (dead) return k > 0.85 ? G_EMBER : K.obsXDk;
+    const rim = Math.abs(n[1]) < 0.35;
+    return rim ? (k > 0.5 ? G_END : GL(scl(END, 0.5), 0.3)) : K.obsXDk;
+  }, 8.8);
+  return b;
+}
+const OM_DISC = [1.25, 1.45, 1.9, 2.5];
+function buildOmegaDisc() {   // the heart's accretion disc: white-hot inside, crimson, dark red at the rim; two spiral arms
+  const b = new GB();
+  const n = 32, band = [G_ENDH, G_END, GL(scl(END, 0.35), 0.25)];
+  for (let k = 0; k < n; k++) {
+    const a0 = (TAU * k) / n, a1 = (TAU * (k + 1)) / n, c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+    for (let q = 0; q < 3; q++) {
+      const ra = OM_DISC[q], rb = OM_DISC[q + 1];
+      const P = [[c0 * ra, 0, s0 * ra], [c0 * rb, 0, s0 * rb], [c1 * rb, 0, s1 * rb], [c1 * ra, 0, s1 * ra]];
+      b.quadN(P[0], P[1], P[2], P[3], [0, 1, 0], band[q]);
+      b.quadN(P[0], P[1], P[2], P[3], [0, -1, 0], q ? K.obsXDk : G_END);
+    }
+  }
+  for (let arm = 0; arm < 2; arm++) {
+    for (let k = 0; k < 10; k++) {
+      const t0 = k / 10, t1 = (k + 1) / 10, a0 = arm * Math.PI - t0 * 2.6, a1 = arm * Math.PI - t1 * 2.6;
+      const r0 = 1.3 + t0 * 1.15, r1 = 1.3 + t1 * 1.15;
+      strip(b, Math.cos(a0) * r0, Math.sin(a0) * r0, Math.cos(a1) * r1, Math.sin(a1) * r1, 0.015, 0.1 * (1 - t0 * 0.6), t0 < 0.4 ? G_ENDH : G_END, 0.1 * (1 - t1 * 0.6));
+    }
+  }
+  return b;
+}
+/** RGBA vertex-alpha beam along −z from the origin (unit length: the mesh is scaled to its length): an HDR core that
+ *  blooms and a translucent halo, fading with distance (normal blending, so it reads over the bright disk too) */
+function buildBeam(w, halo, core, hot, edge) {
+  const pos = [], col = [];
+  const N = 8;
+  const quad = (xa, xb, za, zb, ca, cb, fa, fb) => {
+    const A = [xa, 0, za], B = [xb, 0, za], C = [xb, 0, zb], D = [xa, 0, zb];
+    const c = (cc, f) => [cc[0], cc[1], cc[2], cc[3] * f];
+    pos.push(...A, ...B, ...C, ...A, ...C, ...D);
+    col.push(...c(ca, fa), ...c(cb, fa), ...c(cb, fb), ...c(ca, fa), ...c(cb, fb), ...c(ca, fb));
+  };
+  for (let k = 0; k < N; k++) {
+    const za = -k / N, zb = -(k + 1) / N, fa = 1 - 0.7 * (k / N), fb = 1 - 0.7 * ((k + 1) / N);
+    quad(-halo, -w, za, zb, edge, hot, fa, fb);
+    quad(-w, w, za, zb, core, core, fa, fb);
+    quad(w, halo, za, zb, hot, edge, fa, fb);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+  g.computeBoundingSphere();
+  return g;
+}
+/** hidden beam mesh of length len; userData.set(v) shows it at strength v (0 hides it and collapses it to zero length,
+ *  so bounding boxes ignore it) */
+function beamMesh(key, len, w, halo, core, hot, edge) {
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  const m = new THREE.Mesh(G(key, () => buildBeam(w, halo, core, hot, edge)), mat);
+  m.name = 'beam'; m.visible = false; m.renderOrder = 3; m.userData.noShadow = true; m.frustumCulled = false;
+  m.scale.z = 1e-4;
+  m.userData.set = (v) => { const on = v > 0.01; m.visible = on; m.scale.z = on ? len : 1e-4; mat.opacity = Math.min(1, v); };
+  return { m, mat };
+}
+function createOmega() {
+  const g = new THREE.Group(); g.name = 'boss';
+  const pivot = new THREE.Group(); pivot.name = 'pivot'; g.add(pivot);
+  const ud = g.userData;
+  ud.kind = 'boss:omega';
+  ud.radius = 5.5;
+  ud.debrisColor = new THREE.Color('#c0c6d2');
+  const allMats = [], extra = [];
+  const mat = (r = 0.5, m = 0.35) => { const x = bodyMat(r, m); allMats.push(x); return x; };
+  const baseMat = mat(0.5, 0.35);
+  const base = new THREE.Mesh(GG('ext:s8:omega.base', buildOmegaBase), baseMat);
+  pivot.add(base);
+  // ---- the armillary ring round the core
+  const ringMat = mat(0.4, 0.45);
+  const gimbal = new THREE.Object3D(); gimbal.position.y = OM_CORE_Y; gimbal.rotation.order = 'YXZ';
+  const ringA = new THREE.Mesh(GG('ext:s8:omega.ringA', buildOmegaRingA), ringMat);
+  gimbal.add(ringA); pivot.add(gimbal);
+  // ---- the halo and its eyes
+  const haloMat = mat(0.45, 0.4);
+  const halo = new THREE.Object3D(); halo.name = 'halo'; halo.position.y = OM_HALO_Y;
+  halo.add(new THREE.Mesh(GG('ext:s8:omega.halo', buildOmegaHalo), haloMat));
+  halo.userData.muzzles = [];
+  for (let k = 0; k < 12; k++) { const a = (k * TAU) / 12 + TAU / 24; halo.userData.muzzles.push(V3(Math.cos(a) * (OM_HALO[1] + 0.45), 0.04, Math.sin(a) * (OM_HALO[1] + 0.45))); }
+  pivot.add(halo);
+  const eyeGeo = GG('ext:s8:omega.eye', () => buildOmegaEye(false)), eyeDead = GG('ext:s8:omega.eyeDead', () => buildOmegaEye(true));
+  const irisGeo = GG('ext:s8:sentinel.iris', buildSentinelIris);
+  const eyes = OM_EYE_A.map((a, k) => {
+    const m = mat(0.4, 0.3);
+    const pod = new THREE.Mesh(eyeGeo, m), lid = new THREE.Mesh(irisGeo, m);
+    lid.position.y = 0.36; lid.scale.setScalar(0.66);
+    const part = makePart('eye' + k, 0.85, [{ mesh: pod, intact: eyeGeo, wreck: eyeDead }, { mesh: lid, hideOnDestroy: true }], [V3(0, 0.5, -0.45)]);
+    part.position.set(Math.cos(a) * OM_EYE_R, 0.14, Math.sin(a) * OM_EYE_R);
+    part.rotation.order = 'YXZ';
+    part.userData.mat = m;
+    const beam = beamMesh('ext:s8:omega.beam', 30, 0.09, 0.42, [1.7, 1.45, 1.0, 0.75], [0.9, 0.55, 0.2, 0.3], [0.4, 0.2, 0.05, 0]);
+    beam.m.position.set(0, 0.5, -0.5);
+    part.add(beam.m);
+    extra.push(beam.mat);
+    let open = 0, charge = 0;
+    part.userData.open = 0; part.userData.charge = 0;
+    /** 0..1: the iris opens on the lens */
+    part.userData.setOpen = (v) => {
+      open = Math.max(0, Math.min(1, v)); part.userData.open = open;
+      const e = open * open * (3 - 2 * open), s = 0.66 * (1 - e * 0.84);
+      lid.scale.set(s, 0.66 * (1 - e * 0.55), s); lid.position.y = 0.36 - e * 0.2; lid.rotation.y = e * 0.8;
+    };
+    /** 0..1: the lens blazes (a lance coming) */
+    part.userData.setCharge = (v) => { charge = Math.max(0, Math.min(1, v)); part.userData.charge = charge; };
+    part.userData.setBeam = beam.m.userData.set;
+    part.userData.setOpen(0);
+    halo.add(part);
+    return part;
+  });
+  // ---- the pylons
+  const pyKeep = { keep: (x, y, z) => -0.15 - y + (x + z) * 0.25, crumple: 0.1, seed: 95, dir: [0, 1, 0], shards: 10, shardSize: 0.26, band: 0.4 };
+  const pylons = [0, 1, 2, 3].map((k) => {
+    const a = Math.PI / 4 + (k * Math.PI) / 2, m = mat(0.45, 0.35);
+    const p = destructiblePart({ key: 'ext:s8:omega.pylon', build: buildOmegaPylon, name: 'pylon' + k, radius: 0.95, muzzles: [V3(0, 1.95, 0)], wreck: pyKeep,
+      sag: [0.12, -0.25, 0.1], pos: [Math.cos(a) * OM_PYLON_R, 1.4, Math.sin(a) * OM_PYLON_R], mat: m });
+    p.userData.mat = m; p.userData.home = p.position.clone();
+    pivot.add(p);
+    return p;
+  });
+  // ---- the core: the star under the four petals of its cage
+  const orbMat = bodyMat(0.4, 0.1), cageMat = mat(0.45, 0.4);
+  const coreGeo = GG('ext:s8:omega.core', () => buildOmegaCore(false)), coreDead = GG('ext:s8:omega.coreDead', () => buildOmegaCore(true));
+  const orb = new THREE.Mesh(coreGeo, orbMat);
+  const petalGeo = GG('ext:s8:omega.petal', buildOmegaPetal);
+  const hinges = [], petals = [];
+  for (let k = 0; k < 4; k++) {
+    const turn = new THREE.Object3D(); turn.rotation.y = (k * Math.PI) / 2;
+    const hinge = new THREE.Object3D(); hinge.position.set(OM_HINGE[0], OM_HINGE[1], OM_HINGE[2]);
+    const pm = new THREE.Mesh(petalGeo, cageMat);
+    hinge.add(pm); turn.add(hinge);
+    hinges.push({ turn, hinge }); petals.push(pm);
+  }
+  const core = makePart('core', 1.35, [{ mesh: orb, intact: coreGeo, wreck: coreDead }, ...petals.map((m) => ({ mesh: m, hideOnDestroy: true }))], [V3(0, 0.2, 0)]);
+  for (const h of hinges) core.add(h.turn);
+  core.userData.materials.push(cageMat);
+  core.userData.setFlash = flashFn([orbMat, cageMat]);
+  core.position.y = OM_CORE_Y;
+  let openT = 0;
+  core.userData.open = 0;
+  core.userData.setOpen = (v) => {
+    openT = Math.max(0, Math.min(1, v)); core.userData.open = openT;
+    const e = openT < 0.5 ? 2 * openT * openT : 1 - Math.pow(-2 * openT + 2, 2) / 2;
+    for (const h of hinges) h.hinge.rotation.x = e * 112 * DEG;
+  };
+  core.userData.setOpen(0);
+  pivot.add(core);
+  // ---- the heart: hidden inside until the star is gone
+  const heartMat = bodyMat(0.25, 0.5), discMat = bodyMat(0.5, 0.2), glowMat = additiveMat();
+  const hGeo = GG('ext:s8:omega.heart', () => buildOmegaHeart(false)), hDead = GG('ext:s8:omega.heartDead', () => buildOmegaHeart(true));
+  const hSphere = new THREE.Mesh(hGeo, heartMat);
+  const discTilt = new THREE.Object3D(); discTilt.rotation.set(0.42, 0, -0.16);
+  const disc = new THREE.Mesh(GG('ext:s8:omega.disc', buildOmegaDisc), discMat);
+  discTilt.add(disc);
+  const glow = new THREE.Mesh(G('ext:s8:omega.glow', () => haloGeo(2.3, 2.8, [0.0, 0.0, 0.0], [0.26, 0.02, 0.05], 36, 3.6, [0, 0, 0])), glowMat);
+  glow.userData.noShadow = true; glow.renderOrder = 2; glow.position.y = -0.3;
+  const heart = makePart('heart', 1.2, [{ mesh: hSphere, intact: hGeo, wreck: hDead }, { mesh: disc, hideOnDestroy: true }, { mesh: glow, hideOnDestroy: true }], [V3(0, 0, 0)]);
+  heart.add(discTilt);
+  heart.userData.materials.push(discMat);
+  heart.userData.setFlash = flashFn([heartMat, discMat]);
+  heart.position.y = OM_CORE_Y;
+  let grow = 0;
+  /** 0..1: the singularity comes out of the wreck of the star (0 = hidden) */
+  heart.userData.setGrow = (v) => {
+    grow = Math.max(0, Math.min(1, v)); heart.visible = grow > 0.01; heart.scale.setScalar(Math.max(0.01, grow));
+    core.scale.setScalar(Math.max(0.01, 1 - grow)); core.visible = grow < 0.99;          // the star's cinder shrinks away round it
+  };
+  heart.userData.setGrow(0);
+  pivot.add(heart);
+  ud.parts = { pylon: pylons, eye: eyes, core, heart };
+  ud.halo = halo;
+  ud.muzzles = [V3(0, 0.3, -4.0)];                // the prow (the Ω)
+  let end = 0, unfold = 0, collapse = 0, haloSpin = 0.25, ringSpin = 1.1;
+  /** 0..1: the halo widens (phase 2: its eyes wake) */
+  ud.setUnfold = (v) => { unfold = Math.max(0, Math.min(1, v)); };
+  /** the halo's and the ring's turning rates (rad/s) */
+  ud.setSpin = (h, r) => { haloSpin = h; ringSpin = r; };
+  /** 0..1: every light turns from starlight to crimson */
+  ud.setEnd = (v) => {
+    end = Math.max(0, Math.min(1, v));
+    for (const m of allMats) m.uEmitTint.value.setRGB(1 + 0.3 * end, 1 - 0.72 * end, 1 - 0.55 * end);
+  };
+  /** 0..1: the machine falls in on itself (the death) */
+  ud.setCollapse = (v) => { collapse = Math.max(0, Math.min(1, v)); };
+  const flashAll = flashFn([...allMats, orbMat, heartMat, discMat]);
+  ud.setFlash = flashAll;
+  /** pooled instances come back posed: halo folded and slow, eyes shut, cage shut, the heart hidden, starlight */
+  ud.reset = () => {
+    unfold = 0; collapse = 0; haloSpin = 0.25; ringSpin = 1.1; halo.rotation.y = 0;
+    for (const e of eyes) { e.userData.setOpen(0); e.userData.setCharge(0); e.userData.setBeam(0); e.rotation.set(0, 0, 0); }
+    core.userData.setOpen(0); heart.userData.setGrow(0); ud.setEnd(0);
+    for (const p of pylons) p.position.copy(p.userData.home);
+    pivot.scale.setScalar(1);
+  };
+  ud.reset();
+  ud.update = (dt, t) => {
+    const k = 1 - collapse;
+    const cc = collapse * collapse * (3 - 2 * collapse);
+    halo.rotation.y += dt * haloSpin * (1 + collapse * 6);
+    halo.scale.setScalar((0.8 + 0.2 * unfold) * (1 - 0.9 * cc));
+    ringA.rotation.y += dt * ringSpin * (1 + collapse * 6);
+    gimbal.rotation.set(1.05 + Math.sin(t * 0.4) * 0.15, t * 0.3, 0);
+    gimbal.scale.setScalar(1 - 0.85 * cc);
+    base.scale.setScalar(1 - 0.55 * cc);
+    for (const p of pylons) { p.position.copy(p.userData.home).multiplyScalar(1 - 0.8 * cc); }
+    const pulse = (0.72 + Math.sin(t * 2.2) * 0.12) * (1 + end * 0.3);
+    baseMat.uEmitScale.value = pulse; ringMat.uEmitScale.value = pulse; haloMat.uEmitScale.value = pulse + 0.1; cageMat.uEmitScale.value = pulse;
+    for (const p of pylons) p.userData.mat.uEmitScale.value = p.userData.destroyed ? 0.6 : pulse + Math.sin(t * 3 + p.position.x) * 0.15;
+    for (const e of eyes) {
+      const u = e.userData;
+      u.mat.uEmitScale.value = u.destroyed ? 0.6 : 0.4 + u.open * 0.3 + u.charge * (1.2 + Math.sin(t * 44) * 0.3);
+    }
+    orbMat.uEmitScale.value = core.userData.destroyed ? 0.7 : (0.3 + openT * 0.28) * (1 + Math.sin(t * 5.3) * 0.08 + Math.sin(t * 13.1) * 0.05);
+    orb.rotation.y += dt * 0.6;
+    heartMat.uEmitScale.value = 0.8 + Math.sin(t * 6) * 0.2;
+    discMat.uEmitScale.value = 0.75 + Math.sin(t * 3.7) * 0.12;
+    disc.rotation.y -= dt * 2.4;
+    glowMat.color.setScalar((0.8 + Math.sin(t * 2.6) * 0.2) * grow);
+    pivot.position.y = Math.sin(t * 0.5) * 0.12 * k;
+  };
+  ud.dispose = () => { for (const m of allMats) m.dispose(); for (const m of extra) m.dispose(); orbMat.dispose(); heartMat.dispose(); discMat.dispose(); glowMat.dispose(); };
+  return g;
+}
+
 export const ENEMIES = {
   s8_wraith: createWraith,
   s8_watcher: createWatcher,
@@ -628,4 +1004,4 @@ export const ENEMIES = {
   s8_mine: createMine,
   sentinel: createSentinel,
 };
-export const BOSSES = {};
+export const BOSSES = { omega: createOmega };

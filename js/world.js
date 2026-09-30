@@ -1892,7 +1892,7 @@ void main() {
       // star clouds (uMix2.w): the far gas crowded with small stars where it is thick
       if (uMix2.w > 0.001) {
         float sc = smoothstep(0.42, 0.8, v1) * uMix2.w;
-        col += crowd(q * 6.4 + 1.7, 5.0, mix(0.99, 0.62, sc), 0.11, aa * 6.4) * sc * 1.3;
+        col += crowd(q * 6.4 + 1.7, 5.0, mix(0.99, 0.68, sc), 0.11, aa * 6.4) * sc * 1.2;
       }
       col += gasLayer(l2 * 2.0 + vec2(0.57, 0.23), gX * 2.0, gY * 2.0, uGas, true, v2, a2) * uMix.y;
 #ifndef LOW
@@ -8542,7 +8542,8 @@ function landCol(d, t, seed, out) {
   mixInto(out, KP.land, sstep(0.46, 0.52, h));
   mixInto(out, KP.amber, sstep(0.6, 0.68, h));
   mixInto(out, OP.rockL, sstep(0.7, 0.76, h));
-  mixInto(out, KP.snow, sstep(0.66, 0.78, cl) * 0.9);
+  mixInto(out, KP.snow, sstep(0.66, 0.78, cl) * 0.75);
+  out[0] *= 0.78; out[1] *= 0.78; out[2] *= 0.8;          // (a world far off: kept below the play's brightness)
   return out;
 }
 

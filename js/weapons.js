@@ -84,6 +84,9 @@ export const PLASMA = {
   retarget: 0.3,                 // a free target scoring below this × the lock's steals the lock
   track: 30, bend: 11,           // tip / control-point follow rates (1/s): lower bend = more whip
   idle: 6,                       // no target: beam length
+  body: 0.65,                    // body brightness: brighter, its bloom buries the enemy needles on it
+  near: 1.2, nearFade: 4,        // around the jet (where aimed shots converge) the body dims to 0.3,
+                                 // back to full over nearFade units beyond `near`
 };
 // the option drones' version: one short lock beam each
 const DRONE_PLASMA = { range: 12.5, dps: (lv) => 4 + 0.5 * lv, width: (lv) => 0.34 + 0.02 * lv, idle: 2.4 };
@@ -159,6 +162,8 @@ export function canShoot(g) {
   const p = g.player;
   return p.alive && p.entering <= 0.3 && g.phase !== 'bossdead' && g.phase !== 'clear';
 }
+/** PLASMA beams are on screen this frame (game.draw then gives enemy bullets a heavier underlay) */
+export function plasmaLit(g) { return g.player.main === 'pink' && canShoot(g); }
 
 // --- main weapons --------------------------------------------------------------------------
 function fireVulcan(g, p, dt) {
@@ -382,8 +387,8 @@ function firePlasma(g, p, dt) {
 }
 // One flat, flickering beam: overlapping streaks along the quadratic curve (white-hot centre line,
 // pink body; bloom supplies the halo) with glow joints, a travelling pulse, an impact flare and a
-// lock reticle (reticle: false for a doubled-up beam).
-function drawBeam(fx, b, k, W, A, t, reticle) {
+// lock reticle (reticle: false for a doubled-up beam). The body dims near the jet (jx, jz).
+function drawBeam(fx, b, k, W, A, t, reticle, jx, jz) {
   if (!b.on) return;
   const B = fx.beams, lowQ = fx.lowQuality;
   const x0 = b.mx, z0 = b.mz, x1 = b.cx, z1 = b.cz, x2 = b.ex, z2 = b.ez;
@@ -398,10 +403,12 @@ function drawBeam(fx, b, k, W, A, t, reticle) {
     const qx = u * u * x0 + 2 * u * s * x1 + s * s * x2, qz = u * u * z0 + 2 * u * s * z1 + s * s * z2;
     const dx = qx - px, dz = qz - pz, l = Math.sqrt(dx * dx + dz * dz);
     const sm = s - 0.5 / n, dp = (sm - ph) * 7;
+    const mx = (px + qx) * 0.5, mz = (pz + qz) * 0.5, jdx = mx - jx, jdz = mz - jz;
+    const near = clamp((Math.sqrt(jdx * jdx + jdz * jdz) - PLASMA.near) / PLASMA.nearFade, 0.3, 1);
     const tip = idle ? 1 - sm * sm * 0.85 : 1;              // an idle beam fades toward its tip
-    const a = A * (1 + 0.7 * Math.exp(-dp * dp)) * tip;     // travelling pulse
+    const a = A * PLASMA.body * near * (1 + 0.7 * Math.exp(-dp * dp)) * tip; // travelling pulse
     const w = W * (0.84 + 0.16 * Math.sin(t * 53 + sm * 13 + k * 2.1)) * (0.78 + 0.22 * sm);
-    B.push((px + qx) * 0.5, 0.1, (pz + qz) * 0.5, w * 1.3, l * 1.55 + w * 0.35, flatRot(dx, dz), F.STREAK, 1, cr * a, cg * a, cb * a, 1, 0.4); // body
+    B.push(mx, 0.1, mz, w * 1.3, l * 1.55 + w * 0.35, flatRot(dx, dz), F.STREAK, 1, cr * a, cg * a, cb * a, 1, 0.4); // body
     if (!lowQ && j < n && j % 3 === 0) B.push(qx, 0.1, qz, w * 1.35, w * 1.35, 0, F.GLOW, 0, cr * 0.4 * a, cg * 0.34 * a, cb * 0.4 * a, 0.6, 0.4); // joint
     px = qx; pz = qz;
   }
@@ -419,7 +426,7 @@ function drawBeam(fx, b, k, W, A, t, reticle) {
 }
 function drawPlasma(g, p, fx, t) {
   const lv = p.level, W = PLASMA.width(lv) * (nBeams > 1 ? 0.9 : 1);
-  for (let k = 0; k < nBeams; k++) drawBeam(fx, BEAMS[k], k, W, 1, t, !BEAMS[k].shared);
+  for (let k = 0; k < nBeams; k++) drawBeam(fx, BEAMS[k], k, W, 1, t, !BEAMS[k].shared, p.x, p.z);
   const w = 0.8 + lv * 0.09 + Math.sin(t * 37) * 0.1; // gun root
   fx.beams.push(p.x, 0.1, p.z + g.muzzleZ - 0.05, w, w, t * 3, F.FLARE, 0, 1.9, 0.4, 1.7, 1);
   if (g.optLive && g.options.length && g.time - droneT < 0.12) {
@@ -428,7 +435,7 @@ function drawPlasma(g, p, fx, t) {
       const b = DBEAMS[k];
       let own = true;
       for (let j = 0; j < nBeams; j++) if (BEAMS[j].uid === b.uid) own = false; // the jet's reticle is there already
-      drawBeam(fx, b, k + 3, dw, 0.7, t, own && !!b.e);
+      drawBeam(fx, b, k + 3, dw, 0.7, t, own && !!b.e, p.x, p.z);
     }
   }
 }

@@ -1121,18 +1121,25 @@ export class Game {
     const fx = this.fx, b = this.eb, t = this.time;
     // player shots, then beam roots / muzzle glows
     WP.drawWeapons(this, fx);
-    // enemy bullets with a dark underlay so they read on any terrain
+    // enemy bullets over a dark underlay. Its soft halo reads on dark ground and sea; a bright stage
+    // (stage.bulletRim: stage 3's white cloud deck) adds a hard dark rim / a wider needle shadow, and
+    // burning PLASMA beams get a bigger, darker halo (their bloom floods back over the soft one).
+    const rim = !!this.stage.bulletRim, lit = WP.plasmaLit(this);
+    const nw = lit ? 0.9 : 0.55, nh = lit ? 2.1 : 1.3, na = lit ? 0.95 : 0.7;
+    const ok = lit ? 2.32 : 1.45, oa = lit ? 0.95 : 0.75;
     for (let i = 0; i < b.n; i++) {
       const k = b.kind[i], x = b.x[i], z = b.z[i];
       const birth = Math.min(1, b.t[i] * 12);
       const c = B_COLOR[k];
       if (k === BK.NEEDLE) {
         const rot = flatRot(b.vx[i], b.vz[i]);
-        fx.underlay.push(x, 0.05, z, 0.55, 1.3, rot, F.GLOW, 1, 0.05, 0.0, 0.06, 0.7);
+        if (rim) fx.underlay.push(x, 0.05, z, 0.8, 1.5, rot, F.GLOW, 1, 0.05, 0.0, 0.06, 0.85);
+        fx.underlay.push(x, 0.05, z, nw, nh, rot, F.GLOW, 1, 0.05, 0.0, 0.06, na);
         fx.bullets.push(x, 0.1, z, 0.42 * birth, 1.15 * birth, rot, F.STREAK, 1, c[0], c[1], c[2], 1, 0.4);
       } else {
         const s = B_SIZE[k] * (0.4 + 0.6 * birth) * (k === BK.MINE ? 1 + Math.sin(t * 14 + i) * 0.12 : 1);
-        fx.underlay.push(x, 0.05, z, s * 1.45, s * 1.45, 0, F.GLOW, 0, 0.06, 0.0, 0.07, 0.75);
+        if (rim) fx.underlay.push(x, 0.05, z, s * 1.3, s * 1.3, 0, F.ORB, 0, 0.03, 0.0, 0.05, 0.9);
+        fx.underlay.push(x, 0.05, z, s * ok, s * ok, 0, F.GLOW, 0, 0.06, 0.0, 0.07, oa);
         fx.bullets.push(x, 0.1, z, s, s, 0, F.ORB, 0, c[0], c[1], c[2], 1, 0.45);
       }
     }

@@ -438,10 +438,12 @@ export class FX {
     this.addGround = new SpriteBatch(1200, { additive: true, depthTest: true, renderOrder: 3, core: 0.7 });
     this.addAir = new SpriteBatch(2400, { additive: true, depthTest: false, renderOrder: 8, core: 0.7 });
     // player beams / waves / rockets (weapons.js): own batch so a screen full of beam segments
-    // can never crowd enemy bullets out of `bullets`; drawn under the enemy-bullet underlay so
-    // the bullets' dark halos stay readable on top of a plasma beam
+    // can never crowd enemy bullets out of `bullets`; drawn under the enemy-bullet underlay. Bloom
+    // still spreads a beam's halo back over that underlay, so game.draw darkens and widens it
+    // while PLASMA burns.
     this.beams = new SpriteBatch(900, { additive: true, depthTest: false, renderOrder: 8.5, core: 1.6 });
-    this.underlay = new SpriteBatch(900, { additive: false, depthTest: false, renderOrder: 9 });
+    // enemy-bullet underlay: up to two sprites per bullet (halo + the bright-stage rim), 800 bullets
+    this.underlay = new SpriteBatch(1700, { additive: false, depthTest: false, renderOrder: 9 });
     this.bullets = new SpriteBatch(1400, { additive: true, depthTest: false, renderOrder: 10, core: 1.6 });
     for (const b of [this.smoke, this.addGround, this.addAir, this.beams, this.underlay, this.bullets]) scene.add(b.mesh);
     this.p = new Particles();

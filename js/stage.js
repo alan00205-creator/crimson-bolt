@@ -30,6 +30,11 @@ const TAU = Math.PI * 2;
 //   hull       boss body hit box relative to the unit: |x - ex| < hw && ez + z0 < z < ez + z1,
 //              armoured (sparks, no damage); tested while s.mode !== 'enter'
 //   prewarm    meshes built at boot (default 4, bosses and mid-bosses 1)
+//   bodyTarget false = the body is only a holder whose HP lives in its parts: it is never a
+//              target for shots, lock-ons or bombs (SCORPION, VALKYRIE)
+//   keepOff    mid-boss only: holds the jet at least this far below the unit so its guns can't be
+//              hugged into silence (SCORPION)
+// A STAGE may also set bulletRim: 1 to give enemy bullets a hard dark rim over bright worlds (stage 3).
 export const ENEMY = {
   dart:    { hp: 2,   score: 200,  radius: 0.75, air: true,  explode: 0.8, debris: 5, noHpSeg: true, prewarm: 14 },
   hornet:  { hp: 20,  score: 700,  radius: 1.0,  air: true,  explode: 1.2, debris: 8, prewarm: 5 },
@@ -334,8 +339,8 @@ export function crawlerAI() {
 // --------------------------------------------------------------------------------
 // boss: ARCLIGHT flying fortress
 // --------------------------------------------------------------------------------
-// splash: it crashes into the sea (stage 1); off for arenas without water below.
-export function bossAI({ splash = true } = {}) {
+// ARCLIGHT crashes into the sea below its arena (stage 1).
+export function bossAI() {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, v = g.view;
     const core = g.partByKey(e, 'core');
@@ -373,7 +378,7 @@ export function bossAI({ splash = true } = {}) {
         for (let i = 0; i < 16; i++) g.dropItem('medal', e.x + rnd(-5, 5), e.z + rnd(-3, 3));
       }
       if (s.dieT > 3.4) {
-        if (splash) for (const dx of [-4, 0, 4]) g.fx.splash(v.pToGx(e.x + dx), g.GROUND_Y, v.pToGz(e.z + rnd(-1, 1)), 3.5);
+        for (const dx of [-4, 0, 4]) g.fx.splash(v.pToGx(e.x + dx), g.GROUND_Y, v.pToGz(e.z + rnd(-1, 1)), 3.5);
         e.alive = false;
         g.ui.boss(false);
       }
@@ -519,9 +524,9 @@ export function spawnMidboss(g) {
   e.onDeath = () => { g.stats.midbossTime = e.s.life; };
   return e;
 }
-// ARCLIGHT. opts.splash = false for arenas without sea below (the placeholder stages reuse it).
-export function spawnBoss(g, opts) {
-  const e = g.spawn('boss', { x: 0, z: g.view.zTop - 9, ai: bossAI(opts) });
+// ARCLIGHT, stage 1's boss.
+export function spawnBoss(g) {
+  const e = g.spawn('boss', { x: 0, z: g.view.zTop - 9, ai: bossAI() });
   e.onDeath = () => {
     e.s.dieT = 0;
     bossDefeated(g, e);

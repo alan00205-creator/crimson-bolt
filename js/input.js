@@ -83,7 +83,7 @@ export class Input {
       const last = list && list.length ? list[list.length - 1] : e;
       move(last.clientX, last.clientY);
     });
-    const up = (e) => { if (e.pointerId === st.id) this.releaseStick(); };
+    const up = (e) => { if (e.pointerId === st.id) this._releaseJoystick(); }; // a held 集中 finger stays held
     zone.addEventListener('pointerup', up);
     zone.addEventListener('pointercancel', up);
     zone.addEventListener('lostpointercapture', up);
@@ -104,10 +104,13 @@ export class Input {
     btn.addEventListener('lostpointercapture', up);
     btn.addEventListener('contextmenu', (e) => e.preventDefault());
   }
-  // Let go of every on-screen control (joystick and focus button).
+  // Let go of every on-screen control (joystick and focus button): blur, hidden page, pause, UI mode switch.
   releaseStick() {
     this.touchFocus = false;
     if (this.focusBtn) this.focusBtn.classList.remove('active');
+    this._releaseJoystick();
+  }
+  _releaseJoystick() {
     const st = this.stick;
     if (!st) return;
     st.id = null; st.x = 0; st.y = 0;

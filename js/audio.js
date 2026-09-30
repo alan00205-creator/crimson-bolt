@@ -1779,7 +1779,7 @@ const DRUM = {
   bH:     { k: 'x.....x...x.....', s: '........x.......', h: 'x.g.x.g.x.g.x.g.' },   // half time
   // militant: snare drags and ghost notes around the backbeat
   mrA:    { k: 'x...x...x...x...', s: 'g..dx..gg..dx.gg', h: 'X.x.X.x.X.x.X.x.' },
-  mrB:    { k: 'x...x...x.x.x...', s: 'g.gdx.gdg.gdx.dd', h: 'XgxgXgxgXgxgXgxg' },
+  mrB:    { k: 'x...x...x.x.x...', s: 'g..dx.g.g.gdx.dd', h: 'XgxgXgxgXgxgXgxg' },
   milT:   { k: 'x.......x.......', s: 'x.d.x.d.x.d.x.d.', t: '...l...l...m..hh' },
   milB:   { k: 'x...x...x...x...', s: 'x.dxx.dxx.dxx.dd' },
   // fills (a phrase's last bar)
@@ -1848,6 +1848,7 @@ const ARP = {
   bellDark: { v: 'bell', p: '5..4..3..2..1...', vel: 0.6 },
   arpO:     { v: 'arp',  p: '0123401234012340', vel: 0.72 },    // orbital sequencer: 5-note climbs across the 16ths
   bellMoon: { v: 'bell', p: '0.4.2.5.1.4.3.6.', vel: 0.55 },   // wide leaps echoing over the craters
+  bellMoonS: { v: 'bell', p: '0...4...2...5...', vel: 0.62 },  // the same, sparse (the echo fills the gaps)
   pluckA:   { v: 'pluck', p: '0..1..2.0..1..3.', vel: 0.85 },   // oud ostinato, 3+3+2
   pluckB:   { v: 'pluck', p: '0.0.1.0.2.0.1.0.', vel: 0.8 },    // pedal-note picking
   bellSky:  { v: 'bell', p: '0.1.2.3.4.3.2.1.', vel: 0.6 },
@@ -2356,7 +2357,7 @@ const SONGDEF = {
         lead: LUNAR_A + 'f#5:2 f#5:1 f#5:1 c#6:4 b5:2 a5:2 g#5:2 a5:2 | b5:4 a5:2 f#5:2 d6:6 c#6:2 |' +
               'b5:3 a5:1 g#5:2 f#5:2 d5:4 f#5:4 | e#5:4 g#5:4 c#6:6 r:2',
         bass: 'pump*7 build', drums: 'mrA*3 mrB mrA*3 fS', crash: [0],
-        gtr: 'ch8*3 syn ch8*3 push', stab: 'hA none*3 hA none*3', arp: 'bellA*8',
+        gtr: 'ch8*3 syn ch8*3 push', stab: 'hA none*3 hA none*3', arp: 'bellMoonS*8',
         p2: { dbl: 'bell+12', drums: 'mrB*3 bC mrB*3 fS', gtr: 'gal*3 syn gal*3 push', arp: 'arpC*8' },
       },
       A2: {
@@ -2364,7 +2365,7 @@ const SONGDEF = {
         lead: LUNAR_A + 'a5:2 a5:1 a5:1 f#6:4 e6:2 d6:2 c#6:2 d6:2 | e6:4 d6:2 a5:2 f#5:4 a5:4 |' +
               'g#5:3 f#5:1 e#5:2 f#5:2 g#5:4 c#6:4 | f#5:8 r:2 c#5:2 d5:2 e5:2',
         bass: 'pump*7 build', drums: 'mrA*3 mrB mrA*3 fT', crash: [0, 4],
-        gtr: 'ch8*3 syn ch8*2 push hit', arp: 'bellA*8',
+        gtr: 'ch8*3 syn ch8*2 push hit', arp: 'bellMoonS*8',
         p2: { harm: 1, drums: 'mrB*3 bC mrB*3 fT', gtr: 'gal*3 syn gal*2 push hit', arp: 'arpC*8' },
       },
       B: {

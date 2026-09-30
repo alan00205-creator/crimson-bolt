@@ -1344,6 +1344,42 @@ const SFXFN = {
     iBell(E, b, t + 0.155, 90 + p, 0.3, 0.6 * v, 0);
     return 0.7;
   },
+  // Shield break (the shield upgrade's charge takes a hit): a glassy snap — a bright noise crack
+  // and a cluster of inharmonic FM pings ringing out like shattering crystal — over a short mid
+  // thump and a falling discharge whine, so it reads "hit, but saved", never like the death boom.
+  shield(E, b, t, p, v) {
+    const r = semis(p);
+    const n = E.noise(t, t + 0.3, 1);
+    const bp = E.filt('bandpass', 6400 * r, 0.8, t);
+    bp.frequency.exponentialRampToValueAtTime(2200 * r, t + 0.22);
+    const g = E.gain(0);
+    pluck(g.gain, t, 0.38 * v, 0.05, 0.001);
+    n.connect(bp); bp.connect(g); g.connect(b.out);
+    const pings = SHIELD_PINGS;
+    for (let i = 0; i < pings.length; i++) {
+      const ti = t + i * 0.022, f = pings[i] * r;
+      const car = E.osc('sine', f, ti, ti + 0.6);
+      const mod = E.osc('sine', f * 1.531, ti, ti + 0.6);
+      const mi = E.gain(0);
+      mi.gain.setValueAtTime(f * 1.4, ti);
+      mi.gain.setTargetAtTime(0, ti, 0.06);
+      mod.connect(mi); mi.connect(car.frequency);
+      const pg = E.gain(0);
+      pluck(pg.gain, ti, (0.1 - i * 0.012) * v, 0.14 + i * 0.03);
+      car.connect(pg); E.out(pg, b.out, PING_PAN[i]);
+    }
+    blip(E, b, t, 'triangle', 330 * r, 110 * r, 0.09, 0.22 * v, 0.06);
+    const o = E.osc('sawtooth', 1500 * r, t, t + 0.5);
+    o.frequency.exponentialRampToValueAtTime(200 * r, t + 0.36);
+    const lp = E.filt('lowpass', 3200, 1.2, t);
+    lp.frequency.exponentialRampToValueAtTime(420, t + 0.36);
+    const g2 = E.gain(0);
+    g2.gain.setValueAtTime(0, t);
+    g2.gain.linearRampToValueAtTime(0.05 * v, t + 0.012);
+    g2.gain.setTargetAtTime(0, t + 0.08, 0.09);
+    o.connect(lp); lp.connect(g2); g2.connect(b.out);
+    return 1.0;
+  },
   // Stage 2 / 3 fanfares: same build as 'stageStart', on their own theme's 16th grid and key.
   stageStart2(E, b, t, p, v) { return fanfare(E, b, t, p, v, FANFARE2); },
   stageStart3(E, b, t, p, v) { return fanfare(E, b, t, p, v, FANFARE3); },
@@ -1396,6 +1432,7 @@ const FANFARE3 = {
   seq: [0, 67, 64, 1, 1, 67, 64, 1, 2, 67, 64, 1, 4, 72, 67, 3, 8, 79, 76, 8],
 };
 const BUY_NOTES = [74, 78, 81, 86];
+const SHIELD_PINGS = [2349.3, 3322.4, 4186, 5587.7], PING_PAN = [0, 0.35, -0.35, 0.3]; // 'shield' crystal pings (Hz)
 
 // name → { gap: min seconds between starts, max: voices of this name, pri: steal priority,
 //          lv: mix level in dB, verb: reverb send (0..1), hold: sustained voice kept alive by
@@ -1438,6 +1475,7 @@ const SFX = {
   buy:        { gap: 0.3,   max: 1, pri: 8, lv: -3.5, verb: 1 },
   deny:       { gap: 0.15,  max: 1, pri: 8, lv: 1 },
   equip:      { gap: 0.15,  max: 1, pri: 8, lv: 1, verb: 1 },
+  shield:     { gap: 0.5,   max: 1, pri: 9, lv: 6, verb: 1 },
 };
 for (const k in SFX) { SFX[k].fn = SFXFN[k]; SFX[k].lvg = Math.pow(10, (SFX[k].lv || 0) / 20); }
 

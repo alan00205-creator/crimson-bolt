@@ -40,8 +40,9 @@
 //                                                                  2-HP darts in 1.05 / 0.52 / 0.35 s
 //   WAVE    L1 18 / 37 (2)   L4 29 / 121 (4)   L8 45 / 280 (6)   pierce + width, weakest per target
 //   HOMING  L1 9 · L4 29     NUKE L1 12 · L4 33     MULTI L1 12 / 13 (2) · L4 17 / 41 (5)
-// Option drones (PHANTOM, L4, both drones, tucked single): VULCAN 14, LASER 15, PLASMA 11 (auto-aim,
-// wide too), WAVE 13 (25 over 4 spread targets).
+// Option drones (PHANTOM, both drones tucked, one target), L4 / L8: VULCAN 19 / 28, LASER 18 / 25,
+// PLASMA 14 / 21 (auto-aim, wide too), WAVE 13 / 17 (25 over 4 spread targets at L4). A focused
+// PHANTOM (dmg 0.95) then deals 1.25-1.5x BOLT on one target at every level (TITAN: 1.3x).
 import { F, flatRot } from './fx.js';
 import { MAIN_WEAPONS, SUB_WEAPONS } from './defs.js';
 
@@ -89,7 +90,7 @@ export const PLASMA = {
                                  // back to full over nearFade units beyond `near`
 };
 // the option drones' version: one short lock beam each
-const DRONE_PLASMA = { range: 12.5, dps: (lv) => 4 + 0.5 * lv, width: (lv) => 0.34 + 0.02 * lv, idle: 2.4 };
+const DRONE_PLASMA = { range: 12.5, dps: (lv) => 4 + 0.9 * lv, width: (lv) => 0.34 + 0.02 * lv, idle: 2.4 };
 
 // WAVE (gold): expanding crescents that pass through everything. A wave leaves the gun narrow and
 // spreads to its full width within `grow` seconds; it hits each target once (the shot's hit list
@@ -118,10 +119,12 @@ export const MULTI = [
 const ROCKET = { dmg: 3.0, v0: 11, v1: 34, acc: 85, interval: (lv) => 0.52 - 0.04 * lv };
 
 // Option drones: each fires a reduced version of the main weapon (OPT_FIRE). Spread wide the
-// streams angle outward for coverage; tucked in (slow) they angle inward and cross about 12 units
-// ahead (the plasma beams take the jet's own target): all of it lands on one target.
-const OPT = { interval: 0.12, speed: 38, dmg: 0.3, dmgPerLevel: 0.03, r: 0.34, twin: 0.11, wideDeg: 5, tuckDeg: -3 };
-const OPT_LASER = { interval: 0.045, speed: 44, dmg: (lv) => 0.24 + 0.028 * lv, r: 0.26 };
+// streams angle outward for coverage; tucked in (focus, game.updateOptions) they angle inward and
+// cross about 12 units ahead (the plasma beams take the jet's own target): all of it lands on one
+// target. Their damage grows faster per level than the jet's own, so the bonus doesn't fade at
+// high power.
+const OPT = { interval: 0.12, speed: 38, dmg: 0.3, dmgPerLevel: 0.07, r: 0.34, twin: 0.11, wideDeg: 5, tuckDeg: -3 };
+const OPT_LASER = { interval: 0.045, speed: 44, dmg: (lv) => 0.24 + 0.045 * lv, r: 0.26 };
 
 // HDR colours of the new weapons
 const PINK = [2.1, 0.3, 1.75], STEEL = [0.75, 1.0, 1.6], GOLD = [1.5, 0.95, 0.16], SKY = [0.75, 1.5, 3.0];
@@ -441,21 +444,23 @@ function drawPlasma(g, p, fx, t) {
 }
 
 // --- WAVE crescents ----------------------------------------------------------------------------
-// Per-wave hit memory: WM_N uids per slot (ring), slot in ps.aux. Slots are handed out round-robin;
-// a slot comes back after WM_SLOTS newer waves (~7 s of firing), long after its wave is gone.
-const WM_SLOTS = 128, WM_N = 12;
-const wmUid = new Int32Array(WM_SLOTS * WM_N), wmCnt = new Uint16Array(WM_SLOTS);
+// Per-wave hit memory: up to WM_N uids per slot, slot in ps.aux. Slots are handed out round-robin;
+// a slot comes back after WM_SLOTS newer waves (9 s or more of firing), long after its wave is gone. A
+// full memory never forgets: that wave hits nothing new (far beyond any formation or boss's parts),
+// so no target is ever struck twice by one wave.
+const WM_SLOTS = 128, WM_N = 32;
+const wmUid = new Int32Array(WM_SLOTS * WM_N), wmCnt = new Uint8Array(WM_SLOTS);
 let wmNext = 0;
 function waveSlot() { const s = wmNext; wmNext = (wmNext + 1) % WM_SLOTS; wmCnt[s] = 0; return s; }
 function waveSeen(ps, i, uid) {
-  const s = ps.aux[i] | 0, n = Math.min(wmCnt[s], WM_N), o = s * WM_N;
+  const s = ps.aux[i] | 0, n = wmCnt[s], o = s * WM_N;
+  if (n >= WM_N) return true;
   for (let k = 0; k < n; k++) if (wmUid[o + k] === uid) return true;
   return false;
 }
 function waveMark(ps, i, uid) {
   const s = ps.aux[i] | 0, c = wmCnt[s];
-  wmUid[s * WM_N + (c % WM_N)] = uid;
-  wmCnt[s] = c < 60000 ? c + 1 : WM_N + ((c + 1) % WM_N);
+  if (c < WM_N) { wmUid[s * WM_N + c] = uid; wmCnt[s] = c + 1; }
   markHit(ps, i, uid);
 }
 function waveHalfWidth(t, full) { const k = clamp(t / WAVE.grow, 0, 1); return WAVE.hw0 + (full - WAVE.hw0) * (1 - (1 - k) * (1 - k)); }

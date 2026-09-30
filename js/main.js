@@ -364,8 +364,13 @@ function applyQualityLevel() {
 }
 
 const wideMQ = matchMedia('(min-width: 900px)'); // the side panels' CSS breakpoint (.side)
+let lastIW = 0;
 function resize() {
   const iw = window.innerWidth, ih = window.innerHeight;
+  // a soft keyboard opening over a name box (in browsers that still shrink the page for it) keeps
+  // the layout: the view would otherwise narrow to 0.64 × the space left above the keyboard
+  if (document.body.classList.contains('typing') && iw === lastIW && renderer) return;
+  lastIW = iw;
   const maxAspect = 0.64;
   const w = Math.min(iw, Math.round(ih * maxAspect));
   viewEl.style.width = w + 'px';
@@ -1198,12 +1203,18 @@ function bindUI() {
     else if (panelOpen()) { const inRun = backTo === 'pause'; closePanel(); if (inRun) pushBackGuard(); }
     else if (state === 'record' && entry) commitEntry(true);
   });
-  // name entries for the board: Enter (or OK) submits the form, Esc keeps the prefilled name
+  // name entries for the board: Enter (or OK) submits the form, Esc keeps the prefilled name.
+  // body.typing (touch): no layout change or rotate hint for the soft keyboard meanwhile.
   for (const f of document.querySelectorAll('form.entry')) {
+    const box = f.querySelector('.entry-name');
     f.addEventListener('submit', (e) => { e.preventDefault(); if (entry && entry.form === f) commitEntry(); });
-    f.querySelector('.entry-name').addEventListener('keydown', (e) => {
+    box.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && entry && entry.form === f) { e.preventDefault(); commitEntry(true); }
     });
+    // the name is selected when the box gets the focus, so typing replaces it (a tap puts the caret
+    // after the focus event: select once it has landed)
+    box.addEventListener('focus', () => { document.body.classList.toggle('typing', touchUI); setTimeout(() => { if (document.activeElement === box) box.select(); }, 0); });
+    box.addEventListener('blur', () => { document.body.classList.remove('typing'); resize(); });
   }
   window.addEventListener('pagehide', () => { bankMoney(); if (game.score > 0) saveHi(); });
   document.addEventListener('visibilitychange', () => {

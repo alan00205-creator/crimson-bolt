@@ -311,7 +311,7 @@ body.sides #keys { display: none; } /* the side panel already lists the keys (ma
 #rotate { position: absolute; inset: 0; background: rgba(4,6,12,0.9); display: none; place-items: center; text-align: center; padding: 20px; z-index: 5; pointer-events: auto; }
 #rotate p { font: 700 16px var(--f-cjk); letter-spacing: 0.2em; margin: 12px 0 0; }
 #rotate small { display: block; margin-top: 8px; color: var(--ink-dim); font: 500 12px var(--f-cjk); }
-@media (orientation: landscape) and (max-height: 500px) { body.touch #rotate { display: grid; } }
+@media (orientation: landscape) and (max-height: 500px) { body.touch:not(.typing) #rotate { display: grid; } }
 .err { color: #ffb3b3; font: 500 14px/1.7 var(--f-cjk); max-width: 320px; }
 .title-stats { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 18px; }
 .title-stats .cr { display: inline-flex; align-items: center; gap: 6px; }

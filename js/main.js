@@ -675,6 +675,7 @@ function showContinue() {
   state = 'continue';
   contT = 10; contShown = -1;
   ui.only('continue');
+  ui.hideHint(); // (a first-run move / bomb hint must not sit over the countdown)
   audio.music(null);
   focusFirst('continue');
 }
@@ -823,6 +824,7 @@ function showRecord(rec, next) {
   ui.danger(false);
   ui.clearBanner();
   ui.clearPopups();
+  ui.hideHint();
   ui.recordScreen(rec.rank, rankMem[rec.rank - 1], rec.isNew);
   ui.only('record');
   releaseWake();

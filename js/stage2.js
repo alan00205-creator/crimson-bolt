@@ -675,10 +675,18 @@ export const W2 = {
   mlrs(g, lane, n = 1, gap = 3.6, extra = 0) {
     for (let i = 0; i < n; i++) g.spawn('mlrs', { gx: LANES_X[lane], gd: g.topGd(1.5 + extra + i * gap), ai: mlrsAI(), yaw: 0 });
   },
-  // skiffs crossing on the next cross road beyond the top edge (dir +1: left → right)
+  // skiffs crossing on the next cross road beyond the top edge (dir +1: left → right). A crossing
+  // lasts only ~4.4 s, so the wave is held until its road is 3 units short of the edge (re-checked
+  // at least every 0.25 s, so a changing scroll speed can't throw it off); released at once, a road
+  // up to 40 units out would carry the skiffs, and their aimed pair, across above the screen
   skiffs(g, dirs, gap = 0.55) {
     const road = nextRoad(g);
-    dirs.forEach((dir, i) => g.later(i * gap, () => g.spawn('sandskiff', { gx: -dir * 15, gd: road, ai: skiffCross(dir), yaw: dir > 0 ? -Math.PI / 2 : Math.PI / 2 })));
+    const release = () => {
+      const wait = (road - g.topGd(0) - 3) / Math.max(1, g.scrollSpeed);
+      if (wait > 0.02) { g.later(Math.min(wait, 0.25), release); return; }
+      dirs.forEach((dir, i) => g.later(i * gap, () => g.spawn('sandskiff', { gx: -dir * 15, gd: road, ai: skiffCross(dir), yaw: dir > 0 ? -Math.PI / 2 : Math.PI / 2 })));
+    };
+    release();
   },
   rush(g, lane, n = 2, gap = 2.4) { for (let i = 0; i < n; i++) g.spawn('sandskiff', { gx: LANES_X[lane], gd: g.topGd(1 + i * gap), ai: skiffRush(), yaw: Math.PI }); },
 };
@@ -754,9 +762,11 @@ const TIMELINE = makeTimeline((at) => {
   at(1102, (g) => { W.bomber(g, -4, ['P']); g.later(1.5, () => W.bomber(g, 4, ['B'])); });
   at(1142, (g) => { W.dive(g, [-6, -3, 0, 3, 6]); W2.rush(g, 1, 2); });
   at(1158, (g) => { W2.gunship(g, -5, 0.3); W2.gunship(g, 5, 0.3); W.turrets(g, [0, 2]); });
+  // the last ground wave: early enough to stay on the fortress lanes (they end at the wall, d ≈ 1234)
+  // and behind the skiffs' road (1220)
+  at(1164, (g) => { W2.mlrs(g, 0); W2.mlrs(g, 2); W.lane(g, 1, 2); });
   at(1176, (g) => W2.skiffs(g, [1, -1, 1, -1, 1], 0.5));
   at(1190, (g) => W2.strikers(g, [-5, 5, 0], 0.4));
-  at(1206, (g) => { W2.mlrs(g, 0); W2.mlrs(g, 2); W.lane(g, 1, 2); });
   at(1220, (g) => W.carrier(g, 0, ['B']));
 });
 

@@ -495,8 +495,8 @@ export const BO = { // boss — blackened steel; bright trims carry the silhouet
 // same order (same silhouette, same shadow, same budget), new face styles. The
 // factory scheme ('std') never goes through here, so it stays byte-identical.
 // Faces are matched to the palette role they were built with by exact colour
-// (+ emission), so a paint is plain data: { role: newStyle | fn }. Cache every
-// painted body under its own key: GG(key + '.' + paint, () => repaint(…)).
+// (+ emission), so a paint is plain data: { role: newStyle | fn }. Every painted
+// body gets its own cache key: paintedBody() stores it under key + '.paint.' + paint.
 // =============================================================================
 const styleKey = (C, E, i) => C[i] + ',' + C[i + 1] + ',' + C[i + 2] + '|' + E[i] + ',' + E[i + 1] + ',' + E[i + 2];
 /**
@@ -541,24 +541,6 @@ export function repaint(src, pal, map) {
 export const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 /** peak of a style's emission (glowing faces are ≳ 1, tinted glass ≈ 0.1–0.3, plain paint 0) */
 export const glowOf = (st) => Math.max(st.e[0], st.e[1], st.e[2]);
-/**
- * Luminance ramp: fn(st) → a style whose colour follows the face's original brightness along
- * stops [[luminance, hex], …] (ascending), so a scheme keeps the model's light / dark panel pattern.
- * Styles are cached per stop segment and quantised to 16 steps (few distinct colours, no banding noise).
- */
-export function ramp(stops) {
-  const L = stops.map(([l]) => l), K = stops.map(([, h]) => lin(h)), cache = new Map();
-  return (st) => {
-    const l = lum(st.c);
-    let k = 0;
-    while (k < L.length - 2 && l > L[k + 1]) k++;
-    const u = Math.max(0, Math.min(1, (l - L[k]) / ((L[k + 1] - L[k]) || 1)));
-    const q = k * 16 + Math.round(u * 15);
-    let s = cache.get(q);
-    if (!s) { s = S(mix3(K[k], K[k + 1], Math.round(u * 15) / 15)); cache.set(q, s); }
-    return s;
-  };
-}
 /** a glowing face re-tinted to the HDR hue `e` at its peak brightness × gain (albedo k as in GL). Saturated
  *  reds want gain < 1: ACES pushes bright reds toward peach */
 export function retint(st, e, k = 0.4, gain = 1) {

@@ -1,12 +1,21 @@
 // =============================================================================
 // CRIMSON BOLT (赤電) — extension models: hangar aircraft + option drones
 // -----------------------------------------------------------------------------
-// models.js registers these tables: createPlayer(id) uses PLAYERS[id],
-// createOption(id) uses OPTIONS[id]. Each entry is a factory () => THREE.Group
-// that returns a NEW instance per call (pools build several).
+// models.js registers these tables: createPlayer(id, paint) uses PLAYERS[id],
+// createOption(id, paint) uses OPTIONS[id]. Each entry is a factory
+// (paint = 'std') => THREE.Group that returns a NEW instance per call (pools
+// build several); the registry only passes paints listed in PLAYER_PAINTS[id].
 //
 //   export const PLAYERS = { gale, titan, phantom };   // keys = AIRCRAFT ids in defs.js ('bolt' lives in models.js)
 //   export const OPTIONS = { phantom };                 // the option drone of that aircraft
+//   export const PLAYER_PAINTS = { gale: { dusk: { accent }, … }, … };   // paints besides 'std'
+//
+// Paints (hangar liveries, see modelkit "Paint schemes") are recolours of the std body
+// geometry, so they keep the budget, silhouette and shadow; 'std' never goes through them:
+//   GALE     黃昏 dusk (orange → violet gradient) · 幽靈 ghost (low-vis greys) · 黃金 gold
+//   TITAN    叢林 jungle (olive camouflage) · 鋼灰 steel (dark steel, red stripes) · 黃金 gold
+//   PHANTOM  血月 blood (black, blood-red edges) · 極光 aurora (white, teal/green glow drifting) · 黃金 gold
+//   the drone follows the PHANTOM paint
 //
 //   GALE 疾風     slim forward-swept interceptor: needle nose + pitot, canards, forward-swept
 //                 wing with glowing cyan tip lights, twin small nozzles, pearl white + cyan

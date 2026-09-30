@@ -7,7 +7,7 @@
 export const MONEY = {
   label: 'CR',
   perScore: 1 / 40,                  // every point scored is worth 1/40 CR
-  stageClear: [0, 1500, 2500, 4000, 5500, 7500], // extra CR for clearing stage n (index = stage number)
+  stageClear: [0, 1500, 2500, 4000, 5000, 6000, 7000, 8000, 10000], // extra CR for clearing stage n (index = stage number)
 };
 
 // --- aircraft ------------------------------------------------------------------------------
@@ -116,38 +116,62 @@ export const MAX_SUB_LEVEL = 4; // sub-weapon levels 1..4
 
 // --- stages ------------------------------------------------------------------------------
 // Presentation data only; the playable definitions (timeline, bosses, enemies) live in
-// stage.js / stage2.js … stage5.js and are assembled by stages.js. Played in this order; the last
-// entry is the final stage (ALL CLEAR, then the next loop from stage 1, harder).
+// stage.js / stage2.js … stage8.js and are assembled by stages.js. Played in this order — sea,
+// land, air, then out into space: Earth orbit, the Moon, the Solar System, the Galaxy and the edge
+// of the Universe. The last entry is the final stage (ALL CLEAR, then the next loop from stage 1,
+// harder). theme / themeE: the one-word setting (海 SEA …) for the how-to stage list.
 export const STAGE_META = [
   {
-    n: 1, name: 'COASTAL FRONT', zh: '沿岸前線', world: 'coastal',
+    n: 1, name: 'COASTAL FRONT', zh: '沿岸前線', world: 'coastal', theme: '海', themeE: 'SEA',
     boss: 'ARCLIGHT', bossZh: '要塞', music: 'stage', bossMusic: 'boss', startSfx: 'stageStart',
     warn: { e: 'HUGE FORTRESS APPROACHING', s: '巨大要塞 接近中' },
     mission: '擊破巨大要塞 ARCLIGHT',
   },
   {
-    n: 2, name: 'SCORCHED CANYON', zh: '灼熱峽谷', world: 'canyon',
+    n: 2, name: 'SCORCHED CANYON', zh: '灼熱峽谷', world: 'canyon', theme: '陸', themeE: 'LAND',
     boss: 'BEHEMOTH', bossZh: '陸上戰艦', music: 'stage2', bossMusic: 'boss2', startSfx: 'stageStart2',
     warn: { e: 'LAND BATTLESHIP APPROACHING', s: '陸上戰艦 接近中' },
     mission: '擊破陸上戰艦 BEHEMOTH',
   },
   {
-    n: 3, name: 'SKY CITADEL', zh: '天空要塞', world: 'skies',
+    n: 3, name: 'SKY CITADEL', zh: '天空要塞', world: 'skies', theme: '空', themeE: 'AIR',
     boss: 'SERAPH', bossZh: '空中母艦', music: 'stage3', bossMusic: 'boss3', startSfx: 'stageStart3',
     warn: { e: 'AERIAL MOTHERSHIP APPROACHING', s: '空中母艦 接近中' },
     mission: '擊破空中母艦 SERAPH',
   },
   {
-    n: 4, name: 'FROZEN FRONTIER', zh: '冰原戰線', world: 'arctic',
-    boss: 'NORTHSTAR', bossZh: '極地要塞', music: 'stage4', bossMusic: 'boss4', startSfx: 'stageStart4',
-    warn: { e: 'POLAR FORTRESS APPROACHING', s: '極地要塞 接近中' },
-    mission: '擊破極地要塞 NORTHSTAR',
+    n: 4, name: 'ORBITAL FRONT', zh: '軌道戰線', world: 'orbit', theme: '地球', themeE: 'EARTH',
+    boss: 'AEGIS', bossZh: '軌道防衛砲台', music: 'stage4', bossMusic: 'boss4', startSfx: 'stageStart4',
+    warn: { e: 'ORBITAL CANNON APPROACHING', s: '軌道防衛砲台 接近中' },
+    mission: '擊破軌道防衛砲台 AEGIS',
   },
   {
-    n: 5, name: 'ORBITAL FINALE', zh: '軌道決戰', world: 'orbit',
-    boss: 'OMEGA', bossZh: '終焉之核', music: 'stage5', bossMusic: 'boss5', startSfx: 'stageStart5',
+    n: 5, name: 'LUNAR SIEGE', zh: '月面攻防', world: 'moon', theme: '月球', themeE: 'MOON',
+    boss: 'SELENE', bossZh: '月面要塞', music: 'stage5', bossMusic: 'boss5', startSfx: 'stageStart5',
+    warn: { e: 'LUNAR FORTRESS APPROACHING', s: '月面要塞 接近中' },
+    mission: '擊破月面要塞 SELENE',
+  },
+  {
+    n: 6, name: 'SOLAR VOYAGE', zh: '太陽系航線', world: 'solar', theme: '太陽系', themeE: 'SOLAR SYSTEM',
+    boss: 'HELIOS', bossZh: '日冕戰艦', music: 'stage6', bossMusic: 'boss6', startSfx: 'stageStart6',
+    warn: { e: 'CORONA BATTLESHIP APPROACHING', s: '日冕戰艦 接近中' },
+    mission: '擊破日冕戰艦 HELIOS',
+  },
+  {
+    n: 7, name: 'GALACTIC STORM', zh: '銀河風暴', world: 'galaxy', theme: '銀河系', themeE: 'GALAXY',
+    boss: 'NEMESIS', bossZh: '異星母艦', music: 'stage7', bossMusic: 'boss7', startSfx: 'stageStart7',
+    warn: { e: 'ALIEN MOTHERSHIP APPROACHING', s: '異星母艦 接近中' },
+    mission: '擊破異星母艦 NEMESIS',
+  },
+  {
+    n: 8, name: 'EDGE OF INFINITY', zh: '宇宙盡頭', world: 'cosmos', theme: '宇宙', themeE: 'UNIVERSE',
+    boss: 'OMEGA', bossZh: '終焉之核', music: 'stage8', bossMusic: 'boss8', startSfx: 'stageStart8',
     warn: { e: 'FINAL CORE APPROACHING', s: '終焉之核 接近中' },
     mission: '擊破終焉之核 OMEGA',
   },
 ];
 export const STAGE_COUNT = STAGE_META.length;
+// Difficulty by stage (game.js): diff.level = (loop − 1) + STAGE_LEVEL[stage index]. Stages 1–3
+// keep their old third-of-a-loop steps; from stage 4 on the climb flattens and each stage's
+// timeline density carries the rest (level ≥ 1 also turns on revenge bullets).
+export const STAGE_LEVEL = [0, 0.35, 0.7, 0.85, 1.0, 1.1, 1.2, 1.3];

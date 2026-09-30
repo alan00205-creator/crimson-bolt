@@ -3,14 +3,14 @@
 // -----------------------------------------------------------------------------
 // Everything here is built from code: no model files, no image files. The
 // toolkit (GB builder, materials, caches, palettes, helpers) and the house style
-// live in modelkit.js; the other aircraft and the stage-2…5 enemies and bosses
+// live in modelkit.js; the other aircraft and the stage-2…8 enemies and bosses
 // live in the extension files and are merged into the registry below:
 //
 //   createPlayer(id = 'bolt', paint = 'std')     kind 'player:<id>[:<paint>]'  bolt here, others: models_ships.js PLAYERS
 //   createOption(id = 'phantom', paint = 'std')  kind 'option:<id>[:<paint>]'  models_ships.js OPTIONS, else a placeholder pod
 //                                 (paints: PAINT_IDS[id]; 'std' = the factory scheme and keeps the bare kind)
-//   createEnemy(type)             kind <type>         stage-1 types here, others: models_s2…s5 ENEMIES
-//   createBoss(id = 'arclight')   kind 'boss:<id>'    ARCLIGHT here, others: models_s2…s5 BOSSES
+//   createEnemy(type)             kind <type>         stage-1 types here, others: models_s2…s8 ENEMIES
+//   createBoss(id = 'arclight')   kind 'boss:<id>'    ARCLIGHT here, others: models_s2…s8 BOSSES
 //   createItem(kind)              P (setColor: any MAIN_WEAPONS key), S (setKind: any SUB_WEAPONS
 //                                 key), B, medal, 1UP
 //   createShadow(model)           one baked silhouette per kind (pristineOf knows every prefix)
@@ -52,6 +52,9 @@ import * as S2 from './models_s2.js';
 import * as S3 from './models_s3.js';
 import * as S4 from './models_s4.js';
 import * as S5 from './models_s5.js';
+import * as S6 from './models_s6.js';
+import * as S7 from './models_s7.js';
+import * as S8 from './models_s8.js';
 export { modelStats } from './modelkit.js';
 
 // extension tables (merged; stage-1 names always win a collision)
@@ -59,7 +62,8 @@ const EXT_PLAYERS = { ...(SHIPS.PLAYERS || {}) };
 const EXT_OPTIONS = { ...(SHIPS.OPTIONS || {}) };
 const EXT_PAINTS = { ...(SHIPS.PLAYER_PAINTS || {}) };   // { <aircraft id>: { <paint>: { accent } } }
 // the stage extension files in stage order; a later file wins a name clash (reported below)
-const EXT_STAGES = [['models_s2', S2], ['models_s3', S3], ['models_s4', S4], ['models_s5', S5]];
+const EXT_STAGES = [['models_s2', S2], ['models_s3', S3], ['models_s4', S4], ['models_s5', S5], ['models_s6', S6],
+  ['models_s7', S7], ['models_s8', S8]];
 const EXT_ENEMIES = Object.assign({}, ...EXT_STAGES.map(([, m]) => m.ENEMIES || {}));
 const EXT_BOSSES = Object.assign({}, ...EXT_STAGES.map(([, m]) => m.BOSSES || {}));
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -1383,7 +1387,7 @@ function createArclight() {
   return g;
 }
 
-/** boss by id ('arclight' here, others from models_s2…s5 BOSSES); kind 'boss:<id>' */
+/** boss by id ('arclight' here, others from models_s2…s8 BOSSES); kind 'boss:<id>' */
 export function createBoss(id = 'arclight') {
   let g;
   if (id !== 'arclight' && own(EXT_BOSSES, id)) g = EXT_BOSSES[id]();

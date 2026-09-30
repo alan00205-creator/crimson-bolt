@@ -1,6 +1,6 @@
 // game.js — gameplay runtime: player aircraft and option drones, enemies, bullets, items,
 // collisions, scoring and the stage phases. Stage timelines, enemy definitions and behaviours live
-// in stage.js / stage2.js / stage3.js (assembled by stages.js); the player's weapons and shot kinds
+// in stage.js / stage2.js … stage8.js (assembled by stages.js); the player's weapons and shot kinds
 // in weapons.js; menus and flow in main.js; shared data (aircraft, weapons, money) in defs.js.
 import * as THREE from 'three';
 import { F, flatRot } from './fx.js';
@@ -8,7 +8,7 @@ import { ENEMY, STAGES } from './stages.js';
 import * as WP from './weapons.js';
 import {
   AIRCRAFT, AIRCRAFT_BY_ID, DEFAULT_AIRCRAFT, MONEY, MAIN_WEAPONS, MAIN_ORDER, SUB_WEAPONS, SUB_ORDER, MAX_LEVEL, MAX_SUB_LEVEL,
-  DEFAULT_PAINT, paintOf, UPGRADES, UPGRADE_BY_ID,
+  DEFAULT_PAINT, paintOf, UPGRADES, UPGRADE_BY_ID, STAGE_LEVEL,
 } from './defs.js';
 
 const DEG = Math.PI / 180;
@@ -356,8 +356,9 @@ export class Game {
     p.alive = true; p.x = 0; p.z = this.view.zBottom + 2; p.entering = 1.2; p.invuln = 2.2; p.respawn = 0;
     p.fireT = 0; p.subT = 0; p.optT = 0; p.bank = 0; p.slow = false; p.focus = false; p.mesh.visible = true;
     this.optLive = false;
-    // difficulty climbs by a third of a loop per stage: loop 1 stage 1 = 1/1/1, loop 2 stage 1 = 1.22/1.35/1.3
-    const level = r9((loop - 1) + 0.35 * this.stageIdx);
+    // difficulty by stage (defs STAGE_LEVEL: stages 1–3 a third of a loop apart, then flatter):
+    // loop 1 stage 1 = 1/1/1, loop 2 stage 1 = 1.22/1.35/1.3
+    const level = r9((loop - 1) + (STAGE_LEVEL[this.stageIdx] ?? STAGE_LEVEL[STAGE_LEVEL.length - 1]));
     this.diff = { bs: r9(1 + 0.22 * level), fr: r9(1 + 0.35 * level), hp: r9(1 + 0.3 * level), level, part: r9(1 + 0.2 * level) };
     this.world.setStage(this.stage.world);
     this.world.reset(0);

@@ -1,25 +1,24 @@
 // =============================================================================
-// CRIMSON BOLT (赤電) — extension models: stage 5 "LUNAR SIEGE" (月面攻防)
+// CRIMSON BOLT (赤電) — extension models: stage 6 "SOLAR VOYAGE" (太陽系航線)
 // -----------------------------------------------------------------------------
 // STUB (framework task): valid empty tables so the registry and the stage framework run; the
-// stage-5 task fills them. models.js registers these tables: createEnemy(type) falls back to
+// stage-6 task fills them. models.js registers these tables: createEnemy(type) falls back to
 // ENEMIES[type], createBoss(id) to BOSSES[id]. Each entry is a factory () => THREE.Group that
 // returns a NEW instance per call (pools build several).
 //
-//   export const ENEMIES = { <type>: factory };  // type = the ENEMY def key in stage5.js (or its `model`)
-//   export const BOSSES = { <id>: factory };     // id = the boss ENEMY def `model` (e.g. 'selene')
+//   export const ENEMIES = { <type>: factory };  // type = the ENEMY def key in stage6.js (or its `model`)
+//   export const BOSSES = { <id>: factory };     // id = the boss ENEMY def `model` (e.g. 'helios')
 //
 // Names must not collide with stage-1 types (dart hornet tank turret gunboat carrier
-// bomber crawler, arclight) or with models_s2 / s3 / s4 / s6 / s7 / s8; the registry reports
-// collisions. Name them clearly: 'selenite', 'selene', others 's5_*'.
+// bomber crawler, arclight) or with models_s2 / s3 / s4 / s5 / s7 / s8; the registry reports
+// collisions. Name them clearly: 'basilisk', 'helios', others 's6_*'.
 //
 // Imports: only 'three', './modelkit.js' (and './defs.js') — never models.js
 // (import cycle). House style and helpers: see the modelkit.js header.
 //
 // Enemy contract — enemyShell(kind, radius, debrisHex) + bodyMat + GG(key, buildXxx):
-//   * nose/front toward −z (the game yaws units that face the player by π), up +y;
-//     air units centred on the origin; ground units with their base at y = 0 AND
-//     userData.ground = true (the registry adds them to GROUND_TYPES: no air shadow)
+//   * nose/front toward −z (the game yaws units that face the player by π), up +y,
+//     centred on the origin
 //   * userData: kind (the registry sets it to the type), radius, debrisColor, muzzles
 //     (group-local Vector3[], refreshed in update() when they move), setFlash(v),
 //     update(dt, t), dispose() (materials only)
@@ -37,11 +36,11 @@
 //   * one bodyMat per part so parts flash on their own; userData.setFlash flashes all
 //   * mirrored parts share geometry + wreck with mesh.scale.x = −1
 //   * boss budget ≤ 24 draw calls / 8000 triangles; the registry sets kind 'boss:<id>'
-//   * the Moon, a GROUND stage: rovers, walkers, crater turrets on the ground (base at y = 0,
-//     userData.ground = true), landers and fighters in the air. Grey regolith under a hard sun
-//     with long black shadows: keep silhouettes dark-edged and glows saturated so units read on
-//     bright grey as well as in the black shadows
-// Cache keys: 'ext:s5:<name>' — e.g. 'ext:s5:selene.dome', 'ext:s5:selenite.leg.wreck'.
+//   * across the Solar System, AIR UNITS ONLY (no userData.ground; every unit gets a baked
+//     shadow). Backdrops run from red Mars and the dark asteroid belt to Jupiter's banded clouds,
+//     Saturn's ring plane and the Sun's corona glare: keep units readable on warm, bright colours
+//     as well as on black
+// Cache keys: 'ext:s6:<name>' — e.g. 'ext:s6:helios.hull', 'ext:s6:basilisk.jaw.wreck'.
 // =============================================================================
 import * as THREE from 'three';
 import {

@@ -176,6 +176,9 @@ function lastName() { return cleanName(store.get('rankName', '')) || NAME_DEFAUL
 // clearRecords zeroes it), so a tab closed on a results or CONTINUE screen can't leave behind a HI
 // that the board lacks. During a run the HUD shows a higher score as HI; the title reverts to this.
 function storedHi() { const v = Math.floor(Number(store.get('hi', 0))); return Number.isFinite(v) && v > 0 ? v : 0; }
+// The HI in force for NEW RECORD: the key or the board top (which, when storage writes fail, only
+// the in-memory board holds).
+function bestHi() { return Math.max(storedHi(), readRanking().length ? rankMem[0].score : 0); }
 function syncHi() {
   const top = readRanking().length ? rankMem[0].score : 0;
   const best = storedHi();
@@ -191,14 +194,16 @@ const today = () => { const d = new Date(), p = (n) => String(n).padStart(2, '0'
 // hiding the page keep it going.
 let run = null; // { best, clear, offered, mark (the score at its last results / continue, for NEW RECORD) }
 function trackBest() { if (run && game.score > run.best) run.best = game.score; }
-// Record the run that just ended. Returns { rank, t } when it made the top RANK_MAX (the row is
-// saved at once under the last used name; the name entry only renames it), else null.
+// Record the run that just ended. Returns { rank, t, isNew } when it made the top RANK_MAX (the row
+// is saved at once under the last used name; the name entry only renames it), else null. isNew: it
+// beat the HI in force before it joined the board (rank 1 is not a record below an old 'hi' key).
 function offerRun() {
   if (!run || run.offered) return null;
   trackBest();
   run.offered = true;
   const score = Math.floor(run.best);
   if (!(score > 0)) return null;
+  const wasHi = bestHi();
   const list = readRanking().slice();
   let i = list.findIndex((r) => r.score < score);
   if (i < 0) i = list.length;
@@ -209,7 +214,7 @@ function offerRun() {
   writeRanking(list);
   syncHi();
   const rank = rankMem.findIndex((r) => r.t === t) + 1;
-  return rank > 0 ? { rank, t } : null;
+  return rank > 0 ? { rank, t, isNew: score > wasHi } : null;
 }
 
 // ---------------------------------------------------------------------------------
@@ -718,9 +723,10 @@ function gameOver() {
 // The HI on the results / GAME OVER screen and their NEW RECORD test, at a save point of the run
 // (a stage's results, a continue, the game over). Memory only: the run's score reaches the stored
 // HI through the board when the run ends (offerRun → syncHi). Returns true when the score beats
-// the stored HI and this run's earlier save points (a continue zeroes the score in between).
+// the HI in force and this run's earlier save points (a continue zeroes the score in between). At
+// GAME OVER it runs before offerRun, so the run is never measured against its own board row.
 function saveHi() {
-  const best = Math.max(storedHi(), run ? run.mark : 0);
+  const best = Math.max(bestHi(), run ? run.mark : 0);
   const score = Math.floor(game.score);
   const isNew = score > best;
   if (run) run.mark = Math.max(run.mark, score);
@@ -804,8 +810,9 @@ function endRun(next) {
   const rec = state === 'paused' || state === 'results' ? offerRun() : null;
   if (rec) showRecord(rec, next); else next();
 }
-// The record screen (a run that made the board ended without a GAME OVER): NEW RECORD / 第 n 名,
-// the score and a name entry; confirming it goes on to the title or the new run.
+// The record screen (a run that made the board ended without a GAME OVER): NEW RECORD (HIGH SCORE
+// when it didn't beat the HI) / 第 n 名, the score and a name entry; confirming it goes on to the
+// title or the new run.
 function showRecord(rec, next) {
   state = 'record';
   needsRender = true;
@@ -816,7 +823,7 @@ function showRecord(rec, next) {
   ui.danger(false);
   ui.clearBanner();
   ui.clearPopups();
-  ui.recordScreen(rec.rank, rankMem[rec.rank - 1]);
+  ui.recordScreen(rec.rank, rankMem[rec.rank - 1], rec.isNew);
   ui.only('record');
   releaseWake();
   showEntry($('rec-entry'), rec, next);

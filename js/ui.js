@@ -471,10 +471,10 @@ export class UI {
     d.textContent = '';
     d.append(`排行榜 第 ${rank} 名　`, node('b', '', name));
   }
-  // The record screen of a run that made the board (r: its row).
-  recordScreen(rank, r) {
-    $('rec-title').textContent = rank === 1 ? 'NEW RECORD' : 'HIGH SCORE';
-    $('rec-title').classList.toggle('all', rank === 1);
+  // The record screen of a run that made the board (r: its row; isNew: it beat the HI-SCORE).
+  recordScreen(rank, r, isNew = rank === 1) {
+    $('rec-title').textContent = isNew ? 'NEW RECORD' : 'HIGH SCORE';
+    $('rec-title').classList.toggle('all', isNew);
     $('rec-rank').textContent = `排行榜 第 ${rank} 名`;
     $('rec-score').textContent = fmt(r ? r.score : 0);
     const meta = $('rec-meta');

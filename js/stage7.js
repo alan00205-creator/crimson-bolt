@@ -181,7 +181,7 @@ function sporeBurst(g, x, z, n, sp = 1) {
 // --------------------------------------------------------------------------------
 // Flock: n drones swirl round a centre that drops into the upper screen (zf of the height) and sways across;
 // after `hold` s they peel off one by one (k·0.26 s apart) and dive at the jet in a straight line (the sac
-// flares as each one breaks: the tell), every third one firing an aimed orb as it goes.
+// flares as each one breaks: the tell), every other one firing an aimed orb as it goes.
 function flockAI(cx, zf, k, n, dir = 1, hold = 2.6, R = 2.0) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
@@ -199,7 +199,7 @@ function flockAI(cx, zf, k, n, dir = 1, hold = 2.6, R = 2.0) {
         const p = g.player, dx = p.x - e.x, dz = Math.max(3, p.z - e.z), l = Math.hypot(dx, dz);
         s.dx = dx / l; s.dz = dz / l;                   // never up the screen
         if (ud.setRage) ud.setRage(1);
-        if (k % 3 === 0 && g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.2);
+        if (k % 2 === 0 && g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.2);
       }
     } else {
       s.dt += dt;
@@ -224,7 +224,7 @@ function streamAI(side, zf, k) {
       e.x = bez(s.P[0][0], s.P[1][0], s.P[2][0], s.P[3][0], u);
       e.z = bez(s.P[0][1], s.P[1][1], s.P[2][1], s.P[3][1], u) + Math.sin(e.t * 5 + s.ph) * 0.45;
     } else { e.x += e.vx * dt; e.z += e.vz * dt; }
-    if (!s.fired && u > 0.5) { s.fired = true; if (k % 2 === 0 && g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.4); }
+    if (!s.fired && u > 0.5) { s.fired = true; if (k % 2 === 0 && g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.8); }
   };
 }
 // Brood: flung out (world heading a0, speed sp0) from a gate's portal, a bay or the heart; it speeds up and turns
@@ -257,7 +257,7 @@ function brood(g, src, x, z, a0, n, fan = 0.5, gap = 0.2) {
 // its tail up over its back (0.6 s: the venom bulb blazes and it hisses — the tell), strikes (two venom pincers
 // 0.15 s apart from the sting, each pair bowing in to cross where the jet was), recoils and hops to a new perch
 // nearer the jet's column. Then it flies off.
-function stingAI(x0, strikes = 2, zf = 0.24) {
+function stingAI(x0, strikes = 3, zf = 0.24) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData, p = g.player;
     if (!s.mode) {
@@ -328,7 +328,7 @@ function crystalAI(x0, zf = 0.22, stay = 10) {
     // absorb: the spines fill with time and with the damage taken
     const lost = Math.max(0, s.hp0 - e.hp);
     s.hp0 = e.hp;
-    if (e.t > 2.2 && e.t < 3 + stay) s.charge += dt / 7.5 + (lost / e.maxHp) * 0.6;
+    if (e.t > 2.2 && e.t < 3 + stay) s.charge += dt / 6.2 + (lost / e.maxHp) * 0.6;
     if (ud.setCharge) ud.setCharge(s.charge);
     if (!s.warned && s.charge > 0.85) { s.warned = true; g.audio.play('lock', { vol: 0.4, pitch: 12 }); }
     if (s.charge >= 1) {
@@ -346,7 +346,7 @@ function crystalAI(x0, zf = 0.22, stay = 10) {
       g.fx.p.emit(e.x, 0.4, e.z, 0, 0, 0, 0.25, 1.4, 4.5, XT_A, XT_B, F.GLOW, 0, NO_DRAG);
       g.audio.play('hitArmor', { vol: 0.8 }); g.audio.play('explodeS', { vol: 0.6, pitch: 6 });
     }
-    if (e.t > 3 && e.t < 3 + stay && fireTimerS(s, 'nt', dt, g, 2.6, 1.6) && g.canFire(e)) {
+    if (e.t > 3 && e.t < 3 + stay && fireTimerS(s, 'nt', dt, g, 2.2, 1.4) && g.canFire(e)) {
       const m = g.muzzlePos(e.mesh, 6), mx = m.x, mz = m.z, a = g.aim(mx, mz);
       g.shoot(mx, mz, a - 0.06, 8.6, g.BK.NEEDLE); g.shoot(mx, mz, a + 0.06, 8.6, g.BK.NEEDLE);
     }
@@ -359,8 +359,8 @@ function crystalAI(x0, zf = 0.22, stay = 10) {
 // --------------------------------------------------------------------------------
 // Tears open at (x0, zf of the height) — a violet flash, the ring swelling out of nothing (armoured while it
 // forms) — and drifts down slowly. Every pulse (1.9 s) the portal flares and flings a brood of three drones out
-// of it (each brood leaves in a new direction round the dial); every second pulse the four nodes fire an aimed orb
-// each. After `life` s the portal shuts and the gate warps out (no score: shoot it before).
+// of it (each brood leaves in a new direction round the dial) and the four nodes fire an aimed orb each. After
+// `life` s the portal shuts and the gate warps out (no score: shoot it before).
 function gateAI(x0, zf = 0.26, life = 9) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
@@ -389,7 +389,7 @@ function gateAI(x0, zf = 0.26, life = 9) {
         const a0 = Math.PI * 0.5 * Math.sin(s.ex);              // out of the portal, swinging from side to side, downward
         if (g.canFire(e)) brood(g, e, e.x, e.z, a0, 3, 0.35, 0.18);
         g.fx.p.emit(e.x, 0.3, e.z, 0, 0, 0, 0.3, 1.0, 3.2, WARP_A, WARP_B, F.GLOW, 0, NO_DRAG);
-        if (s.pulses % 2 === 0 && g.canFire(e)) {
+        if (g.canFire(e)) {
           for (let k = 0; k < 4; k++) { const m = g.muzzlePos(e.mesh, k); g.shoot(m.x, m.z, g.aim(m.x, m.z), 6.4); }
         }
       }
@@ -588,7 +588,7 @@ function spawnLeviathan(g) {
 // It tears in through a warp rift at the top of the screen (a violet ring, the ship swelling out of it).
 // p1: the bio-cannons on its mandible arms fire curving pincers at the jet (two pairs each, staggered); the brood
 //     bays open in turn (the iris shrinks back and the mouth blazes: the tell) and fling out three drones each;
-//     the prow fires aimed fans of big orbs → p2 once the cannons and bays are gone (or after 44 s): the crystal
+//     the prow drops a swaying curtain of big orbs → p2 once the cannons and bays are gone (or after 44 s): the crystal
 //     spires grow out of their sockets — the side spires fire double rings (an inner ring and a faster outer ring
 //     half a step round: a lattice), the lance spire tracks the jet, locks (its beam flares: the telegraph) and fires
 //     a stream of needles down the lane with two refracted side streams → p3 once the spires are gone (or after
@@ -695,7 +695,7 @@ function nemesisAI() {
       const t = live(s.sp[i]);
       if (!t) continue;
       t.fireT -= dt * late;
-      if (t.fireT <= 0) { t.fireT = (2.7 + i * 0.3) / fr; t.burst = 2; t.bt = 0; }
+      if (t.fireT <= 0) { t.fireT = (3.3 + i * 0.35) / fr; t.burst = 2; t.bt = 0; }
       if (t.burst > 0) {
         t.bt -= dt;
         if (t.bt <= 0) {
@@ -726,9 +726,10 @@ function nemesisAI() {
     }
     bayDoors(s, dt);
     if (s.mode === 'p1') {
-      // the prow: fans of big orbs round the jet (an even count: the aimed line itself is the gap)
+      // the prow: a curtain of big orbs straight down the screen, swept slowly to and fro — not aimed (the
+      // cannons' pincers keep the jet moving; a fan that tracked it too would corner it)
       s.pfT = (s.pfT ?? 3.4) - dt;
-      if (s.pfT <= 0) { s.pfT = 5.0 / fr; const m = g.muzzlePos(e.mesh), mx = m.x, mz = m.z; g.fan(mx, mz, g.aim(mx, mz), 6, 0.95, 6.0, g.BK.BIG); }
+      if (s.pfT <= 0) { s.pfT = 5.4 / fr; const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, Math.sin(s.pt * 0.9) * 0.3, 6, 1.25, 5.6, g.BK.BIG); }
       return;
     }
     const spMul = s.mode === 'p2' ? 1 : 0.6;
@@ -927,8 +928,8 @@ const W7 = {
   },
   // a stream of n drones pouring in from `side` (+1: the right)
   stream(g, side, n = 8, gap = 0.24, zf = 0.14) { for (let i = 0; i < n; i++) g.later(i * gap, () => g.spawn('s7_swarmer', { x: side * 11, z: -60, ai: streamAI(side, zf, i) })); },
-  stinger(g, x0, strikes = 2, zf = 0.24) { return g.spawn('s7_stinger', { x: x0, z: -60, ai: stingAI(x0, strikes, zf) }); },
-  stingers(g, xs, gap = 0.7, strikes = 2) { xs.forEach((x, i) => g.later(i * gap, () => W7.stinger(g, x, strikes, 0.2 + (i % 2) * 0.07))); },
+  stinger(g, x0, strikes = 3, zf = 0.24) { return g.spawn('s7_stinger', { x: x0, z: -60, ai: stingAI(x0, strikes, zf) }); },
+  stingers(g, xs, gap = 0.7, strikes = 3) { xs.forEach((x, i) => g.later(i * gap, () => W7.stinger(g, x, strikes, 0.2 + (i % 2) * 0.07))); },
   crystal(g, x0, drops, stay = 10, zf = 0.22) { return g.spawn('s7_crystal', { x: x0, z: -60, ai: crystalAI(x0, zf, stay), drops }); },
   gate(g, x0, life = 9, zf = 0.26) { return g.spawn('s7_gate', { x: x0, z: -60, ai: gateAI(x0, zf, life) }); },
 };
@@ -939,20 +940,20 @@ const W7 = {
 const TIMELINE = makeTimeline((at) => {
   // NEBULA ─────────────────────────────────────────────
   at(22, (g) => W7.flock(g, 0, 7, 0.24));
-  at(40, (g) => W7.flock(g, -3.5, 6, 0.2, -1));
+  at(40, (g) => { W7.flock(g, -3.5, 6, 0.2, -1); g.later(1.6, () => W7.stinger(g, 4, 2)); });
   at(56, (g) => W.carrier(g, 2, ['P']));
   at(70, (g) => W7.stingers(g, [-4, 4], 0.9));
   at(92, (g) => { W7.flock(g, 3, 8, 0.24, 1); g.later(1.4, () => W7.stream(g, -1, 6)); });
-  at(112, (g) => W7.crystal(g, 0, ['S'], 9));
+  at(112, (g) => { W7.crystal(g, 0, ['S'], 9); g.later(3, () => W7.flock(g, -4, 6, 0.3, 1, 2.2)); });
   at(136, (g) => { W7.stream(g, 1, 8); g.later(2.2, () => W7.stinger(g, -3)); });
   at(154, (g) => W7.stingers(g, [-5, 0, 5], 0.8));
   at(174, (g) => { W7.gate(g, -3.5, 8); g.later(2.4, () => W7.flock(g, 3.5, 6, 0.2)); });
-  at(198, (g) => W.carrier(g, -2, ['P', 'B']));
+  at(198, (g) => { W.carrier(g, -2, ['P', 'B']); g.later(1.2, () => W7.stingers(g, [5, 1], 0.7)); });
   at(212, (g) => { W7.flock(g, -4, 7, 0.22, 1); g.later(1.1, () => W7.flock(g, 4, 7, 0.28, -1)); });
   at(234, (g) => { W7.crystal(g, -4, ['P'], 9); g.later(2.2, () => W7.stinger(g, 4.5, 3)); });
   at(258, (g) => { W7.stream(g, 1, 8); g.later(1.6, () => W7.stream(g, -1, 8, 0.24, 0.2)); });
   at(280, (g) => { W7.gate(g, 4, 9); g.later(3.2, () => W7.stingers(g, [-5, -1.5], 0.6)); });
-  at(306, (g) => W7.flock(g, 0, 10, 0.22, -1, 2.8, 2.6));
+  at(306, (g) => { W7.flock(g, 0, 10, 0.22, -1, 2.8, 2.6); g.later(2.4, () => W7.stream(g, -1, 7)); });
   at(326, (g) => { W7.crystal(g, -4.5, ['S'], 8); W7.crystal(g, 4.5, null, 8, 0.28); });
   // (rest beat)
   at(356, (g) => W.carrier(g, 0, ['P']));
@@ -964,7 +965,7 @@ const TIMELINE = makeTimeline((at) => {
   at(476, (g) => { W7.stream(g, -1, 9); g.later(1.4, () => W7.stream(g, 1, 9, 0.24, 0.22)); });
   at(496, (g) => { W7.crystal(g, -3.5, null, 9); W7.crystal(g, 3.5, ['S'], 9, 0.28); g.later(3, () => W7.flock(g, 0, 6, 0.36, 1, 2.2)); });
   at(522, (g) => { W7.gate(g, -5, 8); g.later(1.6, () => W7.gate(g, 5, 8, 0.3)); });
-  at(546, (g) => W.carrier(g, 0, ['P']));
+  at(546, (g) => { W.carrier(g, 0, ['P']); g.later(1.4, () => W7.stream(g, 1, 7)); });
   at(558, (g) => W7.stingers(g, [-6, -2, 2, 6], 0.55));
   at(574, (g) => W7.flock(g, 0, 8, 0.22, -1));
   at(MIDBOSS_AT, (g) => midbossEvent(g, spawnLeviathan));

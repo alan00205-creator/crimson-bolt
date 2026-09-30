@@ -350,6 +350,8 @@ class Engine extends Synth {
     // music
     this.tracks = [null, null, null, null];
     this.cur = null;
+    this.fanSong = null;     // the theme of the stage fanfare fired last, and when (see music())
+    this.fanT = -1;
 
     this.applyLevels(settings, true);
     // Bake the busiest instruments (drums, bass, arps, bells, auto-fire SFX) into samples
@@ -1574,6 +1576,12 @@ const SFXFN = {
 // opts.pitch transposes all of it.
 function fanfare(E, b, t, p, v, F) {
   const seq = F.seq, st = 60 / SONGDEF[F.song].bpm / 4;
+  // One clock with the theme: when the theme was started first in the same frame, join its
+  // first step; otherwise the theme joins this fanfare's (see Engine.music).
+  const cur = E.cur;
+  if (cur && cur.name === F.song && cur.t0 >= t + 0.002 && Math.abs(cur.t0 - (t + MUSIC_LEAD)) < 0.25) t = cur.t0 - MUSIC_LEAD;
+  E.fanSong = F.song;
+  E.fanT = t;
   t += MUSIC_LEAD;
   v *= F.v;
   for (let i = 0; i < seq.length; i += 4) {
@@ -2799,7 +2807,8 @@ class Track {
     this.step = 0;
     this.ei = 0;
     this.next = when;
-    this.t0 = when;                 // the first step's time (sync checks)
+    this.t0 = when;                 // the first step's time, and when music() asked for it (sync checks)
+    this.req = when;
     this.loops = 0;
     this.done = false;
     this.endAt = Infinity;
@@ -2896,7 +2905,27 @@ Object.assign(Engine.prototype, {
       for (let i = 1; i < this.tracks.length; i++) if (this.tracks[i].endAt < this.tracks[idx].endAt) idx = i;
       this.tracks[idx].kill();
     }
-    const tr = new Track(this, name, song, now + MUSIC_LEAD);
+    // A stage fanfare fired for this theme a moment ago (main.js: play(startSfx), then
+    // music(theme) in the same frame): start on the fanfare's grid, not on this call's clock,
+    // which can have moved on by a few render quanta while the fanfare was being built (more
+    // so before the bake lands). Should the gap exceed MUSIC_LEAD, the theme joins that grid
+    // a few 16ths in, so its beats still fall on the fanfare's hits.
+    let at = now + MUSIC_LEAD, skip = 0;
+    if (when === undefined && this.fanSong === name && now >= this.fanT && now - this.fanT < 0.25) {
+      const t0 = this.fanT + MUSIC_LEAD;
+      if (t0 >= now + 0.002) at = t0;
+      else { skip = Math.ceil((now + 0.002 - t0) / song.sps); at = t0 + skip * song.sps; }
+    }
+    this.fanSong = null;
+    const tr = new Track(this, name, song, at);
+    tr.req = now;
+    if (skip) {
+      tr.t0 = at - skip * song.sps;
+      tr.step = skip % STEPS;
+      tr.bar = (skip - tr.step) / STEPS;
+      const evs = song.bars[tr.bar].ev;
+      while (tr.ei < evs.length && evs[tr.ei].s < tr.step) tr.ei++;
+    }
     this.tracks[idx] = tr;
     this.cur = tr;
   },
@@ -3660,7 +3689,7 @@ export function __liveSync() {
   const tr = E.cur;
   return {
     now: ctx.currentTime, lead: MUSIC_LEAD,
-    track: tr ? { name: tr.name, t0: tr.t0, bpm: tr.song.bpm, key: tr.song.key, minor: tr.song.minor } : null,
+    track: tr ? { name: tr.name, t0: tr.t0, req: tr.req, bar: tr.bar, step: tr.step, bpm: tr.song.bpm, key: tr.song.key, minor: tr.song.minor } : null,
     last: Object.assign({}, E.last),
   };
 }

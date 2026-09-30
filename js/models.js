@@ -212,20 +212,22 @@ function createBolt(paint = 'std') {
 
 // ---- CRIMSON BOLT paints: recolours of the 'player' GB (modelkit repaint), keys 'player.paint.<id>'
 // Roles are the PL palette plus the nozzle core. Faces are told apart by their centroid where one
-// role covers several parts: canards (z < −0.38, off the centre line) and the wingtip missiles (|x| > 0.76).
+// role covers several parts: canards (z < −0.38, off the centre line), the wingtip missiles (|x| > 0.76)
+// and the tail surfaces (stabilisers behind z 0.55, canted fins above y 0.07).
 const BOLT_PAL = { ...PL, hot: GL(EM.engineHot, 0.7) };
 const onCanard = (c) => c[2] < -0.38 && Math.abs(c[0]) > 0.09;
 const onMissile = (c) => Math.abs(c[0]) > 0.76;
+const onTail = (c) => Math.abs(c[0]) > 0.08 && (c[2] > 0.55 || (c[1] > 0.07 && c[2] > 0.3));
 const RAVEN_LINE = GL(rgb(1.0, 0.015, 0.04, 0.78), 0.26);   // crimson glow line (kept under 1: ACES turns brighter reds peach)
 const EGRET_GOLD = lit('#c9962f'), EGRET_GOLD_LT = lit('#dcae4a'), EGRET_GOLD_DK = lit('#8f6618');
 const BOLT_PAINTS = {
-  // 夜鴉 RAVEN — matte black; every white accent (spine, leading edges, lightning livery, tail band)
-  // becomes a glowing crimson line; smoked-red canopy, redder exhaust
+  // 夜鴉 RAVEN — matte black; the white spine, intake lips, leading edges and lightning livery become
+  // glowing crimson lines (canards, missiles and tail stay dark); smoked-red canopy, redder exhaust
   raven: {
     rough: 0.8, metal: 0.1, debris: '#9c1520', accent: '#ff2a3c',
     map: {
       crimson: lit('#1d1e23'), crimsonLt: lit('#2a2b31'), crimsonMd: lit('#18191d'), crimsonDk: lit('#101115'),
-      white: (st, c) => (onCanard(c) || onMissile(c) ? lit('#34363d') : RAVEN_LINE),
+      white: (st, c) => (onCanard(c) || onMissile(c) || onTail(c) ? lit('#34363d') : RAVEN_LINE),
       steel: lit('#34363d'), steelDk: lit('#202227'), belly: lit('#1b1c20'), bellyDk: lit('#131417'),
       radome: lit('#101115'), gunDk: lit('#0f1013'), nozzle: lit('#26282d'),
       glass: S(lin('#3c0b10'), rgb(0.14, 0.0, 0.01)), glassLt: S(lin('#b0232c'), rgb(0.34, 0.02, 0.03)),
@@ -1760,8 +1762,12 @@ export const OPTION_TYPES = Object.keys(EXT_OPTIONS);
  *  createOption take any of these; defs.js PAINTS (the hangar's price list) should list the same ids. */
 export const PAINT_IDS = { bolt: ['std', ...Object.keys(BOLT_PAINTS)] };
 for (const [id, list] of Object.entries(EXT_PAINTS)) if (own(EXT_PLAYERS, id)) PAINT_IDS[id] = ['std', ...Object.keys(list).filter((p) => p !== 'std')];
-/** a paint's accent colour (hex number) — the glow / trim that identifies it; 'std' = the aircraft colour */
+/** a paint's accent colour (hex number) — the glow / trim that identifies it: defs.js PAINTS hex (the hangar
+ *  swatch) when listed, else the model's own accent; 'std' = the aircraft colour */
 export function paintAccent(id, paint = 'std') {
+  const list = DEFS.PAINTS && own(DEFS.PAINTS, id) && Array.isArray(DEFS.PAINTS[id]) ? DEFS.PAINTS[id] : null;
+  const d = list && list.find((p) => p && p.id === paint);
+  if (d && typeof d.hex === 'number') return d.hex;
   const t = id === 'bolt' ? BOLT_PAINTS : own(EXT_PAINTS, id) ? EXT_PAINTS[id] : null;
   const p = paint !== 'std' && t && own(t, paint) ? t[paint] : null;
   if (p && p.accent) return new THREE.Color(p.accent).getHex();

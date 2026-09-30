@@ -555,7 +555,13 @@ function createPhantom(paint = 'std') {
   // slow "breathing" of the violet edges on top of the standard engine flicker
   const ud = g.userData, mat = g.getObjectByName('body').material, base = ud.update;
   ud.update = (dt, t) => { base(dt, t); mat.uEmitScale.value *= 0.88 + Math.sin(t * 2.4) * 0.12; };
+  if (pt && pt.flow) flowGlow(ud, mat, pt.flow);
   return g;
+}
+/** 極光 流轉: the glow drifts between teal and green (per-instance emission tint, no allocation) */
+function flowGlow(ud, mat, k) {
+  const tint = mat.uEmitTint.value, up = ud.update;
+  ud.update = (dt, t) => { up(dt, t); const s = Math.sin(t * 0.8) * k; tint.setRGB(1 + s, 1, 1 - s); };
 }
 
 // ---- PHANTOM paints (recolours of 'ext:ships:phantom'; roles = PH). The slit exhaust takes the paint's
@@ -588,6 +594,7 @@ const PHANTOM_PAINTS = {
     },
     blade: bladeTint(rgb(0.15, 1.0, 0.8, 0.85), rgb(0.0, 0.4, 0.5, 0.0), rgb(0.7, 1.0, 0.95, 1.3), rgb(0.2, 1.0, 0.8, 0.1)),
     trail: [0.5, 2.5, 2.1],
+    flow: 0.3,                          // 流轉: the edge glow drifts teal ↔ green (flowGlow)
   },
   // 黃金 GOLD
   gold: {
@@ -660,6 +667,7 @@ function createPhantomDrone(paint = 'std') {
     flameMat.color.setScalar(0.8 + thrust * 0.3);
     mat.uEmitScale.value = 0.85 + Math.sin(t * 5.5) * 0.18;
   };
+  if (pt && pt.flow) flowGlow(ud, mat, pt.flow);
   ud.dispose = () => { mat.dispose(); flameMat.dispose(); };
   ud.update(0, 0);
   return g;
@@ -686,6 +694,7 @@ const DRONE_PAINTS = {
     },
     flame: droneFlame(rgb(0.15, 1.0, 0.8, 1.4), rgb(0.0, 0.4, 0.5, 0.0), rgb(0.7, 1.0, 0.95, 2.2), rgb(0.2, 1.0, 0.8, 0.1)),
     trail: [0.5, 2.5, 2.1],
+    flow: 0.3,
   },
   gold: {
     rough: GOLD.rough, metal: GOLD.metal, debris: GOLD.debris,

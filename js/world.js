@@ -1,7 +1,7 @@
 // =============================================================================
 // world.js — CRIMSON BOLT (赤電) scrolling stage world
 //
-// Builds and scrolls the terrain under the gameplay plane. Three stage worlds (WORLD_STAGES,
+// Builds and scrolls the terrain under the gameplay plane. Five stage worlds (WORLD_STAGES,
 // picked with world.setStage(id) before reset(d)):
 //   coastal  ocean (0–300) → coast (300–380) → country (380–640) → city (640–960)
 //            → airbase (960–1240) → endless dusk sea (1240–∞)
@@ -9,6 +9,12 @@
 //            → desert fortress / airstrip (1000–1240) → endless dry lakebed (1240–∞)
 //   skies    a cloud-sea deck, no ground: stratosphere (0–420) → storm band (420–800)
 //            → golden high altitude (800–1240) → near-space dusk (1240–∞)
+//   arctic   frozen sea with pack ice and icebergs (0–300) → glacier fjord (300–560)
+//            → mid-boss channel through the pack (560–780) → naval base / radar station (780–1000)
+//            → snow fortress (1000–1240) → endless frozen lake (1240–∞)
+//   orbit    no ground: a planet far below (a shader plane), stars, debris floating in between:
+//            earth-lit (0–420) → debris storm (420–800) → enemy station passing below
+//            (800–1240) → the core arena in deep space over the planet's limb (1240–∞)
 // Stage data lives in one table per stage (see "stage table" at the end); the hot free
 // functions read it through the module pointer S, so switching stages allocates nothing.
 //
@@ -45,8 +51,11 @@
 //     canyon |x| < 5.5, d 560–780) and so is the canyon's lakebed boss arena (|x| < 9, d ≥ 1240);
 //   • ocean islands keep their land at |x| ≥ 8.2 (contract: > 7; stage 1 sails gunboats at ±7),
 //     decorative ships keep their hulls at |x| ≥ 8.4;
+//   • the arctic keeps open water free of any ice (|x| < 8 to d 300, < 7.4 in the fjord, < 6.35
+//     in the mid-boss channel), its lanes + cross roads flat and clear over 780–1240, the mid-boss
+//     channel (|x| < 6, d 560–780) and the lake arena (|x| < 9, d ≥ 1240) clear;
 //   • ≤ 5 generated textures (atlas 512², noise 256², waves 256², mask 128×512, clouds 256²);
-//     the sky stage's cloud deck reuses the noise texture.
+//     the sky stage's cloud deck and the orbit's planet reuse the noise texture.
 // =============================================================================
 import * as THREE from 'three';
 
@@ -1482,6 +1491,116 @@ void main() {
   #include <colorspace_fragment>
   #include <fog_fragment>
 }`;
+// The orbit's backdrop (planet plane). It stays with the camera; the motion is all in uniforms (see
+// _placePlanet) and every wrap is seamless: the longitude offset wraps at 2π against PLANET_N noise
+// periods round the planet, the star cells repeat every STAR_SPAN units of drift (small stars: 1.6
+// cells per unit, sampled 7 texels apart; big stars: 0.6 per unit, 8 apart → whole texture periods),
+// the nebula every NEB_SPAN units, and the clouds drift 4 noise periods per 1000 s.
+// The planet is a pinhole view of a unit sphere from an orbit h radii up, the sphere's centre straight
+// below the nadir: every plane point is a ray (focal length f in world units) that hits the sphere or
+// passes over its limb. So the surface under the play area reads flat, it compresses into a thin
+// limb, and the atmosphere is a thin glowing shell. Texture gradients are taken outside the
+// branches (derivatives inside divergent flow are undefined).
+const PLANET_LIFT = 0.1;          // over game.js's aircraft shadows (GROUND_Y + 0.06): they hide under it
+const PLANET_N = 12;              // noise periods round the planet
+const PLANET_SPIN = 0.0004;       // rad per stage unit: under the view the surface moves at ≈ 0.1× the scroll
+const STAR_DRIFT = 0.02, STAR_SPAN = 160, NEB_DRIFT = 0.012, NEB_SPAN = 64;
+const PLANET_FRAG = /* glsl */`
+uniform sampler2D uNoise;
+uniform vec4 uScroll;             // (time, longitude offset, star drift, nebula drift)
+uniform vec4 uPlanet;             // (nadir x, nadir z (world), focal length (world units), orbit height (radii))
+uniform vec4 uLook;               // (cloud cover, nebula, stars, city lights)
+uniform float uAtmW;              // atmosphere thickness (radii)
+uniform vec3 uSun;                // toward the sun (planet frame: x right, y up, z down-screen)
+uniform vec3 uOcean, uLand, uLand2, uCloud, uAtmos, uGlow, uCity, uSpace, uNeb;
+varying vec3 vW;
+// at most one star per cell: two texels "stride" apart (uncorrelated) pick presence, place, size, tint
+vec3 stars(vec2 q, float stride, float keep, float size, float aa) {
+  vec2 ci = floor(q), cf = fract(q);
+  vec4 h = textureLod(uNoise, (ci * stride + 0.5) / 256.0, 0.0);
+  vec4 h2 = textureLod(uNoise, (ci * stride + vec2(3.5, 2.5)) / 256.0, 0.0);
+  float on = smoothstep(keep, keep + 0.02, h.r);
+  float rad = size * (0.5 + h2.b);
+  float s = on * (1.0 - smoothstep(rad, rad + aa, length(cf - (0.2 + 0.6 * vec2(h.b, h2.r)))));
+  return s * mix(vec3(0.72, 0.84, 1.3), vec3(1.3, 1.02, 0.72), smoothstep(0.35, 0.65, h2.g)) * (0.4 + 1.1 * h2.b);
+}
+void main() {
+  // the ray through this point, and where it meets the planet (or how high it passes over the limb)
+  float h = uPlanet.w, c2 = (1.0 + h) * (1.0 + h);
+  vec3 dir = normalize(vec3((vW.x - uPlanet.x) / uPlanet.z, -1.0, (vW.z - uPlanet.y) / uPlanet.z));
+  float b = -dir.y * (1.0 + h);
+  float disc = b * b - (c2 - 1.0);
+  vec3 n = (b - sqrt(max(disc, 0.0))) * dir + vec3(0.0, 1.0 + h, 0.0);   // surface point (a miss: its closest point)
+  float alt = sqrt(max(c2 - b * b, 0.0)) - 1.0;
+  float onDisc = smoothstep(-1.0, 1.0, disc / max(fwidth(disc), 1e-7));  // ≈ 1 px of antialiasing at the limb
+  vec2 uv = vec2(asin(clamp(n.x, -1.0, 1.0)), atan(n.z, max(n.y, 1e-3)) + uScroll.y) * ${(PLANET_N / (2 * Math.PI)).toFixed(8)};
+  vec2 gx = dFdx(uv), gy = dFdy(uv);
+  vec2 q = vec2(vW.x, vW.z - uScroll.z);
+  float aa = fwidth(vW.x) * 1.6;
+  vec3 col = uSpace;
+  // deep space beyond the limb: a nebula, two layers of stars (they drift at a crawl)
+  if (onDisc < 0.999) {
+#ifndef LOW
+    vec2 qn = vec2(vW.x, vW.z - uScroll.w) * ${(1 / NEB_SPAN).toFixed(8)};
+    vec2 ngx = dFdx(vW.xz) * ${(1 / NEB_SPAN).toFixed(8)}, ngy = dFdy(vW.xz) * ${(1 / NEB_SPAN).toFixed(8)};
+    vec4 n1 = textureGrad(uNoise, qn, ngx, ngy);
+    vec4 n2 = textureGrad(uNoise, qn * 3.0 + (n1.rb - 0.5) * 0.12, ngx * 3.0, ngy * 3.0);
+    float neb = smoothstep(0.45, 0.85, n1.g * 0.6 + n2.g * 0.4);
+    col += uNeb * (neb * neb * neb * 1.6 + max(n2.b - 0.4, 0.0) * 0.35) * uLook.y;
+    col += stars(q * 0.6 + 11.0, 8.0, 0.84, 0.06, aa * 0.6) * uLook.z * 0.9;
+#else
+    col += uNeb * 0.2 * uLook.y;
+#endif
+    col += stars(q * 1.6, 7.0, 0.8, 0.07, aa * 1.6) * uLook.z * 0.55;
+  }
+  // the halo: sunlit air over the limb, and forward-scattered light where the sun is behind the planet
+  vec3 nn = normalize(n);
+  float sunward = dot(normalize(vec3(n.x, 0.0, n.z) + 1e-5), vec3(uSun.x, 0.0, uSun.z));
+  float fwd = pow(max(dot(dir, uSun), 0.0), 4.0) * smoothstep(-0.2, 0.8, sunward);
+  vec3 air = uAtmos * (0.15 + 0.85 * smoothstep(-0.25, 0.45, dot(nn, uSun)));
+  col += (air + uGlow * fwd * 1.3) * exp(-alt / uAtmW) * (1.0 - onDisc) + uAtmos * 0.1 * exp(-alt / (uAtmW * 2.5)) * (1.0 - onDisc);
+  // the planet
+  if (onDisc > 0.001) {
+    vec4 m = textureGrad(uNoise, uv, gx, gy);
+#ifndef LOW
+    vec4 m2 = textureGrad(uNoise, uv * 4.0 + (m.rb - 0.5) * 0.05, gx * 4.0, gy * 4.0);
+#else
+    vec4 m2 = m;
+#endif
+    float lv = m.g * 0.8 + m2.b * 0.2;
+    float land = smoothstep(0.6, 0.63, lv);
+    float shelf = smoothstep(0.55, 0.6, lv) * (1.0 - land);
+    vec3 surf = mix(uOcean, uOcean * 1.7 + vec3(0.0, 0.035, 0.045), shelf);
+    vec3 grd = mix(uLand, uLand2, smoothstep(0.42, 0.66, m2.g * 0.6 + m.b * 0.4));
+    surf = mix(surf, grd * (0.82 + 0.36 * m2.r), land);
+    // clouds: banded swirls drifting with time
+    vec4 c1 = textureGrad(uNoise, uv * 2.0 + vec2(0.0, uScroll.x * 0.004) + (m.gb - 0.5) * 0.2, gx * 2.0, gy * 2.0);
+    float cv = c1.g * 0.62 + c1.r * 0.38;
+    float cloud = smoothstep(0.98 - uLook.x * 0.8, 1.12 - uLook.x * 0.8, cv);
+    // sunlight: the day side, a glint on the sea, the night side's city lights, a warm terminator
+    float ndl = dot(nn, uSun);
+    float lit = max(ndl, 0.0), day = smoothstep(-0.1, 0.18, ndl);
+    float spec = pow(max(dot(nn, normalize(uSun - dir)), 0.0), 60.0) * (1.0 - land) * (1.0 - cloud) * day;
+    vec3 pc = surf * (0.04 + 0.96 * lit) + vec3(1.0, 0.9, 0.78) * spec * 0.45;
+    pc = mix(pc, uCloud * (0.03 + 0.9 * lit), cloud * 0.9);
+#ifndef LOW
+    float cr = textureGrad(uNoise, uv * 16.0 + m2.gb * 0.3, gx * 16.0, gy * 16.0).r;   // fine grain for the lights
+#else
+    float cr = m.r;
+#endif
+    float city = smoothstep(0.71, 0.8, cr) * smoothstep(0.45, 0.62, m2.b) * land * (1.0 - cloud * 0.9) * (1.0 - day) * uLook.w;
+    pc += uCity * city * 1.3;
+    pc += uGlow * 0.12 * (1.0 - smoothstep(0.0, 0.09, abs(ndl - 0.02))) * (0.3 + 0.7 * cloud);
+    // the atmosphere seen through: a thin shell, thick only toward the limb
+    float cv0 = max(dot(nn, -dir), 0.0);
+    pc = mix(pc, uAtmos * (0.1 + 0.6 * day), 0.16 * pow(1.0 - cv0, 4.0) * (0.3 + 0.7 * day));   // blue haze toward the limb
+    pc = mix(pc, air * 0.9 + uGlow * fwd * exp(-cv0 / 0.035) * 1.2, clamp(exp(-cv0 / 0.07), 0.0, 0.92));
+    col = mix(col, pc, onDisc);
+  }
+  gl_FragColor = vec4(col, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`;
 
 // =============================================================================
 // time of day
@@ -1507,23 +1626,33 @@ const TOD_SRC = [
     cLit: 0xf2c1b4, cShade: 0x5e5684, shadow: 0x1a1230, shA: 0.4, shK: 1.5, caps: 0.22, cloud: 0.78, relief: 0.32, spark: 0.6, sheen: 0.14 },
 ];
 // dLit/dShade/dAbyss/dRim, cover and flash drive the sky stage's cloud deck (lit tops, shaded
-// billows, what shows through the gaps, the silver lining; deck coverage, lightning strength)
+// billows, what shows through the gaps, the silver lining; deck coverage, lightning strength).
+// p* drive the orbit's planet: surface / cloud / atmosphere / sunrise-glow / city-light / space /
+// nebula colours; the view (the nadir's x and z relative to the view centre, focal length, orbit height
+// in radii), cloud cover, atmosphere thickness (radii), nebula and star strength, city lights, and
+// psun (toward the sun, planet frame)
 const TOD_COLS = ['sun', 'sky', 'gnd', 'fog', 'deep', 'shallow', 'wsky', 'foam', 'inland', 'glint', 'cLit', 'cShade', 'shadow',
-  'dLit', 'dShade', 'dAbyss', 'dRim'];
-const TOD_NUMS = ['sunI', 'hemiI', 'near', 'far', 'glintI', 'shA', 'shK', 'caps', 'cloud', 'relief', 'spark', 'sheen', 'cover', 'flash'];
+  'dLit', 'dShade', 'dAbyss', 'dRim', 'pOcean', 'pLand', 'pLand2', 'pCloud', 'pAtmos', 'pGlow', 'pCity', 'pSpace', 'pNeb'];
+const TOD_NUMS = ['sunI', 'hemiI', 'near', 'far', 'glintI', 'shA', 'shK', 'caps', 'cloud', 'relief', 'spark', 'sheen', 'cover', 'flash',
+  'pX', 'pZ', 'pF', 'pH', 'pCover', 'pAtmW', 'pNebI', 'pStar', 'pCityI'];
 // indices into the interpolated numeric array (order of TOD_NUMS)
 const N_SUNI = 0, N_HEMII = 1, N_NEAR = 2, N_FAR = 3, N_GLINTI = 4, N_SHA = 5, N_CAPS = 7, N_CLOUD = 8,
-  N_RELIEF = 9, N_SPARK = 10, N_SHEEN = 11, N_COVER = 12, N_FLASH = 13;
-// fields a stage's keys may leave out (water on dry stages, the deck on non-sky stages)
+  N_RELIEF = 9, N_SPARK = 10, N_SHEEN = 11, N_COVER = 12, N_FLASH = 13,
+  N_PX = 14, N_PZ = 15, N_PF = 16, N_PH = 17, N_PCOVER = 18, N_PATMW = 19, N_PNEB = 20, N_PSTAR = 21, N_PCITY = 22;
+// fields a stage's keys may leave out (water on dry stages, the deck on non-sky stages, the planet
+// everywhere but the orbit)
 const TOD_DEFAULTS = {
   deep: 0x1f4a61, shallow: 0x2e7f82, wsky: 0x83a4c2, foam: 0xdbe3e4, inland: 0x3d5b52, glint: 0xfff0dc, glintI: 1.0, gdir: [0.08, 0.86, -0.5],
   caps: 0.5, relief: 0.3, spark: 0.48, sheen: 0.11,
   dLit: 0xf2f5fa, dShade: 0x9aabc6, dAbyss: 0x1d4274, dRim: 0xffffff, cover: 0.7, flash: 0,
+  pOcean: 0x0c2a55, pLand: 0x3a5836, pLand2: 0x86744e, pCloud: 0xdce4ee, pAtmos: 0x4a9cff, pGlow: 0xff9a6a, pCity: 0xffc070,
+  pSpace: 0x02040a, pNeb: 0x2a3a78, pX: 0, pZ: 26, pF: 17, pH: 0.07, pCover: 0.5, pAtmW: 0.007, pNebI: 0, pStar: 1, pCityI: 0, psun: [0.35, 0.85, 0.4],
 };
 function makeTod(src) {
   return src.map((k0) => {
     const k = { ...TOD_DEFAULTS, ...k0 };
-    const o = { d: k.d, gdir: new THREE.Vector3().fromArray(k.gdir).normalize(), n: new Float64Array(TOD_NUMS.length) };
+    const o = { d: k.d, gdir: new THREE.Vector3().fromArray(k.gdir).normalize(), psun: new THREE.Vector3().fromArray(k.psun).normalize(),
+      n: new Float64Array(TOD_NUMS.length) };
     for (const c of TOD_COLS) o[c] = new THREE.Color(k[c]);
     for (let i = 0; i < TOD_NUMS.length; i++) { o[TOD_NUMS[i]] = k[TOD_NUMS[i]]; o.n[i] = k[TOD_NUMS[i]]; }
     return o;
@@ -1548,7 +1677,7 @@ export const __worldDebug = {
 // World
 // =============================================================================
 const _m4 = new THREE.Matrix4(), _m4b = new THREE.Matrix4();
-const _v3 = new THREE.Vector3(), _q = new THREE.Quaternion(), _s3 = new THREE.Vector3();
+const _v3 = new THREE.Vector3(), _q = new THREE.Quaternion(), _s3 = new THREE.Vector3(), _ax = new THREE.Vector3();
 const _Y = new THREE.Vector3(0, 1, 0);
 const CLOUD_MAX = 14;
 const PUFF_PER = 28, PUFF_MAX = 112;      // cloud-tower sprites per chunk / in all (≤ 4 chunks are laid out)
@@ -1625,6 +1754,8 @@ export class World {
     this._initWater();
     // cloud-sea deck (sky stage)
     this._initDeck();
+    // the planet far below (orbit stage)
+    this._initPlanet();
     // clouds
     this._initClouds();
     this._initPuffs();
@@ -1635,6 +1766,7 @@ export class World {
     this._tod = {};
     for (const c of TOD_COLS) this._tod[c] = new THREE.Color();
     this._tod.gdir = new THREE.Vector3();
+    this._tod.psun = new THREE.Vector3();
     this._todN = new Float64Array(TOD_NUMS.length);
     this._sunDir = new THREE.Vector3(-14, 30, 10).normalize();
     this.stats = { builds: 0, lastBuildMs: 0, maxBuildMs: 0, maxSliceMs: 0, violations: 0, violationLog: [] };
@@ -1663,8 +1795,10 @@ export class World {
     this._maskSlot.fill(-99999);
     this.water.visible = false;
     this.deck.visible = S.deck;
+    this.planet.visible = !!S.planet;
     this.puffs.visible = S.deck; this.puffShadows.visible = S.deck;
     this.radars.count = 0; this.rotors.count = 0; this.puffs.count = 0; this.puffShadows.count = 0;
+    for (const m of this.extraSpin) { m.count = 0; m.visible = false; }
     this._applyTod();
     return true;
   }
@@ -1708,6 +1842,28 @@ export class World {
     this.deck.position.set(0, GROUND_Y, -12);
     this.deck.visible = S.deck;
     this.root.add(this.deck);
+  }
+
+  // The orbit's backdrop: one opaque plane just above GROUND_Y that draws a planet far below (its
+  // surface turns at a crawl), the atmosphere and deep space with stars beyond its limb. It sits a
+  // hair above game.js's aircraft shadows (GROUND_Y + 0.06), so the depth test hides them: nothing
+  // casts a shadow onto a planet a few hundred kilometres down. No fog: it is "at infinity".
+  _initPlanet() {
+    const uniforms = {
+      uNoise: { value: this.tex.noise }, uScroll: { value: new THREE.Vector4() }, uPlanet: { value: new THREE.Vector4(0, 20, 17, 0.07) },
+      uLook: { value: new THREE.Vector4(0.5, 0, 1, 0) }, uAtmW: { value: 0.007 }, uSun: { value: new THREE.Vector3(0, 1, 0) },
+      uOcean: { value: new THREE.Color() }, uLand: { value: new THREE.Color() }, uLand2: { value: new THREE.Color() }, uCloud: { value: new THREE.Color() },
+      uAtmos: { value: new THREE.Color() }, uGlow: { value: new THREE.Color() }, uCity: { value: new THREE.Color() },
+      uSpace: { value: new THREE.Color() }, uNeb: { value: new THREE.Color() },
+    };
+    this.planetMat = new THREE.ShaderMaterial({ uniforms, vertexShader: WATER_VERT, fragmentShader: PLANET_FRAG, fog: false });
+    const g = new THREE.PlaneGeometry(84, 124, 1, 1);
+    g.rotateX(-Math.PI / 2);
+    this.planet = new THREE.Mesh(g, this.planetMat);
+    this.planet.name = 'world-planet';
+    this.planet.position.set(0, GROUND_Y + PLANET_LIFT, -12);
+    this.planet.visible = !!S.planet;
+    this.root.add(this.planet);
   }
 
   _initClouds() {
@@ -1889,6 +2045,12 @@ export class World {
       }
       box(-0.08, -0.08, 0.08, 0.08, -0.08, 0.08, P.metal, P.metal);
     });
+    // stage 4/5 spinners (type 2 big radar dish about y; types 3/4 tumbling asteroid / wreckage
+    // about a per-instance axis, scaled per instance). Built after the two above so their bytes and
+    // the RNG state they leave are unchanged; hidden while unused (no empty draw call on stages 1–3).
+    this.bigDishGeo = mkGeo(bigDishGeo);
+    this.rockGeo = mkGeo(tumbleRockGeo);
+    this.wreckGeo = mkGeo(tumbleWreckGeo);
     VIOL = saved; VIOL_LOG = savedLog;
     this.radars = new THREE.InstancedMesh(this.radarGeo, this.propMat, 16);
     this.rotors = new THREE.InstancedMesh(this.rotorGeo, this.propMat, 16);
@@ -1897,6 +2059,13 @@ export class World {
       this.root.add(m);
     }
     this.radars.name = 'world-radars'; this.rotors.name = 'world-rotors';
+    this.extraSpin = []; this._xn = new Int32Array(3);
+    for (const [geo, name] of [[this.bigDishGeo, 'world-big-dishes'], [this.rockGeo, 'world-tumbling-rocks'], [this.wreckGeo, 'world-tumbling-wrecks']]) {
+      const m = new THREE.InstancedMesh(geo, this.propMat, 16);
+      m.frustumCulled = false; m.count = 0; m.visible = false; m.name = name; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.extraSpin.push(m);
+      this.root.add(m);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1909,6 +2078,8 @@ export class World {
     this.waterMat.needsUpdate = true;
     if (low) this.deckMat.defines.LOW = ''; else delete this.deckMat.defines.LOW;
     this.deckMat.needsUpdate = true;
+    if (low) this.planetMat.defines.LOW = ''; else delete this.planetMat.defines.LOW;
+    this.planetMat.needsUpdate = true;
     this.cloudN = low ? 7 : CLOUD_MAX;
     this.cloudShadows.visible = !low;
     if (!force) {
@@ -2040,6 +2211,7 @@ export class World {
     const GX = GROUND_XS, NX = GX.length, NZ = CHUNK + 1;
     const H = GRID_H, Cc = GRID_C;
     const terrainH = S.terrainH, groundColor = S.groundColor, flatCheck = S.flatCheck;
+    const flatFrom = S.flatFrom === undefined ? -Infinity : S.flatFrom;   // the arctic is water before its base
     for (let j = 0; j < NZ; j++) {
       const d = d0 + j;
       for (let i = 0; i < NX; i++) {
@@ -2049,7 +2221,7 @@ export class World {
         groundColor(x, d, h, TC);
         const o = (j * NX + i) * 3;
         Cc[o] = TC[0]; Cc[o + 1] = TC[1]; Cc[o + 2] = TC[2];
-        if (flatCheck && (h > MAX_H || ((h > 0.04 || h < -0.04) && blocked(x, x, d, d, 0)))) {
+        if (flatCheck && d >= flatFrom && (h > MAX_H || ((h > 0.04 || h < -0.04) && blocked(x, x, d, d, 0)))) {
           VIOL++; if (VIOL_LOG && VIOL_LOG.length < 40) VIOL_LOG.push(['ground', x, d, +h.toFixed(3)]);
         }
       }
@@ -2116,6 +2288,9 @@ export class World {
         M[o + 3] = 255;
       }
     }
+    // floating ice (arctic): drawn as props, painted here as the water sees it (submerged foot,
+    // shore foam, brash ice) — stateless, so it matches the neighbouring chunks' props
+    if (W.paint) W.paint(M, base, d0);
     this._maskSlot[slot] = sea ? -1 : k;
     this._maskDirty = true;
     ch.hasWater = hasWater || sea || k <= W.alwaysK;
@@ -2126,7 +2301,8 @@ export class World {
     const d = this._d;
     let water = false;
     let nr = 0, nt = 0;
-    const t = this._t, C = this.chunks;
+    const t = this._t, C = this.chunks, X = this.extraSpin, XN = this._xn;
+    XN[0] = 0; XN[1] = 0; XN[2] = 0;
     for (let ci = 0; ci < C.length; ci++) {
       const ch = C[ci];
       if (ch.k === null || ch.phase < 3) continue;
@@ -2144,16 +2320,35 @@ export class World {
           if (nr >= 16) continue;
           _m4.makeRotationY(ang); _m4.setPosition(x, y, wz);
           this.radars.setMatrixAt(nr++, _m4);
-        } else {
+        } else if (type === 1) {
           if (nt >= 16) continue;
           _m4b.makeRotationZ(ang); _m4.makeRotationY(ch.spin[o + 6]); _m4.multiply(_m4b); _m4.setPosition(x, y, wz);
           this.rotors.setMatrixAt(nt++, _m4);
+        } else {
+          // stage 4/5 spinners: 2 = big radar dish (about y), 3/4 = tumbling rock / wreckage: the
+          // axis comes from the start phase, spin[o + 6] is the instance scale
+          const e = type - 2;
+          if (XN[e] >= 16) continue;
+          if (e === 0) { _m4.makeRotationY(ang); _m4.setPosition(x, y, wz); }
+          else {
+            const p = ch.spin[o + 4], s = ch.spin[o + 6];
+            _ax.set(Math.cos(p * 3.1), 0.55 + 0.45 * Math.sin(p * 1.7), Math.sin(p * 2.3)).normalize();
+            _q.setFromAxisAngle(_ax, ang); _v3.set(x, y, wz); _s3.set(s, s, s);
+            _m4.compose(_v3, _q, _s3);
+          }
+          X[e].setMatrixAt(XN[e]++, _m4);
         }
       }
     }
     this.radars.count = nr; this.rotors.count = nt;
     if (nr) this.radars.instanceMatrix.needsUpdate = true;
     if (nt) this.rotors.instanceMatrix.needsUpdate = true;
+    for (let e = 0; e < 3; e++) {
+      const m = X[e], n = XN[e];
+      if (m.count !== n) m.count = n;
+      if (m.visible !== n > 0) m.visible = n > 0;
+      if (n) m.instanceMatrix.needsUpdate = true;
+    }
     this.water.visible = S.water !== null && (water || S.water.open(biomeOf(d)));
     // shader scroll uniforms
     const u = this.waterMat.uniforms;
@@ -2161,7 +2356,17 @@ export class World {
     u.uScroll.value.set(t, ((d % MASK_SPAN) + MASK_SPAN) % MASK_SPAN, dn);
     this.uDN.value.x = dn;
     if (S.deck) { this._placeDeck(t, d, dn); this._placePuffs(d); }
+    if (S.planet) this._placePlanet(t, d);
     this._updateClouds(dt);
+  }
+
+  // planet scroll: its surface turns at a crawl (a longitude offset, wrapped at 2π — the shader maps
+  // PLANET_N noise periods round the planet, so the wrap is seamless), the stars and the nebula drift
+  // far slower still (each offset wrapped at its own lookup period)
+  _placePlanet(t, d) {
+    const u = this.planetMat.uniforms.uScroll.value;
+    u.set(t, ((d * PLANET_SPIN) % TAU + TAU) % TAU, ((d * STAR_DRIFT) % STAR_SPAN + STAR_SPAN) % STAR_SPAN,
+      ((d * NEB_DRIFT) % NEB_SPAN + NEB_SPAN) % NEB_SPAN);
   }
 
   // cloud-deck scroll (the lower layer at 0.62·d reads as deeper) and storm lightning: short
@@ -2259,6 +2464,18 @@ export class World {
       pu.uLit.value.copy(o.dLit).lerp(o.dRim, 0.25); pu.uShade.value.copy(o.dShade).lerp(o.dLit, 0.12);
       this.puffShadowMat.uniforms.uShade.value.copy(o.shadow);
     }
+    if (S.planet) {
+      const pu = this.planetMat.uniforms;
+      o.psun.copy(a.psun).lerp(b.psun, t).normalize();
+      pu.uSun.value.copy(o.psun);
+      // the view: the nadir relative to the view centre (x 0, z −6) in world units, focal length, height
+      pu.uPlanet.value.set(N[N_PX], N[N_PZ] - 6, N[N_PF], N[N_PH]);
+      pu.uAtmW.value = N[N_PATMW];
+      pu.uLook.value.set(N[N_PCOVER], N[N_PNEB], N[N_PSTAR], N[N_PCITY]);
+      pu.uOcean.value.copy(o.pOcean); pu.uLand.value.copy(o.pLand); pu.uLand2.value.copy(o.pLand2); pu.uCloud.value.copy(o.pCloud);
+      pu.uAtmos.value.copy(o.pAtmos); pu.uGlow.value.copy(o.pGlow); pu.uCity.value.copy(o.pCity);
+      pu.uSpace.value.copy(o.pSpace); pu.uNeb.value.copy(o.pNeb);
+    }
   }
 
   // debugging / tooling -----------------------------------------------------------
@@ -2267,7 +2484,7 @@ export class World {
     for (const ch of this.chunks) if (ch.k !== null && ch.phase === 3) { active++; verts += ch.n; sverts += ch.sn; }
     return { stage: S.id, distance: this._d, biome: biomeOf(this._d), activeChunks: active, triangles: (verts + sverts) / 3,
       violations: this.stats.violations, violationLog: this.stats.violationLog.slice(0, 12), lastBuildMs: this.stats.lastBuildMs, maxBuildMs: this.stats.maxBuildMs, builds: this.stats.builds,
-      water: this.water.visible, deck: this.deck.visible, maxSliceMs: this.stats.maxSliceMs };
+      water: this.water.visible, deck: this.deck.visible, planet: this.planet.visible, maxSliceMs: this.stats.maxSliceMs };
   }
 
   dispose() {
@@ -2275,6 +2492,9 @@ export class World {
     for (const ch of this.chunks) { ch.geo.dispose(); ch.sgeo.dispose(); }
     this.water.geometry.dispose(); this.waterMat.dispose();
     this.deck.geometry.dispose(); this.deckMat.dispose();
+    this.planet.geometry.dispose(); this.planetMat.dispose();
+    this.bigDishGeo.dispose(); this.rockGeo.dispose(); this.wreckGeo.dispose();
+    for (const m of this.extraSpin) m.dispose();
     this.puffGeo.dispose(); this.puffShGeo.dispose(); this.puffMat.dispose(); this.puffShadowMat.dispose();
     this.puffs.dispose(); this.puffShadows.dispose();
     this.cloudGeo.dispose(); this.cloudMat.dispose(); this.cloudShadowMat.dispose();
@@ -5185,6 +5405,1698 @@ const SKIES_TOD_SRC = [
 const SKIES_CLOUD = { stratosphere: 0.95, storm: 1.0, golden: 0.8, nearspace: 0.5 };
 
 // =============================================================================
+// FROZEN FRONTIER (stage 4)
+//   frozen sea 0–300 (pack ice and icebergs at the flanks, open water |x| < 8 for gunboats) ·
+//   glacier fjord 300–560 (ice cliffs beyond |x| ≈ 10 over a dark channel) · mid-boss channel
+//   560–780 (open water |x| < 6 through dense pack for the ICEBREAKER) · naval base / radar station
+//   780–1000 (the channel ends at its quay; harbour basins on the right) · snow fortress 1000–1240 ·
+//   endless frozen lake 1240+ (the boss arena, |x| < 9).
+// Floating ice is props: flat-topped prisms just above the water, from a stateless field (one
+// jittered floe per 2.5-unit cell, hashed) and a fixed iceberg list. The water mask paints every
+// piece as the water sees it (W.paint): its submerged foot (turquoise shallows), the shore foam and
+// the brash ice round it, for the owner chunk and its neighbours alike. Ground units: lanes + cross
+// roads flat and clear over 778–1240 (the self-check starts at the quay).
+// =============================================================================
+const ARCTIC_LAYOUT = [
+  { biome: 'floes',     from: 0,    to: 300 },
+  { biome: 'fjord',     from: 300,  to: 560 },
+  { biome: 'channel',   from: 560,  to: 780 },
+  { biome: 'navalbase', from: 780,  to: 1000 },
+  { biome: 'snowfort',  from: 1000, to: 1240 },
+  { biome: 'icelake',   from: 1240, to: Infinity },
+];
+const AR_FJORD = 300, AR_CHAN = 560, AR_BASE = 780, AR_FORT = 1000, AR_LAKE = 1240;
+const AR_SEA = -2.6;
+const AR_QUAY = 777.6;           // the channel ends at the naval base's quay wall (the 780 cross road runs along it)
+const AR_FLAT = 778;             // dry, flat ground (and the flatness self-check) from here on
+const AR_LANES = { d0: -Infinity, d1: AR_FJORD, x: 7.8 };   // gunboat water lanes (±7, hulls to 7.8): no bergs
+const AR_FJ_LANE = { d0: AR_FJORD, d1: AR_CHAN, x: 7.4 };    // the fjord channel
+const AR_MIDBOSS = { d0: AR_CHAN, d1: AR_BASE, x: 6 };        // the ICEBREAKER's open water
+const AR_ARENA = { d0: AR_LAKE, d1: Infinity, x: 9 };
+const AR_REAR = 1233;            // the fortress rear wall: the lane roads end at its gates
+
+// polar palette (snow kept mid-toned and bluish: glowing bullets need something darker than themselves)
+const AP = {
+  snow: C(0xb9c6d4), snowL: C(0xcbd6e2), snowD: C(0x9aabbf), snowBlue: C(0x8aa2c0), drift: C(0xc3cedb),
+  floe: C(0xbfcddb), floeL: C(0xd0dbe6), floeSide: C(0x7fb4d0), pancake: C(0x9fb4c6),
+  iceW: C(0xc6d9e6), iceM: C(0x8fc0da), iceB: C(0x5f9cc8), iceD: C(0x3a76a4), crev: C(0x2f5f8c), crevL: C(0x7fa6c8),
+  rock: C(0x4a4d53), rockL: C(0x62656b), rockD: C(0x35383e),
+  seal: C(0x4b4741),
+  lake: C(0x3d5874), lakeD: C(0x2e445e), lakeL: C(0x55718d), lakeSnow: C(0x9aaec3), lakeCrack: C(0xafc8dc), bubble: C(0xc7dbea),
+  road: C(0x4a5058), slush: C(0x76818d), bank: C(0xaab7c6), tread: C(0x606a75),
+  conc: C(0x939aa2), concL: C(0xa8aeb6), concD: C(0x737a83), steel: C(0x8a929a), steelD: C(0x58606a), dark: C(0x24282e),
+  red: C(0xa8362d), redL: C(0xc2473a), orange: C(0xcc6a28), yellow: C(0xc9a23c), dome: C(0xd7dce2), domeD: C(0xb2bac4),
+  navy: C(0x545e6a), navyD: C(0x3b434d), rust: C(0x7a4a36), green: C(0x5e6e5a), pine: C(0x3a5040), fuel: C(0xd0d6d8),
+  lampC: C(0xffd890), glassN: C(0x2c3a4e),
+};
+
+// ---- geography (stateless) -----------------------------------------------------------
+// fjord wall foot |x| (s: 0 left, 1 right), 9.3 … 11.3; at the mouth the ice front turns across the
+// flanks (it faces the frozen sea), at the far end the glacier opens out beyond the screen
+function fjEdge(d, s) {
+  let e = 10.3 + 0.45 * Math.sin(d * 0.067 + s * 2.9) + 0.3 * Math.sin(d * 0.151 + 0.6 + s * 3.7) + 0.7 * (vnoise(d * 0.08 + s * 23.1, 4.5) - 0.5);
+  e += 30 * (1 - sstep(AR_FJORD - 4, AR_FJORD + 1.5, d)) + 9 * sstep(AR_CHAN - 16, AR_CHAN + 18, d);
+  return e;
+}
+function fjRim(d, s) { return 2.9 + 0.42 * vnoise(d * 0.05 + s * 11.3, 2.9); }       // glacier surface height
+function fjordH(x, d) {
+  const s = x < 0 ? 0 : 1, t = Math.abs(x) - fjEdge(d, s);
+  if (t < -1.3) return AR_SEA;
+  if (t < -0.2) return lerp(AR_SEA, WATER_REL - 0.3, sstep(-1.3, -0.2, t));        // the drowned foot of the cliff
+  let h = lerp(WATER_REL - 0.3, fjRim(d, s), sstep(-0.2, 2.2, t));
+  if (t > 2.2) h += 0.2 * sstep(2.2, 4, t) * (fbm(x * 0.13 + 3.3, d * 0.13 - 1.2) - 0.5);
+  return h;
+}
+// harbour basins right of lane +5.5, between the 780 / 820 / 860 cross roads (which cross as piers)
+const AR_HARB = [[782.6, 817.4], [822.6, 857.4]], AR_HARB_X = 9.6;
+function arHarbW(x, d) {
+  if (x < AR_HARB_X - 0.6 || d < 782 || d > 858) return 0;
+  for (let i = 0; i < 2; i++) {
+    const a = AR_HARB[i][0], b = AR_HARB[i][1];
+    if (d > a - 0.6 && d < b + 0.6) return sstep(AR_HARB_X - 0.6, AR_HARB_X + 0.4, x) * sstep(a - 0.6, a + 0.4, d) * sstep(b + 0.6, b - 0.4, d);
+  }
+  return 0;
+}
+// land from the quay on: flat, harbour basins, snowy hills far out (flat across every cross road)
+function arLandH(x, d) {
+  const w = arHarbW(x, d);
+  if (w > 0) return AR_SEA * w;
+  const ax = Math.abs(x);
+  if (ax < 12) return 0;
+  const lk = sstep(AR_LAKE - 4, AR_LAKE + 16, d), x0 = lerp(17, 12.5, lk);
+  const amp = lerp(lerp(1.2, 1.5, sstep(AR_FORT - 10, AR_FORT + 10, d)), 0.75, lk);
+  if (ax <= x0) return 0;
+  let h = amp * sstep(x0, x0 + 6, ax) * (0.6 + 0.7 * fbm(x * 0.08 + 1.7, d * 0.08 + 6.1));
+  if (d < AR_LAKE + 2) h *= sstep(1.58, 3.5, crossDist(d));
+  return h;
+}
+function arcticH(x, d) {
+  if (d < AR_FJORD - 5) return AR_SEA;
+  if (d < AR_CHAN + 22) return fjordH(x, d);
+  if (d < AR_QUAY - 0.8) return AR_SEA;
+  if (d < AR_FLAT) return lerp(AR_SEA, 0, sstep(AR_QUAY - 0.8, AR_QUAY + 0.35, d));   // under the quay wall
+  return arLandH(x, d);
+}
+// glacier ice by height (0 = the waterline … 1 ≈ 3.4 up): deep blue, blue, pale cyan, white
+function iceCol(f, out) {
+  const t = clamp(f, 0, 1);
+  let a, b, u;
+  if (t < 0.35) { a = AP.iceD; b = AP.iceB; u = t / 0.35; }
+  else if (t < 0.72) { a = AP.iceB; b = AP.iceM; u = (t - 0.35) / 0.37; }
+  else { a = AP.iceM; b = AP.iceW; u = (t - 0.72) / 0.28; }
+  out[0] = lerp(a[0], b[0], u); out[1] = lerp(a[1], b[1], u); out[2] = lerp(a[2], b[2], u);
+  return out;
+}
+function arcticColor(x, d, h, out) {
+  const n = fbm(x * 0.11 + 5.1, d * 0.11 - 2.3), ax = Math.abs(x);
+  if (d < AR_FLAT - 1) {                                              // the glacier (and the cliff foot)
+    if (h < WATER_REL) cset(out, AP.iceD);
+    else {
+      cset(out, AP.snow);
+      mixInto(out, AP.snowL, sstep(0.48, 0.75, n) * 0.55);
+      mixInto(out, AP.snowBlue, sstep(0.5, 0.22, n) * 0.55);          // blue-shadowed hollows
+      const f = vnoise(x * 0.35 + d * 0.05, d * 0.22 - x * 0.03);       // flow bands along the glacier
+      mixInto(out, AP.snowD, sstep(0.6, 0.85, f) * 0.35);
+      mixInto(out, iceCol(h / 3.4, TC2), sstep(2.2, 0.6, h) * 0.8);   // bare ice on the cliff ramp
+    }
+  } else if (d < AR_LAKE) {                                            // base / fortress: packed snow
+    cset(out, AP.snow);
+    mixInto(out, AP.snowD, (1 - n) * 0.4);
+    mixInto(out, AP.snowL, sstep(0.62, 0.85, n) * 0.35);
+    if (d > AR_FORT - 12) mixInto(out, AP.slush, 0.12 + 0.2 * sstep(0.45, 0.2, n) * (1 - sstep(12, 16, ax)));   // trampled
+    mixInto(out, AP.snowBlue, sstep(0.3, 1.2, h) * 0.35);
+    if (h < -0.05) cset(out, AP.concD);                                // basin walls / bottom
+  } else {                                                             // the frozen lake: dark clear ice, drifts
+    const m = fbm(x * 0.05 + 2.2, d * 0.05 - 4.1);
+    cset(out, AP.lake);
+    mixInto(out, AP.lakeD, sstep(0.52, 0.3, m) * 0.7);
+    mixInto(out, AP.lakeL, sstep(0.56, 0.8, m) * 0.5);
+    const s = vnoise(x * 0.21 + d * 0.085, d * 0.034 - x * 0.02);       // drifts in streaks along the wind
+    mixInto(out, AP.lakeSnow, sstep(0.6, 0.82, s) * 0.7 * (0.45 + 0.55 * m));
+    mixInto(out, AP.snow, sstep(10.5, 14, ax));                         // the snowy shore
+    mixInto(out, AP.snowBlue, sstep(0.2, 0.9, h) * 0.3);
+  }
+  const g = 0.94 + 0.12 * vnoise(x * 0.9 + 1.7, d * 0.9 + 4.1);
+  out[0] *= g; out[1] *= g; out[2] *= g;
+}
+// calm water: open lanes ripple, the pack and the fjord damp the waves, the basins are still
+function arCalm(x, d) {
+  if (d >= AR_FLAT - 2) return 0.9;
+  const ax = Math.abs(x);
+  if (d < AR_FJORD - 4) return 0.12 + 0.42 * sstep(7.6, 10.5, ax);
+  if (d < AR_CHAN) return 0.72;
+  return 0.3 + 0.32 * sstep(5.4, 7.2, ax);
+}
+
+// ---- pack ice: a stateless floe field ---------------------------------------------------
+const FL_C = 2.5, FL_X = 16.5;                  // floe cells (16 per chunk along d); none beyond |x| 16.5
+const FLX = new Float32Array(10), FLD = new Float32Array(10);   // the current floe / berg outline (world, CCW)
+let FL_x = 0, FL_d = 0, FL_R = 0, FL_top = 0, FL_n = 0;
+const fh = (i, j, m) => hash2(i * 37 + m * 1009, j * 53 - m * 7919);
+// open water (free even of flat ice) inside |x| < arOpen(d): gunboat lanes, the fjord, the mid-boss channel
+function arOpen(d) { return d < AR_FJORD ? 8.0 : d < AR_CHAN ? 7.4 : 6.35; }
+// the floe of cell (i, j), if there is one: fills FL_* and the outline FLX/FLD
+function floeAt(i, j) {
+  const cd = (j + 0.5 + (fh(i, j, 1) - 0.5) * 0.5) * FL_C;
+  if (cd > AR_QUAY - 1.8) return false;
+  const cx = (i + 0.5 + (fh(i, j, 2) - 0.5) * 0.5) * FL_C, ax = Math.abs(cx);
+  if (ax > FL_X) return false;
+  const e = arOpen(cd), s3 = fh(i, j, 3);
+  let p, R, lim = Infinity;
+  if (cd < AR_FJORD - 3) { const o = sstep(e + 0.5, 13.5, ax); p = 0.3 + 0.55 * o; R = (0.5 + 1.0 * o) * (0.75 + 0.5 * s3); }
+  else if (cd < AR_CHAN + 12) {                         // fjord: bergy bits and brash plates at the cliff foot
+    lim = fjEdge(cd, cx < 0 ? 0 : 1) - 1.1;
+    if (ax > lim - 0.25) return false;
+    p = 0.5; R = 0.28 + 0.4 * s3;
+  } else { const o = sstep(e + 0.4, 10.5, ax); p = 0.6 + 0.35 * o; R = (0.7 + 1.05 * o) * (0.75 + 0.5 * s3); }
+  if (fh(i, j, 0) > p) return false;
+  const el = 0.84 + 0.32 * fh(i, j, 6);                  // stretched across (el > 1) or along
+  const space = Math.min(ax - e - 0.06, lim - ax);        // keep the open water open, fjord bits off the cliff
+  if (R * el > space) R = space / el;
+  if (R < 0.24) return false;
+  const n = 5 + ((fh(i, j, 4) * 4) | 0), a0 = fh(i, j, 5) * TAU;
+  for (let v = 0; v < n; v++) {
+    const a = a0 + ((v + (fh(i, j, 10 + v) - 0.5) * 0.36) / n) * TAU, q = R * (0.85 + 0.15 * fh(i, j, 20 + v));
+    FLX[v] = cx + Math.cos(a) * q * el; FLD[v] = cd + Math.sin(a) * q / el;
+  }
+  FL_x = cx; FL_d = cd; FL_R = R; FL_n = n;
+  FL_top = 0.045 + 0.075 * fh(i, j, 7);
+  return true;
+}
+// icebergs: a fixed list (tabular, dome, pinnacle), outlines stateless from their seed
+const BERGS = [];
+function bergOutline(B) {
+  for (let v = 0; v < B.n; v++) {
+    const a = B.a0 + ((v + (hash2(B.seed + v, 17) - 0.5) * 0.4) / B.n) * TAU, q = B.R * (0.82 + 0.18 * hash2(B.seed - v, 29));
+    FLX[v] = B.x + Math.cos(a) * q * B.el; FLD[v] = B.d + Math.sin(a) * q / B.el;
+  }
+  FL_n = B.n;
+}
+(function genBergs() {
+  srand(40451);
+  for (const side of [-1, 1]) {
+    let d = -34 + rr(0, 18);
+    while (d < AR_QUAY - 12) {
+      const fj = d > AR_FJORD - 4 && d < AR_CHAN + 12;
+      const kind = fj ? 0 : rand() < 0.42 ? 0 : rand() < 0.5 ? 1 : 2;       // 0 tabular, 1 dome, 2 pinnacle
+      const R = fj ? rr(0.6, 0.95) : kind === 0 ? rr(1.7, 2.9) : rr(1.3, 2.2), el = rr(0.85, 1.2);
+      const open = (d < AR_FJORD ? AR_LANES.x : d < AR_CHAN ? AR_FJ_LANE.x : 8.6) + 0.35;
+      // half-width as the clear-zone self-check sees it (a lathe's circle: its jitter and stretch)
+      const ext = kind === 0 ? R * el * 1.02 : R * Math.max(el, 1 / el) * 1.2;
+      let x;
+      if (fj) {                                                                // calved blocks at the cliff foot
+        x = side * (fjEdge(d, side < 0 ? 0 : 1) - 1.25 - ext);
+        if (Math.abs(x) - ext < open) { d += rr(18, 30); continue; }
+      } else x = side * (open + ext + rr(0.3, 3.6));
+      const H = fj ? rr(0.45, 1.0) : kind === 0 ? rr(0.9, 2.1) : kind === 1 ? rr(1.2, 2.5) : rr(2.1, 3.7);
+      BERGS.push({ x, d, R, el, H, kind, n: 7 + ((rand() * 3) | 0), a0: rand() * TAU, seed: 1 + ((rand() * 100000) | 0) });
+      d += fj ? rr(38, 70) : rr(24, 44);
+    }
+  }
+  BERGS.sort((a, b) => a.d - b.d);
+})();
+
+// water-mask painting (the stage's W.paint): for the outline in FLX/FLD, ice at `top` inside, a
+// submerged foot sloping to the sea floor over `skirt` units outside, brash ice round it
+const EN_X = new Float32Array(10), EN_D = new Float32Array(10), EN_C = new Float32Array(10);
+function paintIce(M, base, d0, top, skirt, brash) {
+  const n = FL_n;
+  let xa = Infinity, xb = -Infinity, da = Infinity, db = -Infinity;
+  for (let v = 0; v < n; v++) {
+    const w = v + 1 < n ? v + 1 : 0, ex = FLX[w] - FLX[v], ed = FLD[w] - FLD[v], L = Math.hypot(ex, ed) || 1;
+    EN_X[v] = ed / L; EN_D[v] = -ex / L; EN_C[v] = EN_X[v] * FLX[v] + EN_D[v] * FLD[v];
+    if (FLX[v] < xa) xa = FLX[v]; if (FLX[v] > xb) xb = FLX[v]; if (FLD[v] < da) da = FLD[v]; if (FLD[v] > db) db = FLD[v];
+  }
+  const i0 = Math.max(0, Math.floor((xa - skirt + 40) / MASK_RES)), i1 = Math.min(MASK_W - 1, Math.floor((xb + skirt + 40) / MASK_RES));
+  const j0 = Math.max(0, Math.floor((da - skirt - d0) / MASK_RES)), j1 = Math.min(ROWS_PER_CHUNK - 1, Math.floor((db + skirt - d0) / MASK_RES));
+  const fall = -AR_SEA + WATER_REL - 0.02;
+  for (let j = j0; j <= j1; j++) {
+    const d = d0 + (j + 0.5) * MASK_RES, row = (base + j) * MASK_W * 4;
+    for (let i = i0; i <= i1; i++) {
+      const x = -40 + (i + 0.5) * MASK_RES;
+      let sd = -Infinity;
+      for (let v = 0; v < n; v++) { const s = EN_X[v] * x + EN_D[v] * d - EN_C[v]; if (s > sd) sd = s; }
+      if (sd >= skirt) continue;
+      const h = sd <= 0 ? top : WATER_REL - 0.02 - fall * sstep(0, skirt, sd);
+      const o = row + i * 4, r = clamp(Math.round((h * 0.25 + 0.5) * 255), 0, 255);
+      if (r > M[o]) M[o] = r;
+      if (sd > 0) { const g = Math.round(brash * (1 - sstep(0.1, skirt, sd)) * 255); if (g > M[o + 1]) M[o + 1] = g; }
+    }
+  }
+}
+function arPaint(M, base, d0) {
+  const d1 = d0 + CHUNK;
+  if (d0 < AR_QUAY) {
+    const j0 = Math.floor((d0 - 4) / FL_C), j1 = Math.floor((d1 + 4) / FL_C), iN = Math.ceil(FL_X / FL_C) + 1;
+    for (let j = j0; j <= j1; j++) for (let i = -iN; i < iN; i++) if (floeAt(i, j)) paintIce(M, base, d0, FL_top, 1.5, 0.62);
+    for (let b = 0; b < BERGS.length; b++) {
+      const B = BERGS[b];
+      if (B.d + B.R * 1.3 + 3 > d0 && B.d - B.R * 1.3 - 3 < d1) { bergOutline(B); paintIce(M, base, d0, 0.3, 2.2, 0.85); }
+    }
+  }
+  // brash lining the mid-boss channel (the ICEBREAKER's broken track), slush in the harbour basins
+  for (let j = 0; j < ROWS_PER_CHUNK; j++) {
+    const d = d0 + (j + 0.5) * MASK_RES, row = (base + j) * MASK_W * 4;
+    if (d > AR_CHAN + 6 && d < AR_QUAY) {
+      const f = sstep(AR_CHAN + 6, AR_CHAN + 20, d);
+      for (let i = 0; i < MASK_W; i++) {
+        const x = -40 + (i + 0.5) * MASK_RES, ax = Math.abs(x);
+        if (ax < 5.2 || ax > 7.8) continue;
+        const g = Math.round(0.66 * f * sstep(5.2, 6.1, ax) * (1 - sstep(7.0, 7.8, ax)) * 255), o = row + i * 4 + 1;
+        if (g > M[o]) M[o] = g;
+      }
+    } else if (d > 782 && d < 858) {
+      for (let i = 0; i < MASK_W; i++) {
+        const x = -40 + (i + 0.5) * MASK_RES;
+        if (x < AR_HARB_X) continue;
+        const g = Math.round(0.5 * arHarbW(x, d) * 255), o = row + i * 4 + 1;
+        if (g > M[o]) M[o] = g;
+      }
+    }
+  }
+}
+
+// ---- polar prop library -------------------------------------------------------------
+// a block of glacier ice (or, with rock, a snow-capped granite outcrop): a jittered n-gon footprint
+// stacked in bands from h0 to h1, blue at the waterline and whiter higher up, ribbed sides (the
+// atlas corrugation reads as meltwater flutes), snow on top; now and then a band steps back.
+function iceBlock(x, d, rx, rd, h0, h1, rot, n = 6, shBase = WATER_REL, rock = false) {
+  if (h1 - h0 < 0.08) return;
+  frame(x, d, rot);
+  const a0 = rand() * TAU;
+  for (let i = 0; i < n; i++) {
+    const a = a0 + ((i + rr(-0.2, 0.2)) / n) * TAU, q = rr(0.86, 1.06);
+    BX[i] = Math.cos(a) * rx * q; BD[i] = Math.sin(a) * rd * q;
+  }
+  if (!rock) sideStyle(T_CORR, 0.3, 1.6);
+  let y = h0, sc = 1;
+  while (y < h1 - 0.02) {
+    let yb = y + rr(0.42, 0.7);
+    if (yb > h1 - 0.16) yb = h1;
+    for (let i = 0; i < n; i++) { PX[i] = BX[i] * sc; PD[i] = BD[i] * sc; }
+    const c = rock ? jit(rand() < 0.5 ? AP.rock : AP.rockL, 0.08, TC3) : jit(iceCol((y + yb) * 0.5 / 3.4, TC2), 0.05, TC3);
+    prism(n, y, yb, c, yb >= h1 ? jit(AP.snowL, 0.03, TC2) : c);
+    y = yb;
+    if (rand() < 0.42) sc *= rr(0.85, 0.95);
+  }
+  plain();
+  const hh = h1 - shBase, ox = hh * SUNX * SHK, od = hh * SUND * SHK;
+  for (let i = 0; i < n; i++) {
+    const px = wx(BX[i], BD[i]), pd = wd(BX[i], BD[i]);
+    HX[i] = px; HD[i] = pd; HX[i + n] = px + ox; HD[i + n] = pd + od;
+  }
+  shadowHull(2 * n, GROUND_Y + shBase + L_SHADOW);
+  frameId();
+}
+// a thin strip draped over the terrain between two points (crevasses, drifts on the glacier)
+function drape(ax, ad, bx, bd, w, c, lift = 0.03, k = 0.95) {
+  if (!room(6)) return;
+  const ya = GROUND_Y + arcticH(ax, ad) + lift, yb = GROUND_Y + arcticH(bx, bd) + lift;
+  const L = Math.hypot(bx - ax, bd - ad) || 1, nx = -(bd - ad) / L * w, nd = (bx - ax) / L * w;
+  vtx(ax - nx, ya, ad - nd, c, k, 0, 0); vtx(bx - nx, yb, bd - nd, c, k, 0, 0); vtx(bx + nx, yb, bd + nd, c, k, 0, 0);
+  vtx(ax - nx, ya, ad - nd, c, k, 0, 0); vtx(bx + nx, yb, bd + nd, c, k, 0, 0); vtx(ax + nx, ya, ad + nd, c, k, 0, 0);
+}
+// one floe (the outline in FLX/FLD): an ice plate with a snow-covered top, a low shadow on the water,
+// and on the big ones a drift, a pressure ridge, a crack, now and then seals basking at the edge
+function emitFloe() {
+  const n = FL_n;
+  let xa = Infinity;
+  for (let v = 0; v < n; v++) xa = Math.min(xa, Math.abs(FLX[v]));
+  if (xa < arOpen(FL_d) - 1e-3) { VIOL++; if (VIOL_LOG && VIOL_LOG.length < 40) VIOL_LOG.push(['floe', +FL_x.toFixed(2), +FL_d.toFixed(2), +xa.toFixed(2)]); }
+  frameId();
+  for (let v = 0; v < n; v++) { PX[v] = FLX[v]; PD[v] = FLD[v]; }
+  const top = jit(AP.floe, 0.05, TC2);
+  prism(n, WATER_REL - 0.14, FL_top, jit(AP.floeSide, 0.07, TC3), top);
+  // shadow on the water (a thin dark crescent on the far side: the plate reads as standing proud)
+  const hh = (FL_top - WATER_REL) * 1.4, ox = hh * SUNX * SHK, od = hh * SUND * SHK;
+  for (let v = 0; v < n; v++) { HX[v] = FLX[v]; HD[v] = FLD[v]; HX[v + n] = FLX[v] + ox; HD[v + n] = FLD[v] + od; }
+  shadowHull(2 * n, GROUND_Y + WATER_REL + L_SHADOW);
+  if (FL_R < 0.95) return;
+  // a wind drift: a smaller, lighter plate on top, pulled toward one side
+  const sc = rr(0.45, 0.68), ox2 = (FL_x) * (1 - sc) + rr(-0.2, 0.2), od2 = FL_d * (1 - sc) + rr(-0.2, 0.2);
+  for (let v = 0; v < n; v++) { PX[v] = FLX[v] * sc + ox2; PD[v] = FLD[v] * sc + od2; }
+  if (room(n * 3)) for (let v = 1; v < n - 1; v++) {
+    const c = AP.floeL, y = GROUND_Y + FL_top + 0.006;
+    vtx(PX[0], y, PD[0], c, 1.02, 0, 0); vtx(PX[v], y, PD[v], c, 1.02, 0, 0); vtx(PX[v + 1], y, PD[v + 1], c, 1.02, 0, 0);
+  }
+  if (LOWQ) return;
+  const r = rand();
+  if (FL_R > 1.3 && r < 0.45) {                                  // a pressure ridge of tumbled blocks across it
+    const a = rand() * Math.PI, ca = Math.cos(a), sa = Math.sin(a), L = FL_R * 0.75;
+    for (let s = -L; s < L; s += rr(0.2, 0.3)) {
+      const x = FL_x + ca * s + rr(-0.06, 0.06), d = FL_d + sa * s + rr(-0.06, 0.06);
+      frame(x, d, rand() * TAU);
+      const hw = rr(0.07, 0.13), ht = FL_top + rr(0.07, 0.19);
+      box(-hw, -hw * 0.8, hw, hw * 0.8, FL_top - 0.02, ht, jit(AP.iceM, 0.08, TC3), jit(AP.floeL, 0.04, TC2));
+    }
+    frameId();
+  } else if (r < 0.75) {                                          // a crack across the plate
+    const a = rand() * Math.PI, ca = Math.cos(a) * FL_R * 0.7, sa = Math.sin(a) * FL_R * 0.7;
+    crackEdge(FL_x - ca, FL_d - sa, FL_x + ca * 0.3 + rr(-0.2, 0.2), FL_d + sa * 0.3 + rr(-0.2, 0.2), 0.022, AP.iceB, FL_top + 0.009);
+    crackEdge(FL_x + ca * 0.3, FL_d + sa * 0.3, FL_x + ca, FL_d + sa, 0.018, AP.iceB, FL_top + 0.009);
+  }
+  if (rand() < 0.1) {                                             // seals hauled out near the edge
+    const ns = 1 + ((rand() * 3) | 0);
+    for (let i = 0; i < ns; i++) {
+      const a = rand() * TAU, q = FL_R * 0.5, x = FL_x + Math.cos(a) * q, d = FL_d + Math.sin(a) * q;
+      frame(x, d, rand() * TAU);
+      disc(0, 0, 0.07, 0.17, FL_top + 0.012, AP.seal, 7);
+      LR[0] = 0.06; LH[0] = FL_top + 0.012; LK[0] = 0.8; LR[1] = 0.045; LH[1] = FL_top + 0.06; LK[1] = 1.0; LR[2] = 0; LH[2] = FL_top + 0.075; LK[2] = 1.1;
+      lathe(0, 0.03, 3, 5, jit(AP.seal, 0.1, TC3), 0, 1, 2.2);
+      frameId();
+    }
+  }
+}
+// pancake ice: small round plates with raised rims, drifting in the gaps
+function pancake(x, d, r) {
+  frameId();
+  disc(x, d, r, r * rr(0.8, 1), WATER_REL + 0.02, jit(AP.pancake, 0.06, TC3), 8);
+  ring(x, d, r * 0.82, r * 0.82, r * 0.2, WATER_REL + 0.024, AP.floeL, 8);
+}
+// one iceberg: tabular (a snow-capped table with banded cliffs and a wave-cut notch), dome, pinnacle
+function iceberg(B) {
+  bergOutline(B);
+  const n = B.n, H = B.H;
+  frameId();
+  if (B.kind === 0) {
+    sideStyle(T_CORR, 0.34, 1.6);
+    let y = WATER_REL - 0.2, sc = 1;
+    for (let band = 0; y < H - 0.02; band++) {
+      let yb = band === 0 ? 0.16 : y + rr(0.4, 0.62);
+      if (yb > H - 0.16) yb = H;
+      const s = band === 0 ? 0.93 : sc;                                   // the notch at the waterline
+      for (let v = 0; v < n; v++) { PX[v] = B.x + (FLX[v] - B.x) * s; PD[v] = B.d + (FLD[v] - B.d) * s; }
+      const c = jit(iceCol(0.12 + 0.88 * (y + yb) * 0.5 / H, TC2), 0.04, TC3);
+      prism(n, y, yb, c, yb >= H ? jit(AP.snowL, 0.03, TC2) : c);
+      y = yb;
+      if (band > 0 && rand() < 0.3) sc *= rr(0.9, 0.97);
+    }
+    plain();
+    // snow on the table: drifts and a few blue melt channels
+    if (!LOWQ) for (let i = 0; i < 3; i++) {
+      const a = rand() * TAU, q = B.R * rr(0.1, 0.5) * sc;
+      disc(B.x + Math.cos(a) * q, B.d + Math.sin(a) * q, B.R * rr(0.18, 0.32) * sc, B.R * rr(0.12, 0.22) * sc, H + 0.008, AP.drift, 7);
+    }
+  } else {
+    // dome / pinnacle: lathes (a blue body, a white crown), jagged by the vertex jitter
+    const pin = B.kind === 2, R = B.R;
+    frame(B.x, B.d, rand() * TAU);
+    LR[0] = R * 1.02; LH[0] = WATER_REL - 0.15; LK[0] = 0.72;
+    LR[1] = R * 0.94; LH[1] = H * 0.22; LK[1] = 0.86;
+    LR[2] = R * (pin ? 0.62 : 0.8); LH[2] = H * 0.5; LK[2] = 0.96;
+    lathe(0, 0, 3, LOWQ ? 7 : 9, jit(AP.iceB, 0.06, TC3), 0, B.el, 1 / B.el, 0.3);
+    LR[0] = R * (pin ? 0.62 : 0.8); LH[0] = H * 0.5; LK[0] = 0.96;
+    LR[1] = R * (pin ? 0.34 : 0.55); LH[1] = H * 0.78; LK[1] = 1.04;
+    LR[2] = pin ? R * 0.1 : R * 0.2; LH[2] = H * 0.96; LK[2] = 1.1;
+    LR[3] = 0; LH[3] = H; LK[3] = 1.14;
+    lathe(0, 0, 4, LOWQ ? 7 : 9, jit(AP.iceW, 0.04, TC3), 0, B.el, 1 / B.el, 0.34);
+    if (pin && !LOWQ) {                                                  // a second, lower spire
+      const a = rand() * TAU, q = R * 0.45, sx = Math.cos(a) * q, sd = Math.sin(a) * q, h2 = H * rr(0.5, 0.7);
+      LR[0] = R * 0.4; LH[0] = H * 0.3; LK[0] = 0.9; LR[1] = R * 0.22; LH[1] = h2 * 0.8; LK[1] = 1.02; LR[2] = 0; LH[2] = h2; LK[2] = 1.12;
+      lathe(sx, sd, 3, 6, jit(AP.iceM, 0.05, TC3), 0.4, 1, 1, 0.3);
+    }
+    frameId();
+  }
+  const hh = (H - WATER_REL) * 0.85, ox = hh * SUNX * SHK, od = hh * SUND * SHK;
+  for (let v = 0; v < n; v++) { HX[v] = FLX[v]; HD[v] = FLD[v]; HX[v + n] = FLX[v] + ox; HD[v + n] = FLD[v] + od; }
+  shadowHull(2 * n, GROUND_Y + WATER_REL + L_SHADOW);
+}
+// a small crashed aircraft on snow: scorched patch, broken fuselage, a wing, the tail (base = ground h)
+function arWreck(x, d, rot, base, s = 1) {
+  frame(x, d, rot);
+  disc(0, 0, 1.2 * s, 1.6 * s, base + 0.006, AP.rockD, 10, 0.75);
+  disc(0.4 * s, -0.5 * s, 0.7 * s, 0.9 * s, base + 0.008, AP.drift, 8);             // snow blown over it
+  box(-0.16 * s, -0.95 * s, 0.16 * s, 0.4 * s, base, base + 0.26 * s, AP.steelD, AP.steel);
+  frame(x + 0.3 * s, d + 0.95 * s, rot + 0.6);
+  box(-0.13 * s, -0.4 * s, 0.13 * s, 0.22 * s, base, base + 0.2 * s, AP.dark, AP.steelD);
+  frame(x, d, rot);
+  flat4(-1.0 * s, -0.25 * s, -0.12 * s, -0.4 * s, -0.12 * s, 0.1 * s, -0.8 * s, 0.05 * s, base + 0.1, AP.steel, 0.9);
+  box(-0.03, -1.05 * s, 0.03, -0.72 * s, base + 0.2 * s, base + 0.6 * s, AP.red, AP.red);
+  shadowBox(-0.16 * s, -0.95 * s, 0.16 * s, 0.4 * s, 0.3 * s, base);
+  frameId();
+}
+// a snowy conifer (dark tiers with snow on the tips)
+function snowPine(x, d, s, base = 0) {
+  if (!canPlace(x, d, 0.5 * s)) return;
+  frame(x, d, rand() * TAU);
+  const c = jit(AP.pine, 0.15, TC2);
+  LR[0] = 0.5 * s; LH[0] = base + 0.12 * s; LK[0] = 0.7; LR[1] = 0; LH[1] = base + 0.8 * s; LK[1] = 1.0;
+  lathe(0, 0, 2, 6, c, 0);
+  LR[0] = 0.36 * s; LH[0] = base + 0.55 * s; LK[0] = 0.8; LR[1] = 0; LH[1] = base + 1.25 * s; LK[1] = 1.05;
+  lathe(0, 0, 2, 6, c, 0.5);
+  LR[0] = 0.2 * s; LH[0] = base + 0.95 * s; LK[0] = 0.95; LR[1] = 0; LH[1] = base + 1.45 * s; LK[1] = 1.12;
+  lathe(0, 0, 2, 5, AP.snowL, 0.2);
+  frameId();
+  shadowBlob(x, d, 0.4 * s, 1.3 * s, base);
+}
+
+// ---- arctic chunks ----------------------------------------------------------------
+function genArctic(w, ch, k, d0) {
+  const d1 = d0 + CHUNK;
+  styleReset();
+  if (d1 > AR_FLAT) arRoads(d0, d1);
+  if (d0 < AR_QUAY) arIce(ch, k, d0, d1);
+  if (d1 > AR_FJORD - 6 && d0 < AR_CHAN + 24) arFjord(ch, k, Math.max(d0, AR_FJORD - 6), Math.min(d1, AR_CHAN + 24));
+  if (d1 > AR_CHAN + 20 && d0 < AR_QUAY) arChannel(ch, k, d0, d1);
+  if (d1 > AR_QUAY - 2 && d0 < AR_FORT) arBase(ch, k, d0, d1);
+  if (d1 > AR_FORT && d0 < AR_LAKE) arFort(ch, k, d0, d1);
+  if (d1 > AR_LAKE) arLake(ch, k, Math.max(d0, AR_LAKE), d1);
+  styleReset();
+}
+
+// the floating ice owned by this chunk: floes whose cell lies in it, pancakes, bergs, a derelict
+function arIce(ch, k, d0, d1) {
+  const jA = Math.round(d0 / FL_C), jB = Math.round(d1 / FL_C), iN = Math.ceil(FL_X / FL_C) + 1;
+  for (let j = jA; j < jB; j++) for (let i = -iN; i < iN; i++) {
+    if (!floeAt(i, j)) continue;
+    if (LOWQ && Math.abs(FL_x) > 14.5) continue;
+    emitFloe();
+  }
+  const np = LOWQ ? 8 : 22;
+  for (let i = 0; i < np; i++) {
+    const d = rr(d0, d1);
+    if (d > AR_QUAY - 1.2) continue;
+    const e = arOpen(d), side = rand() < 0.5 ? -1 : 1, r = rr(0.12, 0.3), x = side * rr(e + r + 0.08, 15);
+    if (d > AR_FJORD - 4 && d < AR_CHAN + 14 && Math.abs(x) + r > fjEdge(d, x < 0 ? 0 : 1) - 1.2) continue;
+    pancake(x, d, r);
+  }
+  for (let b = 0; b < BERGS.length; b++) { const B = BERGS[b]; if (B.d >= d0 && B.d < d1) iceberg(B); }
+  // derelicts frozen into the pack: an old trawler (the frozen sea), a rusted freighter (the channel)
+  if (k === 3) derelict(-12.6, 132, 0.35, 0.8);
+  if (k === 16) derelict(12.8, 655, Math.PI - 0.25, 1.25);
+}
+function derelict(x, d, rot, s) {
+  frame(x, d, rot);
+  const L = 4.4 * s, W = 1.05 * s;
+  hull(L, W, 0.34 * s, AP.rust, AP.rust, 0.28);
+  // snow on the deck, a bridge house with a snowy roof, a mast, ice heaped against the hull
+  flat(-W * 0.4, -L * 0.3, W * 0.4, L * 0.28, 0.34 * s + 0.01, AP.drift);
+  box(-W * 0.34, -L * 0.42, W * 0.34, -L * 0.2, 0.34 * s, 0.34 * s + 0.5 * s, AP.fuel, AP.snowL);
+  box(-0.04, L * 0.05, 0.04, L * 0.13, 0.34 * s, 0.34 * s + 1.1 * s, AP.rust, AP.rust);
+  box(-W * 0.3, L * 0.08, W * 0.3, L * 0.1, 0.34 * s + 0.75 * s, 0.34 * s + 0.8 * s, AP.rust, AP.rust);
+  shadowBox(-W / 2, -L / 2, W / 2, L / 2, 0.8 * s, WATER_REL);
+  frameId();
+  for (let i = 0; i < (LOWQ ? 4 : 9); i++) {
+    const a = rand() * TAU, q = rr(0.6, 1.0);
+    frame(x, d, rot);
+    const lx = Math.cos(a) * W * 0.62 * q * 1.3, ld = Math.sin(a) * L * 0.55 * q;
+    const px = wx(lx, ld), pd = wd(lx, ld);
+    frameId();
+    if (Math.abs(px) - 0.3 > 8.6) iceBlock(px, pd, rr(0.15, 0.3), rr(0.12, 0.25), WATER_REL - 0.1, rr(0.2, 0.42), rand(), 5);
+  }
+}
+
+// glacier fjord: blue ice cliffs on both sides (a front across the flanks at the mouth), seracs on
+// the rim, crevasse fields and nunataks on the glacier, an outpost and a crashed aircraft up there
+function arFjord(ch, k, a, b) {
+  if (a <= AR_FJORD + 2 && b > AR_FJORD - 4) {
+    for (const side of [-1, 1]) {
+      for (let x = 10.1 + rr(0, 0.5); x < 21; x += rr(1.5, 2.1)) {
+        const dd = AR_FJORD - 0.9 + rr(-0.5, 0.4);
+        iceBlock(side * x, dd, rr(0.95, 1.3), rr(1.0, 1.35), WATER_REL - 0.25, fjRim(dd, side < 0 ? 0 : 1) + rr(-0.35, 0.12), rr(-0.25, 0.25), LOWQ ? 5 : 6);
+      }
+    }
+  }
+  for (let s = 0; s < 2; s++) {
+    const side = s ? 1 : -1;
+    let d = Math.max(a, AR_FJORD + 0.4) + rr(0, 1.0);
+    while (d < b) {
+      const len = rr(1.6, 2.5), dc = d + len * 0.5, e = fjEdge(dc, s);
+      if (e < 17.5) {
+        const rx = rr(0.9, 1.35), rd = len * rr(0.6, 0.74), rot = rr(-0.2, 0.2), top = fjRim(dc, s);
+        const cx = side * (e + rx * 0.7 + rr(0, 0.3));
+        iceBlock(cx, dc, rx, rd, WATER_REL - 0.25, top + rr(-0.45, 0.1), rot, LOWQ ? 5 : 6);
+        if (!LOWQ && rand() < 0.5) {                                       // a serac standing on the rim behind
+          const bx = cx + side * rr(1.3, 2.1);
+          iceBlock(bx, dc + rr(-0.5, 0.5), rx * rr(0.55, 0.8), rd * rr(0.6, 0.9), top - 0.3, top + rr(0.15, 0.5), rot + rr(-0.4, 0.4), 5, top);
+        }
+      }
+      d += len * rr(0.72, 0.92);
+    }
+    // crevasses running with the cliff edge (a pale lip, a dark blue slot), sastrugi, nunataks
+    const nc = LOWQ ? 3 : 7;
+    for (let i = 0; i < nc; i++) {
+      const dd = rr(a + 2, b - 4), t = rr(2.7, 7.5), L = rr(2, 5);
+      if (fjEdge(dd, s) > 16 || dd < AR_FJORD + 3) continue;
+      let px = side * (fjEdge(dd, s) + t), pd = dd;
+      for (let q = 0; q < L; q += 1) {
+        const nd = pd + 1, nx = side * (fjEdge(nd, s) + t) + rr(-0.08, 0.08);
+        drape(px, pd, nx, nd, 0.1, AP.crevL, 0.025);
+        drape(px, pd, nx, nd, 0.045, AP.crev, 0.032, 0.85);
+        px = nx; pd = nd;
+      }
+    }
+    for (let i = 0; i < (LOWQ ? 2 : 5); i++) {
+      const dd = rr(a + 1, b - 2), t = rr(3, 9), ang = rr(0.3, 0.7), L = rr(0.8, 1.8);
+      if (fjEdge(dd, s) > 16 || dd < AR_FJORD + 3) continue;
+      const x = side * (fjEdge(dd, s) + t);
+      drape(x, dd, x + Math.cos(ang) * L, dd + Math.sin(ang) * L, 0.16, AP.drift, 0.02, 1.03);
+    }
+    if (rand() < 0.6) {
+      const dd = rr(a + 3, b - 3), e = fjEdge(dd, s);
+      if (e < 16 && dd > AR_FJORD + 4) {
+        const x = side * (e + rr(4.2, 6.5)), g = arcticH(x, dd);
+        iceBlock(x, dd, rr(0.6, 1.1), rr(0.6, 1.2), g - 0.25, Math.min(MAX_H - 0.1, g + rr(0.3, 0.7)), rr(0, TAU), 6, g, true);
+      }
+    }
+  }
+  // landmarks: an enemy outpost on the right glacier, a crashed transport on the left one
+  if (k === 9) {
+    const d = 372, x = fjEdge(d, 1) + 3.4, g = arcticH(x, d);
+    frame(x, d, 0.15);
+    box(-0.5, -0.35, 0.5, 0.35, g - 0.05, g + 0.36, AP.red, AP.snowL);
+    box(-0.14, -0.37, 0.14, -0.33, g, g + 0.26, AP.dark, AP.dark);
+    shadowBox(-0.5, -0.35, 0.5, 0.35, 0.4, g);
+    frameId();
+    LR[0] = 0.32; LH[0] = g; LK[0] = 0.85; LR[1] = 0.3; LH[1] = g + 0.18; LK[1] = 0.95; LR[2] = 0.2; LH[2] = g + 0.36; LK[2] = 1.05; LR[3] = 0; LH[3] = g + 0.44; LK[3] = 1.12;
+    frame(x + 1.2, d + 0.9, 0); lathe(0, 0, 4, 9, AP.dome, 0); frameId();
+    box(x - 1.0 - 0.03, d + 0.6 - 0.03, x - 1.0 + 0.03, d + 0.6 + 0.03, g, Math.min(MAX_H - 0.05, g + 0.8), AP.steel, AP.steel);
+    shadowBox(x - 1.03, d + 0.57, x - 0.97, d + 0.63, 0.8, g);
+    drums(x + 0.5, d - 1.0, 4, AP.orange);
+  }
+  if (k === 12) { const d = 497, x = -(fjEdge(d, 0) + 4.0); arWreck(x, d, 2.2, arcticH(x, d) + 0.04, 1.25); }
+}
+
+// the mid-boss channel: its entrance to the naval base (breakwaters, light towers, channel buoys)
+function arChannel(ch, k, d0, d1) {
+  // buoys marking the channel (red to port, green to starboard, as seen sailing up the screen)
+  for (let d = Math.ceil((d0 - 6) / 24) * 24 + 6; d < d1; d += 24) {
+    if (d < AR_CHAN + 30 || d > AR_QUAY - 14) continue;
+    for (const side of [-1, 1]) {
+      const x = side * 6.75;
+      cyl(x, d, 0.12, WATER_REL - 0.05, 0.2, 6, side < 0 ? AP.red : AP.green, AP.steelD);
+      cone(x, d, 0.1, 0.2, 0.34, 5, side < 0 ? AP.redL : AP.green);
+      shadowDisc(x, d, 0.1, 0.3, WATER_REL);
+    }
+  }
+  if (d0 <= 765 && d1 > 765) {
+    // breakwaters with tetrapods from the flanks to the harbour mouth, a light tower on each head
+    for (const side of [-1, 1]) {
+      const x0 = side * 7.4, x1 = side * 26;
+      box(Math.min(x0, x1), 764.4, Math.max(x0, x1), 765.6, -0.5, 0.22, AP.concD, AP.snowL);
+      for (let x = 7.6; x < 17; x += 0.55) {
+        rock(side * (x + rr(-0.1, 0.1)), 764.1 + rr(-0.12, 0.1), rr(0.2, 0.28), -0.25, 0.3, AP.conc);
+      }
+      cyl(x0 + side * 0.25, 765, 0.24, 0.22, 1.25, 7, side < 0 ? AP.red : AP.green, AP.fuel);
+      cyl(x0 + side * 0.25, 765, 0.16, 1.25, 1.45, 6, AP.lampC, AP.lampC, true);
+      shadowDisc(x0 + side * 0.25, 765, 0.22, 1.4, 0.22);
+    }
+  }
+}
+
+// ---- naval base / radar station 780–1000 --------------------------------------------------
+// roads: ploughed asphalt with slushy edges and low snow banks in the base, concrete in the fortress;
+// the lanes end at the fortress's rear gates
+function arRoads(d0, d1) {
+  frameId(); setTile(0); uvMode(0, 0);
+  for (let i = 0; i < 3; i++) {
+    const lx = LANES_X[i];
+    const a = Math.max(d0, AR_FLAT), b = Math.min(d1, AR_FORT);
+    if (b > a) {
+      flat(lx - 1.14, a, lx + 1.14, b, L_ROAD - 0.003, AP.slush);
+      flat(lx - 0.98, a, lx + 0.98, b, L_ROAD, AP.road);
+      if (!LOWQ) { flat(lx - 0.6, a, lx - 0.42, b, L_WALK, AP.tread, 0.95); flat(lx + 0.42, a, lx + 0.6, b, L_WALK, AP.tread, 0.95); }
+      // snow banks thrown up by the ploughs (low: 0.14), open at every cross road
+      for (const sx of [-1, 1]) {
+        const bx = lx + sx * 1.2;
+        for (let c = Math.floor((a - 20) / CHUNK) * CHUNK + 20; c < b; c += CHUNK) {
+          const s0 = Math.max(a, c + 2.2), e0 = Math.min(b, c + CHUNK - 2.2);
+          if (e0 - s0 > 0.4) box(bx - 0.1, s0, bx + 0.1, e0, 0, 0.14, AP.bank, AP.snowL);
+        }
+      }
+    }
+    const fa = Math.max(d0, AR_FORT), fb = Math.min(d1, AR_REAR + 0.8);
+    if (fb > fa) {
+      flat(lx - 1.12, fa, lx + 1.12, fb, L_ROAD - 0.003, AP.concD);
+      flat(lx - 1.0, fa, lx + 1.0, fb, L_ROAD, AP.conc);
+      flat(lx - 0.05, fa, lx + 0.05, fb, L_MARK, AP.yellow, 0.9);
+    }
+  }
+  const c = d0 + 20;
+  if (c >= AR_BASE && c < AR_LAKE) {
+    if (c < AR_FORT) {
+      flat(-40, c - 1.62, 40, c + 1.62, L_ROAD - 0.006, AP.slush);
+      flat(-40, c - 1.46, 40, c + 1.46, L_ROAD - 0.004, AP.road);
+      if (!LOWQ) { flat(-40, c - 0.62, 40, c - 0.46, L_WALK - 0.004, AP.tread, 0.95); flat(-40, c + 0.46, 40, c + 0.62, L_WALK - 0.004, AP.tread, 0.95); }
+    } else {
+      flat(-26, c - 1.45, 26, c + 1.45, L_ROAD - 0.004, AP.conc);
+      flat(-26, c - 0.05, 26, c + 0.05, L_MARK - 0.004, AP.yellow, 0.9);
+    }
+  }
+}
+// per chunk: [left-lower, left-upper, right-lower, right-upper] (lots between the cross roads)
+const AR_BASE_PLAN = {
+  19: [null, 'radome', null, 'harbour'],
+  20: ['dish', 'radome', 'harbour', 'harbour'],
+  21: ['array', 'antenna', 'harbour', 'fuel'],
+  22: ['barracks', 'fuel', 'hangar', 'motorpool'],
+  23: ['hangar', 'heli', 'fuel', 'hangar'],
+  24: ['antenna', 'barracks', 'radome', 'motorpool'],
+};
+function arBase(ch, k, d0, d1) {
+  const cr = d0 + 20;
+  if (d0 <= AR_QUAY && d1 > AR_QUAY) arQuay();
+  // the harbour: quay walls round the basins (they cover the terrain's 1-unit ramp down into the
+  // water: 8.95 … 9.6 across, 0.7 at the ends), a submarine and a destroyer alongside, a tug
+  for (let i = 0; i < 2; i++) {
+    const A = AR_HARB[i][0], B = AR_HARB[i][1];
+    if (B + 0.7 > d0 && A - 0.7 < d1) {
+      const a = Math.max(A - 0.7, d0), b = Math.min(B + 0.7, d1);
+      frameId();
+      box(8.95, a, AR_HARB_X, b, -0.9, 0.12, AP.concD, AP.concL);
+      if (b === B + 0.7) box(AR_HARB_X, B, 30, B + 0.7, -0.9, 0.12, AP.concD, AP.concL);
+      if (a === A - 0.7) box(AR_HARB_X, A - 0.7, 30, A, -0.9, 0.12, AP.concD, AP.concL);
+      for (let d = Math.ceil(a / 3.2) * 3.2 + 1; d < b - 0.5; d += 3.2) if (d > A && d < B) cyl(AR_HARB_X - 0.2, d, 0.07, 0.12, 0.22, 5, AP.dark, AP.dark);
+    }
+  }
+  if (d0 <= 801 && d1 > 801) { submarine(12.4, 801, 0.02); tug(16.2, 790.5, 0.3); }
+  if (d0 <= 841 && d1 > 841) destroyer(ch, 13.6, 840.5, -0.03);
+  // lots
+  const plan = AR_BASE_PLAN[k] || [];
+  for (let hi = 0; hi < 2; hi++) {
+    const la = hi ? cr + 2.0 : d0 + 1.2, lb = hi ? d1 - 1.2 : cr - 2.0;
+    if (la < AR_FLAT + 3 || lb > AR_FORT - 1) continue;
+    for (const side of [-1, 1]) { const kind = plan[(side < 0 ? 0 : 2) + hi]; if (kind) arLot(ch, kind, side, la, lb); }
+  }
+  // heated utility pipes (utilidors) on sleepers in the lane gaps, broken at every cross road
+  const a = Math.max(d0, AR_FLAT + 1), b = Math.min(d1, AR_FORT - 1);
+  if (b > a) for (const [x, r, cc] of [[-2.75, 0.15, AP.steel], [-2.3, 0.1, AP.yellow], [2.4, 0.14, AP.steel]]) {
+    for (const [s, e] of [[a, Math.min(b, cr - 2.4)], [Math.max(a, cr + 2.4), b]]) {
+      if (e - s < 1) continue;
+      frameId();
+      pipeD(x, s, e, 0.32, r, cc, LOWQ ? 5 : 6);
+      for (let d = Math.ceil(s / 2.4) * 2.4 + 0.5; d < e - 0.3; d += 2.4) box(x - 0.24, d - 0.06, x + 0.24, d + 0.06, 0, 0.18, AP.steelD, AP.steelD);
+      shadowBox(x - r, s, x + r, e, 0.4);
+    }
+  }
+}
+function arQuay() {
+  frameId();
+  box(-40, AR_QUAY - 0.5, 40, AR_QUAY + 0.5, -0.9, 0.14, AP.concD, AP.concL);
+  flat(-40, AR_QUAY + 0.38, 40, AR_QUAY + 0.46, 0.145, AP.yellow, 0.9);
+  for (let x = -22; x < 22; x += 2.2) {
+    let skip = false;
+    for (let i = 0; i < 3; i++) if (Math.abs(x - LANES_X[i]) < 1.5) skip = true;
+    if (skip) continue;
+    cyl(x, AR_QUAY + 0.15, 0.08, 0.14, 0.24, 6, AP.dark, AP.dark);
+  }
+}
+// ships alongside: bows toward +d; hulls stay inside the basin (x ≥ 10.1)
+function submarine(x, d, rot) {
+  frame(x, d, rot);
+  const L = 9.4, c = AP.navyD;
+  tube(0, -L / 2, -L / 2 + 1.6, 0.02, 0.1, 0.46, c, 8);                             // stern taper
+  tube(0, -L / 2 + 1.6, L / 2 - 1.1, 0.02, 0.46, 0.46, c, 8);
+  tube(0, L / 2 - 1.1, L / 2, 0.02, 0.46, 0.12, c, 8);                              // bow
+  box(-0.2, 0.9, 0.2, 2.1, 0.3, 1.05, c, AP.navy);                                   // the sail
+  box(-0.7, 1.35, 0.7, 1.55, 0.72, 0.78, c, c);                                       // sail planes
+  box(-0.03, 1.2, 0.03, 1.3, 1.05, 1.4, AP.steel, AP.steel);                        // periscope
+  flat(-0.18, -2.4, 0.18, 0.4, 0.49, AP.drift);                                      // snow on the casing
+  box(-0.03, -L / 2 + 0.2, 0.03, -L / 2 + 0.9, 0.2, 0.75, c, c);                    // rudder
+  shadowBox(-0.46, -L / 2, 0.46, L / 2, 0.5, WATER_REL); shadowBox(-0.2, 0.9, 0.2, 2.1, 1.05, WATER_REL);
+  frameId();
+}
+function destroyer(ch, x, d, rot) {
+  frame(x, d, rot);
+  const L = 11, W = 1.55;
+  hull(L, W, 0.4, AP.navy, AP.steelD, 0.24);
+  flat(-W * 0.3, -L * 0.18, W * 0.3, L * 0.3, 0.41, AP.drift, 0.98);
+  sideStyle(T_RESID, 0.5, 0.26);
+  box(-W * 0.36, -L * 0.14, W * 0.36, L * 0.1, 0.4, 1.0, AP.navy, AP.navy);           // superstructure
+  plain();
+  box(-W * 0.28, L * 0.02, W * 0.28, L * 0.1, 1.0, 1.35, AP.navy, AP.snowL);          // bridge
+  box(-0.05, -L * 0.02, 0.05, L * 0.04, 1.0, 2.45, AP.steel, AP.steel);               // mast
+  box(-0.36, -L * 0.005, 0.36, L * 0.015, 2.05, 2.12, AP.steel, AP.steel);
+  box(-0.22, -L * 0.2, 0.22, -L * 0.13, 0.4, 1.25, AP.navyD, AP.dark);                // funnel
+  cyl(0, L * 0.3, 0.3, 0.4, 0.62, 8, AP.navy, AP.navy);                               // gun turret + barrel
+  box(-0.04, L * 0.3, 0.04, L * 0.3 + 0.9, 0.5, 0.56, AP.steelD, AP.steelD);
+  cyl(0, -L * 0.33, 0.26, 0.4, 0.58, 8, AP.navy, AP.navy);                            // aft missile deck
+  box(-0.3, -L * 0.44, 0.3, -L * 0.38, 0.4, 0.55, AP.steelD, AP.snowL);
+  shadowBox(-W / 2, -L / 2, W / 2, L / 2, 0.8, WATER_REL); shadowBox(-0.05, -L * 0.02, 0.05, L * 0.04, 2.4, WATER_REL);
+  frameId();
+  addSpinner(ch, 0, x, GROUND_Y + 2.12, d + L * 0.01, 1.6);
+}
+function tug(x, d, rot) {
+  frame(x, d, rot);
+  hull(2.2, 0.8, 0.26, AP.red, AP.steelD, 0.3);
+  box(-0.26, -0.3, 0.26, 0.4, 0.26, 0.62, AP.fuel, AP.snowL);
+  box(-0.07, -0.55, 0.07, -0.4, 0.26, 0.85, AP.dark, AP.dark);
+  shadowBox(-0.4, -1.1, 0.4, 1.1, 0.55, WATER_REL);
+  frameId();
+}
+// a horizontal tapered tube along local d (radius r0 at a → r1 at b), its upper half only
+function tube(x, a, b, yc, r0, r1, c, segs = 6) {
+  const rm = Math.max(r0, r1);
+  checkTall(x - rm, Math.min(a, b), x + rm, Math.max(a, b), yc + rm);
+  if (!room(segs * 6)) return;
+  setTile(0);
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * TAU, a1 = ((i + 1) / segs) * TAU, am = (a0 + a1) * 0.5, up = Math.sin(am);
+    if (up < -0.35) continue;
+    const k = 0.8 + 0.2 * up - 0.06 * Math.cos(am), c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1), y = GROUND_Y + yc;
+    vtx(x + c0 * r0, y + s0 * r0, a, c, k, 0, 0); vtx(x + c0 * r1, y + s0 * r1, b, c, k, 0, 0); vtx(x + c1 * r1, y + s1 * r1, b, c, k, 0, 0);
+    vtx(x + c0 * r0, y + s0 * r0, a, c, k, 0, 0); vtx(x + c1 * r1, y + s1 * r1, b, c, k, 0, 0); vtx(x + c1 * r0, y + s1 * r0, a, c, k, 0, 0);
+  }
+}
+// a closed box for instanced spinners (they turn, so no face may be culled); heights relative to GROUND_Y
+function solidBox(x0, d0, x1, d1, h0, h1, c, k = 1) {
+  if (!room(36)) return;
+  const y0 = GROUND_Y + h0, y1 = GROUND_Y + h1;
+  const q = (ax, ay, ad, bx, by, bd, cx, cy, cd, ex, ey, ed, kk) => {
+    vtx(ax, ay, ad, c, kk, 0, 0); vtx(bx, by, bd, c, kk, 0, 0); vtx(cx, cy, cd, c, kk, 0, 0);
+    vtx(ax, ay, ad, c, kk, 0, 0); vtx(cx, cy, cd, c, kk, 0, 0); vtx(ex, ey, ed, c, kk, 0, 0);
+  };
+  q(x0, y1, d0, x1, y1, d0, x1, y1, d1, x0, y1, d1, k);               // top
+  q(x0, y0, d1, x1, y0, d1, x1, y0, d0, x0, y0, d0, k * 0.7);         // bottom
+  q(x1, y0, d0, x1, y0, d1, x1, y1, d1, x1, y1, d0, k * 0.9);         // +x
+  q(x0, y0, d1, x0, y0, d0, x0, y1, d0, x0, y1, d1, k * 0.9);         // −x
+  q(x0, y0, d0, x1, y0, d0, x1, y1, d0, x0, y1, d0, k * 0.95);        // −d (toward the camera)
+  q(x1, y0, d1, x0, y0, d1, x0, y1, d1, x1, y1, d1, k * 0.85);        // +d
+}
+// the station's big radar (instanced spinner type 2, turns about y): turntable, yoke, a deep dish
+// tilted 32° up, the feed at its focus. Two-sided dish: it sweeps round.
+function bigDishGeo() {
+  frameId();
+  solidBox(-0.36, -0.36, 0.36, 0.36, 0, 0.24, AP.steelD);
+  solidBox(-0.46, -0.1, -0.36, 0.1, 0.24, 1.15, AP.steel);
+  solidBox(0.36, -0.1, 0.46, 0.1, 0.24, 1.15, AP.steel);
+  const el = 32 * Math.PI / 180, R = 1.2, dep = 0.4, cy = 1.25, ce = Math.cos(el), se = Math.sin(el);
+  // in (x, h, d): axis A = (0, sin el, −cos el) (up and toward the camera), V = (0, cos el, sin el)
+  const n = 14, py = cy - se * dep, pd = ce * dep;                      // the dish's vertex, behind the rim centre
+  if (room(n * 6)) for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * TAU, a1 = ((i + 1) / n) * TAU;
+    const x0 = Math.cos(a0) * R, y0 = cy + Math.sin(a0) * R * ce, d0 = Math.sin(a0) * R * se;
+    const x1 = Math.cos(a1) * R, y1 = cy + Math.sin(a1) * R * ce, d1 = Math.sin(a1) * R * se;
+    const k = 0.86 + 0.14 * Math.cos((a0 + a1) * 0.5 - 2.2);
+    vtx(0, GROUND_Y + py, pd, AP.dome, 0.82, 0, 0); vtx(x0, GROUND_Y + y0, d0, AP.dome, k, 0, 0); vtx(x1, GROUND_Y + y1, d1, AP.dome, k, 0, 0);
+    vtx(0, GROUND_Y + py, pd, AP.domeD, 0.8, 0, 0); vtx(x1, GROUND_Y + y1, d1, AP.domeD, 0.85, 0, 0); vtx(x0, GROUND_Y + y0, d0, AP.domeD, 0.85, 0, 0);
+  }
+  const fy = cy + se * 0.75, fd = -ce * 0.75;
+  solidBox(-0.09, fd - 0.09, 0.09, fd + 0.09, fy - 0.09, fy + 0.09, AP.steelD);
+  solidBox(-0.025, fd - 0.02, 0.025, pd, fy - 0.025, fy + 0.02, AP.steel);
+}
+// a radome: a white faceted sphere on a concrete drum
+function radome(x, d, r) {
+  frameId();
+  cyl(x, d, r * 0.95, 0, 0.36, LOWQ ? 9 : 12, AP.concD, AP.conc, false);
+  LR[0] = r * 0.9; LH[0] = 0.36; LK[0] = 0.82;
+  LR[1] = r; LH[1] = 0.36 + r * 0.42; LK[1] = 0.92;
+  LR[2] = r * 0.84; LH[2] = 0.36 + r * 0.95; LK[2] = 1.0;
+  LR[3] = r * 0.46; LH[3] = 0.36 + r * 1.3; LK[3] = 1.06;
+  LR[4] = 0; LH[4] = 0.36 + r * 1.42; LK[4] = 1.1;
+  frame(x, d, 0); lathe(0, 0, 5, LOWQ ? 9 : 12, jit(AP.dome, 0.02, TC3), 0.13, 1, 1, 0.03); frameId();
+  shadowDisc(x, d, r * 0.9, 0.36 + r * 1.2);
+}
+// a Quonset hangar, snow on its crown, doors (dark) toward the camera side
+function arHangar(x, d, w = 3.4, l = 4.4, h = 1.6) {
+  frame(x, d, 0);
+  checkTall(-w / 2, -l / 2, w / 2, l / 2, h);
+  const segs = 8, cm = jit(AP.steel, 0.06, TC2);
+  if (room(segs * 12 + 12)) {
+    setTile(T_CORR);
+    for (let i = 0; i < segs; i++) {
+      const a0 = (i / segs) * Math.PI, a1 = ((i + 1) / segs) * Math.PI, am = (a0 + a1) / 2;
+      const x0 = Math.cos(a0) * w / 2, y0 = Math.sin(a0) * h, x1 = Math.cos(a1) * w / 2, y1 = Math.sin(a1) * h;
+      const c = Math.abs(am - Math.PI / 2) < 0.62 ? AP.snowL : cm, k = 0.8 + 0.25 * Math.cos(am - 2.2);
+      vtx(x1, GROUND_Y + y1, -l / 2, c, k, i / 2, 0); vtx(x0, GROUND_Y + y0, -l / 2, c, k, (i + 1) / 2, 0); vtx(x0, GROUND_Y + y0, l / 2, c, k, (i + 1) / 2, l);
+      vtx(x1, GROUND_Y + y1, -l / 2, c, k, i / 2, 0); vtx(x0, GROUND_Y + y0, l / 2, c, k, (i + 1) / 2, l); vtx(x1, GROUND_Y + y1, l / 2, c, k, i / 2, l);
+    }
+    setTile(0);
+    for (let i = 0; i < segs; i++) {
+      const a0 = (i / segs) * Math.PI, a1 = ((i + 1) / segs) * Math.PI;
+      const x0 = Math.cos(a0) * w / 2, y0 = Math.sin(a0) * h, x1 = Math.cos(a1) * w / 2, y1 = Math.sin(a1) * h;
+      vtx(0, GROUND_Y, -l / 2, AP.dark, 1, 0, 0); vtx(x0, GROUND_Y + y0, -l / 2, AP.dark, 1, 0, 0); vtx(x1, GROUND_Y + y1, -l / 2, AP.dark, 1, 0, 0);
+    }
+  }
+  flat(-w / 2 + 0.2, -l / 2 - 1.7, w / 2 - 0.2, -l / 2, L_ROAD, AP.concD);
+  shadowBox(-w / 2, -l / 2, w / 2, l / 2, h * 0.85);
+  frameId();
+}
+function snowcat(x, d, rot) {
+  frame(x, d, rot);
+  plain();
+  box(-0.24, -0.4, -0.13, 0.4, 0, 0.1, AP.dark, AP.dark); box(0.13, -0.4, 0.24, 0.4, 0, 0.1, AP.dark, AP.dark);   // tracks
+  box(-0.15, -0.36, 0.15, 0.36, 0.08, 0.3, AP.orange, AP.snowL);
+  box(-0.13, 0.1, 0.13, 0.3, 0.3, 0.36, AP.glassN, AP.dark);
+  shadowBox(-0.24, -0.4, 0.24, 0.4, 0.34);
+  frameId();
+}
+function plough(x, d, rot) {
+  frame(x, d, rot);
+  plain();
+  box(-0.2, 0.3, 0.2, 0.58, 0, 0.3, AP.yellow, AP.dark);
+  box(-0.2, -0.56, 0.2, 0.3, 0.03, 0.18, AP.yellow, AP.yellow);
+  frame(x, d, rot); box(-0.36, 0.6, 0.36, 0.72, 0, 0.16, AP.steelD, AP.steel);        // the blade
+  shadowBox(-0.36, -0.56, 0.36, 0.72, 0.3);
+  frameId();
+}
+function snowContainer(x, d, rot, lvl, c) {
+  frame(x, d, rot);
+  sideStyle(T_CORR, 0.25, 1);
+  box(-0.26, -0.62, 0.26, 0.62, lvl * 0.28, lvl * 0.28 + 0.27, c, AP.snowL);
+  plain();
+  frameId();
+}
+// one lot of the base: side ±1, stage range [a, b]; packed into |x| ∈ [6.8, 16] (nearest on screen)
+function arLot(ch, kind, side, a, b) {
+  const inner = side < 0 ? -6.8 : 6.8, X = (o) => inner + side * o, cd = (a + b) / 2;
+  const lo = (p, q) => Math.min(X(p), X(q)), hi = (p, q) => Math.max(X(p), X(q));
+  const pad = (p, q, pa, pb) => { setTile(T_SLAB); uvMode(2.5, 2.5); flat(lo(p, q), pa, hi(p, q), pb, L_BASE + 0.002, AP.concL, 0.97); setTile(0); uvMode(0, 0); };
+  const lamp = (x, d) => { box(x - 0.04, d - 0.04, x + 0.04, d + 0.04, 0, 1.4, AP.steelD, AP.steelD); box(x - 0.12, d - 0.06, x + 0.12, d + 0.06, 1.4, 1.48, AP.steel, AP.lampC); shadowBox(x - 0.04, d - 0.04, x + 0.04, d + 0.04, 1.4); };
+  frameId();
+  switch (kind) {
+    case 'radome': {
+      pad(0.8, 9.4, a + 0.6, b - 0.6);
+      radome(X(2.7), cd - 3.3, 1.18);
+      radome(X(6.6), cd + 2.9, 0.98);
+      box(lo(5.0, 8.8), cd - 6.4, hi(5.0, 8.8), cd - 4.3, 0, 0.58, AP.red, AP.snowL);            // operations block
+      shadowBox(lo(5.0, 8.8), cd - 6.4, hi(5.0, 8.8), cd - 4.3, 0.58);
+      lamp(X(0.5), cd + 5.6);
+      break;
+    }
+    case 'dish': {
+      pad(0.6, 8.6, a + 0.6, b - 0.6);
+      const tx = X(3.4), td = cd - 1.6;
+      box(tx - 0.8, td - 0.8, tx + 0.8, td + 0.8, 0, 1.28, AP.concD, AP.conc);                   // the tower
+      box(tx - 0.95, td - 0.95, tx + 0.95, td + 0.95, 0, 0.22, AP.concD, AP.concL);
+      shadowBox(tx - 0.8, td - 0.8, tx + 0.8, td + 0.8, 1.28);
+      addSpinner(ch, 2, tx, GROUND_Y + 1.28, td, 0.55);
+      sideStyle(T_OFFICE, 1.2, 0.9);
+      box(lo(5.6, 8.6), cd + 1.8, hi(5.6, 8.6), cd + 5.4, 0, 0.72, AP.green, AP.snowL);           // control building
+      plain();
+      shadowBox(lo(5.6, 8.6), cd + 1.8, hi(5.6, 8.6), cd + 5.4, 0.72);
+      addSpinner(ch, 0, X(7.1), GROUND_Y + 0.72, cd + 3.6, 2.2);
+      lamp(X(0.5), cd - 5.6);
+      break;
+    }
+    case 'array': {
+      // the phased-array radar: a wedge building, its slanted face (a dark octagonal array) toward us
+      pad(0.4, 8.8, a + 0.5, b - 0.5);
+      const x0 = lo(1.4, 7.4), x1 = hi(1.4, 7.4), dA = cd - 3.6, dM = cd - 0.6, dB = cd + 1.6, h0 = 0.62, h1 = 2.9;
+      box(x0, dA, x1, dB, 0, h0, AP.concD, AP.conc);
+      box(x0, dM, x1, dB, h0, h1, AP.conc, AP.concL);
+      checkTall(x0, dA, x1, dM, h1);
+      if (room(24)) {
+        const c = AP.concL, y0 = GROUND_Y + h0, y1 = GROUND_Y + h1;
+        vtx(x0, y0, dA, c, 1.05, 0, 0); vtx(x1, y0, dA, c, 1.05, 0, 0); vtx(x1, y1, dM, c, 1.05, 0, 0);
+        vtx(x0, y0, dA, c, 1.05, 0, 0); vtx(x1, y1, dM, c, 1.05, 0, 0); vtx(x0, y1, dM, c, 1.05, 0, 0);
+        vtx(x0, y0, dM, AP.conc, 0.86, 0, 0); vtx(x0, y0, dA, AP.conc, 0.86, 0, 0); vtx(x0, y1, dM, AP.conc, 0.86, 0, 0);
+        vtx(x1, y0, dA, AP.conc, 0.9, 0, 0); vtx(x1, y0, dM, AP.conc, 0.9, 0, 0); vtx(x1, y1, dM, AP.conc, 0.9, 0, 0);
+      }
+      // the array face: an octagon on the slope (a grid of dark panels)
+      const xc = (x0 + x1) / 2, sl = (h1 - h0) / (dM - dA), R = 1.15;
+      setTile(T_GLASS); uvMode(0.36, 0.36, false, xc - R, dA);
+      if (room(24)) for (let i = 0; i < 8; i++) {
+        const q0 = (i / 8) * TAU + Math.PI / 8, q1 = ((i + 1) / 8) * TAU + Math.PI / 8, dm = (dA + dM) / 2;
+        const p = (q) => [xc + Math.cos(q) * R, dm + Math.sin(q) * R * 0.62];
+        const [ax, ad] = p(q0), [bx, bd] = p(q1);
+        const y = (dd) => GROUND_Y + h0 + (dd - dA) * sl + 0.02;
+        fv(xc, y(dm), dm, AP.glassN, 1); fv(ax, y(ad), ad, AP.glassN, 1); fv(bx, y(bd), bd, AP.glassN, 1);
+      }
+      setTile(0); uvMode(0, 0);
+      shadowBox(x0, dA, x1, dB, 2.2);
+      for (let i = 0; i < 2; i++) box(X(8.0) - 0.4, cd - 3 + i * 3.4, X(8.0) + 0.4, cd - 2.2 + i * 3.4, 0, 0.4, AP.red, AP.snowL);
+      break;
+    }
+    case 'antenna': {
+      for (let i = 0; i < 5; i++) {
+        const x = X(1.3 + (i % 3) * 3.0 + (i > 2 ? 1.4 : 0)), d = cd - 4.6 + i * 2.3 + rr(-0.3, 0.3), h = rr(2.0, 3.3);
+        box(x - 0.04, d - 0.04, x + 0.04, d + 0.04, 0, h, AP.steel, AP.steel);
+        box(x - 0.2, d - 0.02, x + 0.2, d + 0.02, h - 0.34, h - 0.29, AP.steel, AP.steel);
+        if (!LOWQ) for (let q = 0; q < 3; q++) { const an = (q / 3) * TAU + 0.4 + i; wire(x, d, h * 0.9, x + Math.cos(an) * h * 0.42, d + Math.sin(an) * h * 0.42, 0.02, 0.011, AP.steelD); }
+        shadowBox(x - 0.04, d - 0.04, x + 0.04, d + 0.04, h);
+        box(x - 0.25, d + 0.3, x + 0.25, d + 0.7, 0, 0.3, AP.red, AP.snowL);
+      }
+      // a red-and-white lattice tower with its beacon
+      const tx = X(8.2), td = cd + 3.8, H = 3.7;
+      for (const [ox, od] of [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]]) box(tx + ox * 0.9 - 0.035, td + od * 0.9 - 0.035, tx + ox * 0.9 + 0.035, td + od * 0.9 + 0.035, 0, H - 0.1, AP.steel, AP.steel);
+      for (let y = 0.5, i = 0; y < H - 0.2; y += 0.6, i++) box(tx - 0.3, td - 0.3, tx + 0.3, td + 0.3, y, y + 0.08, i % 2 ? AP.redL : AP.fuel, i % 2 ? AP.redL : AP.fuel);
+      box(tx - 0.07, td - 0.07, tx + 0.07, td + 0.07, H - 0.1, H, AP.redL, AP.lampC);
+      shadowBox(tx - 0.3, td - 0.3, tx + 0.3, td + 0.3, H);
+      break;
+    }
+    case 'fuel': {
+      pad(0.4, 9.2, a + 0.4, b - 0.4);
+      for (let i = 0; i < 4; i++) {
+        const x = X(2.0 + (i % 2) * 3.8), d = cd + (i < 2 ? -3.7 : 3.3), r = rr(1.25, 1.5), h = rr(0.95, 1.3);
+        cyl(x, d, r, 0, h, LOWQ ? 10 : 14, jit(AP.fuel, 0.03, TC2), AP.snowL);
+        if (!LOWQ) ring(x, d, r * 0.6, r * 0.6, 0.05, h + 0.008, AP.steel, 12);
+        disc(x, d, r * 0.2, r * 0.2, h + 0.01, AP.steelD, 8);
+        frameId(); box(x + side * r * 0.7, d - r * 0.7 - 0.12, x + side * r * 0.7 + side * 0.14, d - r * 0.7 + 0.12, 0, h, AP.steelD, AP.steel);
+        shadowDisc(x, d, r * 0.96, h);
+      }
+      box(lo(0.5, 9.2), a + 0.5, hi(0.5, 9.2), a + 0.64, 0, 0.14, AP.concD, AP.snowL);                  // bund walls
+      box(lo(0.5, 9.2), b - 0.64, hi(0.5, 9.2), b - 0.5, 0, 0.14, AP.concD, AP.snowL);
+      frameId(); pipeD(X(0.9), a + 1, b - 1, 0.24, 0.12, AP.yellow, 6);
+      break;
+    }
+    case 'hangar': {
+      pad(0.3, 9.4, a + 0.4, b - 0.4);
+      arHangar(X(2.6), cd + 1.6);
+      arHangar(X(6.8), cd + 1.6);
+      snowcat(X(1.4), cd - 3.6, 0.4); plough(X(4.2), cd - 4.2, -0.3);
+      lamp(X(0.4), cd - 5.8);
+      break;
+    }
+    case 'barracks': {
+      // polar-station modules on stilts: red and orange boxes, snowy roofs, walkways between them
+      for (let i = 0; i < 3; i++) {
+        const x = X(1.8 + i * 2.8), la = a + 1.4 + (i % 2) * 1.2, lb = b - 1.4 - ((i + 1) % 2) * 1.2;
+        if (!canRect(x - 0.95, x + 0.95, la, lb)) continue;
+        for (const [ox, od] of [[-0.7, la + 0.3], [0.7, la + 0.3], [-0.7, lb - 0.3], [0.7, lb - 0.3]]) box(x + ox - 0.05, od - 0.05, x + ox + 0.05, od + 0.05, 0, 0.26, AP.steelD, AP.steelD);
+        sideStyle(T_RESID, 1.0, 0.5);
+        box(x - 0.85, la, x + 0.85, lb, 0.24, 0.84, i === 1 ? AP.orange : AP.red, AP.snowL);
+        plain();
+        shadowBox(x - 0.85, la, x + 0.85, lb, 0.84);
+        if (i < 2) flat(x + (side < 0 ? -2.0 : 0.85), cd - 0.2, x + (side < 0 ? -0.85 : 2.0), cd + 0.2, 0.26, AP.steelD);
+      }
+      box(X(0.5) - 0.03, cd + 6 - 0.03, X(0.5) + 0.03, cd + 6 + 0.03, 0, 1.7, AP.steel, AP.steel);          // flagpole
+      box(X(0.5), cd + 5.97, X(0.5) + side * 0.5, cd + 6.03, 1.36, 1.68, AP.redL, AP.redL);
+      break;
+    }
+    case 'motorpool': {
+      frameId(); flat(lo(0.3, 9.0), a + 0.5, hi(0.3, 9.0), b - 0.5, L_ROAD, AP.road);
+      for (let i = 0; i < 8; i++) {
+        const x = X(0.9 + (i % 4) * 1.05), d = cd + (i < 4 ? -3.4 : -0.6);
+        if (i % 3 === 2) plough(x, d, 0); else snowcat(x, d, 0);
+      }
+      for (let i = 0; i < 6; i++) snowContainer(X(5.6 + (i % 3) * 0.62), cd + 2.4 + ((i / 3) | 0) * 1.4, 0, i >= 3 && rand() < 0.5 ? 1 : 0, pick(P.cont));
+      drums(X(8.4), cd - 4.2, 6, AP.orange);
+      break;
+    }
+    case 'heli': {
+      for (let i = 0; i < 2; i++) {
+        const x = X(2.8 + i * 4.4), d = cd + (i ? 1.4 : -1.6);
+        frameId(); disc(x, d, 1.7, 1.7, L_BASE + 0.003, AP.concD, 12);
+        setTile(T_HELI); uvMode(2.6, 2.6, false, x - 1.3, d - 1.3);
+        flat(x - 1.3, d - 1.3, x + 1.3, d + 1.3, L_ROAD, P.white);
+        setTile(0); uvMode(0, 0);
+        if (i === 0 || rand() < 0.6) heli(x, d, rr(-0.4, 0.4) + Math.PI, i ? AP.red : AP.navy);
+      }
+      break;
+    }
+    case 'harbour': {
+      // the quay apron between the lane and the basin: crane rails, a portal crane, containers
+      frameId();
+      setTile(T_SLAB); uvMode(2.5, 2.5); flat(6.7, a - 0.8, AR_HARB_X - 0.3, b + 0.8, L_BASE + 0.002, AP.concL, 0.96); setTile(0); uvMode(0, 0);
+      flat(7.16, a - 0.8, 7.24, b + 0.8, L_WALK, AP.steelD); flat(8.82, a - 0.8, 8.9, b + 0.8, L_WALK, AP.steelD);
+      portalCrane(8.03, cd + rr(-3, 3));
+      for (let i = 0; i < 3; i++) snowContainer(7.7 + (i % 2) * 0.62, cd + (i < 2 ? -6.4 : 6.2), 0, 0, pick(P.cont));
+      break;
+    }
+  }
+  frameId();
+}
+function portalCrane(x, d) {
+  frameId();
+  const h = 2.55;
+  for (const lx of [x - 0.83, x + 0.83]) for (const ld of [d - 0.7, d + 0.7]) box(lx - 0.07, ld - 0.07, lx + 0.07, ld + 0.07, 0, h, AP.yellow, AP.yellow);
+  box(x - 0.95, d - 0.8, x + 0.95, d + 0.8, h, h + 0.22, AP.yellow, AP.snowL);
+  box(x - 0.45, d - 0.45, x + 0.45, d + 0.45, h + 0.22, h + 0.7, AP.yellow, AP.snowL);        // machinery house
+  box(x - 1.1, d - 0.13, x + 4.6, d + 0.13, h + 0.5, h + 0.64, AP.yellow, AP.yellow);          // jib over the basin
+  box(x - 1.2, d - 0.28, x - 0.7, d + 0.28, h + 0.3, h + 0.62, AP.concD, AP.concD);          // counterweight
+  shadowBox(x - 0.95, d - 0.8, x + 0.95, d + 0.8, h + 0.4);
+  shadowBox(x - 1.1, d - 0.13, x + 4.6, d + 0.13, h + 0.6);
+}
+
+// ---- snow fortress 1000–1240 --------------------------------------------------------
+const ARF_FRONT = 1007, ARF_SIDE = 14, ARF_H = 0.72;
+const AR_FORT_PLAN = {
+  25: [null, 'bunker', null, 'aa'],
+  26: ['silo', 'gun', 'radar', 'silo'],
+  27: ['aa', 'barracks', 'gun', 'bunker'],
+  28: ['silo', 'motorpool', 'silo', 'aa'],
+  29: ['gun', 'bunker', 'fuel', 'radar'],
+  30: ['aa', null, 'bunker', null],
+};
+function arFort(ch, k, d0, d1) {
+  const cr = d0 + 20;
+  if (d0 <= ARF_FRONT && d1 > ARF_FRONT) { arGateWall(ARF_FRONT); arApproach(Math.max(d0, AR_FORT) + 0.6, ARF_FRONT - 1.3); }
+  if (d0 <= AR_REAR && d1 > AR_REAR) arGateWall(AR_REAR);
+  for (const side of [-1, 1]) {
+    const a = Math.max(d0, ARF_FRONT), b = Math.min(d1, AR_REAR);
+    if (b <= a) continue;
+    if (cr > a && cr < b) {
+      arWallD(side, a, cr - 1.75); arWallD(side, cr + 1.75, b);
+      arTower(side * ARF_SIDE, cr - 2.35, 0.5, 1.05); arTower(side * ARF_SIDE, cr + 2.35, 0.5, 1.05);
+    } else arWallD(side, a, b);
+  }
+  const plan = AR_FORT_PLAN[k] || [];
+  for (let hi = 0; hi < 2; hi++) {
+    const la = hi ? cr + 2.0 : d0 + 1.2, lb = hi ? d1 - 1.2 : cr - 2.0;
+    if (la < ARF_FRONT + 1 || lb > AR_REAR - 1) continue;
+    for (const side of [-1, 1]) { const kind = plan[(side < 0 ? 0 : 2) + hi]; if (kind) arFortLot(ch, kind, side, la, lb); }
+  }
+  // snowy pines outside the walls
+  if (!LOWQ) for (let i = 0; i < 6; i++) {
+    const side = rand() < 0.5 ? -1 : 1, x = side * rr(15.2, 19), d = rr(d0 + 1, d1 - 1);
+    if (d > ARF_FRONT - 2 && d < AR_REAR + 1) snowPine(x, d, rr(0.9, 1.25), arcticH(x, d) - 0.05);
+  }
+}
+// concrete walls, snow along their tops; merlons on the outside
+function arWallX(x0, x1, d) {
+  if (x1 - x0 < 0.2) return;
+  frameId(); plain();
+  box(x0, d - 0.32, x1, d + 0.32, 0, ARF_H, AP.concD, AP.snowL);
+  const step = LOWQ ? 1.1 : 0.55;
+  for (let x = x0 + 0.1; x < x1 - 0.2; x += step) box(x, d - 0.32, x + 0.27, d - 0.12, ARF_H, ARF_H + 0.16, AP.conc, AP.snowL);
+  shadowBox(x0, d - 0.32, x1, d + 0.32, ARF_H + 0.08);
+}
+function arWallD(side, a, b) {
+  if (b - a < 0.2) return;
+  frameId(); plain();
+  const x = side * ARF_SIDE;
+  box(x - 0.32, a, x + 0.32, b, 0, ARF_H, AP.concD, AP.snowL);
+  const m0 = side < 0 ? x - 0.32 : x + 0.12, step = LOWQ ? 1.1 : 0.55;
+  for (let d = a + 0.1; d < b - 0.2; d += step) box(m0, d, m0 + 0.2, d + 0.27, ARF_H, ARF_H + 0.16, AP.conc, AP.snowL);
+  shadowBox(x - 0.32, a, x + 0.32, b, ARF_H + 0.08);
+}
+function arTower(x, d, s, h) {
+  frameId(); plain();
+  box(x - s, d - s, x + s, d + s, 0, h, AP.concD, AP.snowL);
+  box(x - s - 0.05, d - s - 0.05, x + s + 0.05, d - s + 0.12, h - 0.08, h + 0.12, AP.conc, AP.snowL);
+  box(x - 0.12, d - s - 0.02, x + 0.12, d - s + 0.02, h * 0.5, h * 0.66, AP.dark, AP.dark);        // gun slit
+  shadowBox(x - s, d - s, x + s, d + s, h + 0.1);
+}
+function arGateWall(d) {
+  for (const [x0, x1] of [[-ARF_SIDE, -6.8], [-4.2, -1.3], [1.3, 4.2], [6.8, ARF_SIDE]]) arWallX(x0, x1, d);
+  for (let i = 0; i < 3; i++) {
+    const lx = LANES_X[i];
+    arTower(lx - 1.75, d, 0.45, 1.25); arTower(lx + 1.75, d, 0.45, 1.25);
+    frameId(); flat(lx - 1.1, d - 0.6, lx + 1.1, d + 0.6, L_ROAD + 0.002, AP.concD);
+  }
+  arTower(-ARF_SIDE, d, 0.72, 1.45); arTower(ARF_SIDE, d, 0.72, 1.45);
+}
+// the approach: a trench and steel hedgehogs in the lane gaps and on the flanks
+function arApproach(a, b) {
+  if (b <= a) return;
+  frameId();
+  const dd = (a + b) / 2;
+  for (const [x0, x1] of [[-16, -6.6], [-4.4, -1.1], [1.1, 4.4], [6.6, 16]]) {
+    flat(x0, dd - 0.34, x1, dd + 0.34, L_ROAD, AP.dark, 0.9);
+    flat(x0, dd + 0.34, x1, dd + 0.5, L_WALK, AP.snowL);
+  }
+  for (const d of [a + 0.2, b - 0.2]) for (const x of [-12.4, -11, -9.6, -8.2, -3.4, -2.1, 2.1, 3.4, 8.2, 9.6, 11, 12.4]) {
+    const hx = x + rr(-0.2, 0.2);
+    if (!canPlace(hx, d, 0.35)) continue;
+    frame(hx, d, rand() * TAU);
+    box(-0.3, -0.035, 0.3, 0.035, 0, 0.3, AP.dark, AP.steelD); box(-0.035, -0.3, 0.035, 0.3, 0, 0.3, AP.dark, AP.snowL);
+    frameId();
+  }
+}
+// a ring of snow blocks (≤ 0.22: never tall) round an emplacement, open toward the lane
+function snowRing(x, d, r, gap) {
+  for (let i = 0; i < 9; i++) {
+    if (i === gap) continue;
+    const a = (i / 9) * TAU;
+    frame(x + Math.cos(a) * r, d + Math.sin(a) * r, a + Math.PI / 2);
+    box(-0.26, -0.13, 0.26, 0.13, 0, 0.22, AP.bank, jit(AP.snowL, 0.03, TC3));
+  }
+  frameId();
+}
+// one fortress lot: |x| ∈ [7.2, 13.4] (inside the side wall)
+function arFortLot(ch, kind, side, a, b) {
+  const inner = side < 0 ? -7.2 : 7.2, X = (o) => inner + side * o, cd = (a + b) / 2;
+  const lo = (p, q) => Math.min(X(p), X(q)), hi = (p, q) => Math.max(X(p), X(q));
+  frameId();
+  switch (kind) {
+    case 'bunker': {
+      for (let i = 0; i < 2; i++) {
+        const x = X(1.9 + i * 3.1), d = cd + (i ? 2.6 : -2.8);
+        if (!canPlace(x, d, 1.5)) continue;
+        LR[0] = 1.45; LH[0] = 0; LK[0] = 0.82; LR[1] = 1.1; LH[1] = 0.5; LK[1] = 0.98; LR[2] = 0; LH[2] = 0.72; LK[2] = 1.08;
+        frame(x, d, 0); lathe(0, 0, 3, LOWQ ? 7 : 9, jit(AP.snowL, 0.03, TC3), 0.2, 1.0, 1.2, 0.08); frameId();
+        frame(x, d - 1.5, 0);
+        box(-0.55, -0.25, 0.55, 0.22, 0, 0.46, AP.conc, AP.snowL);
+        box(-0.4, -0.27, 0.4, -0.23, 0.2, 0.3, AP.dark, AP.dark);                          // firing slit
+        box(-0.04, -0.75, 0.04, -0.25, 0.22, 0.28, AP.dark, AP.dark);                        // the gun
+        frameId();
+        shadowDisc(x, d, 1.1, 0.6);
+      }
+      break;
+    }
+    case 'silo': {
+      for (let i = 0; i < 3; i++) {
+        const x = X(1.6 + (i % 2) * 2.8), d = cd - 4.6 + i * 4.2;
+        disc(x, d, 1.0, 1.0, L_BASE + 0.004, AP.concL, 12);
+        ring(x, d, 0.72, 0.72, 0.14, L_ROAD, AP.yellow, 12);
+        if (i === 1) {                                                                        // open: a missile nose
+          disc(x, d, 0.62, 0.62, L_ROAD + 0.004, AP.dark, 12);
+          cyl(x, d, 0.22, 0, 0.24, 8, AP.fuel, AP.fuel, false);
+          cone(x, d, 0.22, 0.24, 0.62, 8, AP.redL);
+          frame(x + side * 0.9, d, 0); box(-0.08, -0.62, 0.08, 0.62, 0, 0.14, AP.concD, AP.conc); frameId();   // the lid, swung aside
+        } else {
+          disc(x, d, 0.62, 0.62, L_ROAD + 0.004, AP.concD, 12);
+          crackEdge(x - 0.62, d, x + 0.62, d, 0.02, AP.dark, L_ROAD + 0.008);
+        }
+      }
+      box(lo(6.0, 7.6), cd - 1.2, hi(6.0, 7.6), cd + 1.4, 0, 0.42, AP.concD, AP.snowL);
+      shadowBox(lo(6.0, 7.6), cd - 1.2, hi(6.0, 7.6), cd + 1.4, 0.42);
+      break;
+    }
+    case 'aa': {
+      for (let i = 0; i < 2; i++) {
+        const x = X(1.7 + i * 2.8), d = cd + (i ? 2.9 : -3.3);
+        snowRing(x, d, 0.9, 6);
+        frame(x, d, rr(0, TAU));
+        box(-0.22, -0.22, 0.22, 0.22, 0, 0.26, AP.steelD, AP.steel);
+        box(-0.1, 0.1, -0.05, 0.86, 0.26, 0.32, AP.dark, AP.dark); box(0.05, 0.1, 0.1, 0.86, 0.26, 0.32, AP.dark, AP.dark);
+        frameId();
+        shadowDisc(x, d, 0.3, 0.32);
+      }
+      crates(X(5.2), cd - 5.0, 0.3, 4);
+      break;
+    }
+    case 'gun': {
+      // a heavy gun turret on a round concrete emplacement, snow on the turret roof
+      const x = X(3.0), d = cd - 0.8, rot = side < 0 ? -0.5 : 0.5;
+      cyl(x, d, 1.35, 0, 0.3, LOWQ ? 10 : 14, AP.concD, AP.concL);
+      frame(x, d, rot);
+      box(-0.75, -0.9, 0.75, 0.8, 0.3, 0.78, AP.steelD, AP.snowL);
+      box(-0.28, 0.8, -0.14, 2.6, 0.48, 0.62, AP.steelD, AP.steel); box(0.14, 0.8, 0.28, 2.6, 0.48, 0.62, AP.steelD, AP.steel);
+      frameId();
+      shadowDisc(x, d, 0.9, 0.78);
+      for (let i = 0; i < 4; i++) box(X(5.6) - 0.15 + (i % 2) * 0.34, cd + 3.6 + ((i / 2) | 0) * 0.34, X(5.6) + 0.15 + (i % 2) * 0.34, cd + 3.9 + ((i / 2) | 0) * 0.34, 0, 0.2, AP.green, AP.green);
+      break;
+    }
+    case 'radar': {
+      radome(X(2.2), cd - 2.9, 0.95);
+      box(lo(3.2, 5.6), cd + 1.6, hi(3.2, 5.6), cd + 4.0, 0, 0.55, AP.concD, AP.snowL);
+      shadowBox(lo(3.2, 5.6), cd + 1.6, hi(3.2, 5.6), cd + 4.0, 0.55);
+      addSpinner(ch, 0, X(4.4), GROUND_Y + 0.55, cd + 2.8, 1.5);
+      break;
+    }
+    case 'barracks': {
+      for (let i = 0; i < 3; i++) {
+        const x = X(1.2 + i * 1.9);
+        frameId();
+        sideStyle(T_RESID, 1.0, 0.5);
+        box(x - 0.66, cd - 3.2, x + 0.66, cd + 3.2, 0, 0.5, AP.conc, AP.conc, false);
+        plain(); topStyle(T_ROOF, 0.6, 0.5);
+        gable(x - 0.72, cd - 3.26, x + 0.72, cd + 3.26, 0.5, 0.3, AP.snowL, true);
+        plain();
+        shadowBox(x - 0.66, cd - 3.2, x + 0.66, cd + 3.2, 0.7);
+      }
+      break;
+    }
+    case 'motorpool': {
+      frameId(); flat(lo(0.3, 5.9), a + 0.5, hi(0.3, 5.9), b - 0.5, L_ROAD, AP.road);
+      for (let i = 0; i < 8; i++) snowcat(X(0.9 + (i % 4) * 1.2), cd + (i < 4 ? -3.2 : 0.2), 0);
+      frameId(); box(lo(0.6, 5.6), cd + 3.4, hi(0.6, 5.6), cd + 7.2, 0, 0.9, AP.concD, AP.snowL);
+      shadowBox(lo(0.6, 5.6), cd + 3.4, hi(0.6, 5.6), cd + 7.2, 0.9);
+      break;
+    }
+    case 'fuel': {
+      for (let i = 0; i < 4; i++) bladder(X(1.6 + (i % 2) * 2.6), cd + (i < 2 ? -3.4 : 2.6), 1.1, 2.0);
+      snowRing(X(3.0), cd - 0.4, 1.0, 2);
+      drums(X(5.2), cd + 5, 5, AP.orange);
+      break;
+    }
+  }
+  frameId();
+}
+
+// ---- endless frozen lake 1240+ ------------------------------------------------------
+// dark clear ice with pale cracks, frozen bubbles, drifts of snow in streaks, a snowmobile trail;
+// very sparse props outside the arena (|x| ≥ 9.9): ice-fishing huts, snowy boulders, a wreck; pines
+// on the snowy shore far out
+function arLake(ch, k, a, b) {
+  frameId();
+  // cracks: wandering lines with a branch or two (stateless per chunk stream; they end at the seams)
+  const nc = LOWQ ? 3 : 6;
+  for (let c = 0; c < nc; c++) {
+    let x = rr(-11.5, 11.5), d = rr(a + 1, b - 1), ang = rr(0, TAU);
+    const L = rr(5, 14);
+    for (let s = 0; s < L; s += 0.9) {
+      ang += rr(-0.45, 0.45);
+      const nx = x + Math.cos(ang) * 0.9, nd = d + Math.sin(ang) * 0.9;
+      if (nd < a || nd > b || Math.abs(nx) > 12) break;
+      crackEdge(x, d, nx, nd, 0.028, AP.lakeCrack, L_BASE + 0.004);
+      if (!LOWQ && rand() < 0.12) {                                     // a short branch
+        const ba = ang + (rand() < 0.5 ? -1 : 1) * rr(0.6, 1.1), bx = nx + Math.cos(ba) * rr(0.6, 1.4), bd = nd + Math.sin(ba) * rr(0.6, 1.4);
+        if (bd > a && bd < b) crackEdge(nx, nd, bx, bd, 0.018, AP.lakeCrack, L_BASE + 0.005);
+      }
+      x = nx; d = nd;
+    }
+  }
+  // frozen bubbles: clusters of pale dots under the ice
+  if (!LOWQ) for (let c = 0; c < 4; c++) {
+    const cx = rr(-11, 11), cdd = rr(a + 2, b - 2);
+    for (let i = 0; i < 9; i++) {
+      const x = cx + rr(-0.9, 0.9), d = cdd + rr(-0.9, 0.9), r = rr(0.035, 0.1);
+      disc(x, d, r, r, L_BASE + 0.006, AP.bubble, 6, rr(0.8, 1.0));
+    }
+  }
+  // sastrugi: wind-carved drifts, long pale diamonds along the wind
+  const ns = LOWQ ? 8 : 20, wa = 0.45;
+  for (let i = 0; i < ns; i++) {
+    const x = rr(-11.2, 11.2), d = rr(a + 1, b - 1), L = rr(0.6, 1.8), W = rr(0.08, 0.2);
+    const ca = Math.cos(wa) * L, sa = Math.sin(wa) * L, px = -Math.sin(wa) * W, pd = Math.cos(wa) * W;
+    flat4(x - ca, d - sa, x + px, d + pd, x + ca, d + sa, x - px, d - pd, L_BASE + 0.003, AP.lakeSnow, rr(0.95, 1.05));
+  }
+  // a snowmobile trail wandering along the left of the arena
+  const tr = (d) => -11.2 + 1.2 * Math.sin(d * 0.05 + 1.3) + 0.5 * Math.sin(d * 0.13);
+  for (let d = a; d < b - 0.01; d += LOWQ ? 2 : 1) {
+    const e = Math.min(b, d + (LOWQ ? 2 : 1));
+    for (const o of [-0.22, 0.22]) crackEdge(tr(d) + o, d, tr(e) + o, e, 0.06, AP.tread, L_ROAD);
+  }
+  // sparse props, never in the arena
+  const r = rand(), side = rand() < 0.5 ? -1 : 1, x = side * rr(10.4, 13), d = rr(a + 5, b - 5);
+  if (r < 0.34) {                                                         // ice-fishing huts
+    for (let i = 0; i < 1 + ((rand() * 3) | 0); i++) {
+      const hx = x + rr(-1.6, 1.6), hd = d + rr(-2, 2);
+      if (!canPlace(hx, hd, 0.5)) continue;
+      frame(hx, hd, rr(-0.4, 0.4));
+      box(-0.28, -0.34, 0.28, 0.34, 0, 0.44, pick([AP.red, AP.orange, AP.yellow, AP.green]), AP.snowL);
+      box(0.12, 0.1, 0.18, 0.16, 0.44, 0.62, AP.dark, AP.dark);
+      disc(0, -0.6, 0.14, 0.14, L_ROAD, AP.lakeD, 7);                                // the fishing hole
+      shadowBox(-0.28, -0.34, 0.28, 0.34, 0.5);
+      frameId();
+    }
+  } else if (r < 0.58) {                                                  // boulders dropped by the ice
+    if (canPlace(x, d, 0.8)) { iceBlock(x, d, rr(0.4, 0.7), rr(0.35, 0.6), -0.1, rr(0.35, 0.6), rand(), 6, 0, true); }
+  } else if (r < 0.7) {
+    if (canPlace(x, d, 1.8)) arWreck(x, d, rr(0, TAU), 0, 1.15);
+  } else if (r < 0.8) {                                                   // survey flags
+    for (let i = 0; i < 3; i++) { const fx = x + side * i * 0.9, fd = d + i * 0.4; box(fx - 0.02, fd - 0.02, fx + 0.02, fd + 0.02, 0, 0.6, AP.steel, AP.steel); box(fx, fd - 0.01, fx + side * 0.22, fd + 0.01, 0.46, 0.6, AP.redL, AP.redL); }
+  }
+  // the shore: snowy pines far out on both sides
+  const np = LOWQ ? 4 : 10;
+  for (let i = 0; i < np; i++) {
+    const s = rand() < 0.5 ? -1 : 1, px = s * rr(13.6, 19), pd = rr(a + 0.5, b - 0.5);
+    snowPine(px, pd, rr(0.85, 1.25), arcticH(px, pd) - 0.05);
+  }
+}
+
+// polar light: a low golden sun over the pack (long shadows), grey mist in the fjord, the sun
+// breaking through over the channel, steel light at the base, alpenglow over the fortress, and a
+// blue polar dusk over the lake (cool fill: the ice stays darker than the bullets)
+const ARCTIC_TOD_SRC = [
+  { d: -60, sun: 0xffd6b0, sunI: 1.95, sky: 0xa8bcd6, gnd: 0x39414f, hemiI: 1.12, fog: 0x9aaec6, near: 46, far: 152,
+    deep: 0x10304a, shallow: 0x2a8494, wsky: 0x86a2c0, foam: 0xd8e4ee, inland: 0x183848, glint: 0xffdcb2, glintI: 1.1, gdir: [0.13, 0.85, -0.5],
+    cLit: 0xf0f3f8, cShade: 0x94a4bc, shadow: 0x1a2a44, shA: 0.34, shK: 1.7, caps: 0.3, cloud: 0.8, relief: 0.3, spark: 0.55, sheen: 0.15 },
+  { d: 250, sun: 0xffe0c2, sunI: 1.9, sky: 0xacbfd8, gnd: 0x3a4250, hemiI: 1.12, fog: 0x98acc4, near: 46, far: 150,
+    deep: 0x113049, shallow: 0x2b8292, wsky: 0x88a2be, foam: 0xd8e4ee, inland: 0x183848, glint: 0xffe2c0, glintI: 1.05, gdir: [0.1, 0.86, -0.5],
+    cLit: 0xf2f4f8, cShade: 0x96a6bc, shadow: 0x1a2a44, shA: 0.34, shK: 1.55, caps: 0.3, cloud: 0.8, relief: 0.3, spark: 0.52, sheen: 0.14 },
+  { d: 330, sun: 0xe8ecf4, sunI: 1.65, sky: 0xa4b6cc, gnd: 0x353d4a, hemiI: 1.18, fog: 0x8898ae, near: 40, far: 138,
+    deep: 0x0e2638, shallow: 0x2a6f80, wsky: 0x7890aa, foam: 0xcfdae4, inland: 0x14303c, glint: 0xe8eef8, glintI: 0.8, gdir: [0.05, 0.88, -0.47],
+    cLit: 0xe6ebf2, cShade: 0x8a98ae, shadow: 0x18243a, shA: 0.3, shK: 1.25, caps: 0.2, cloud: 1.0, relief: 0.26, spark: 0.4, sheen: 0.1 },
+  { d: 540, sun: 0xeef0f4, sunI: 1.7, sky: 0xa6b8ce, gnd: 0x363e4b, hemiI: 1.16, fog: 0x8c9cb2, near: 42, far: 142,
+    deep: 0x0f2839, shallow: 0x2a7282, wsky: 0x7a92ac, foam: 0xd0dbe6, inland: 0x152f3c, glint: 0xeef2f8, glintI: 0.85, gdir: [0.02, 0.88, -0.47],
+    cLit: 0xe8edf4, cShade: 0x8c9ab0, shadow: 0x18243a, shA: 0.3, shK: 1.25, caps: 0.22, cloud: 0.95, relief: 0.27, spark: 0.42, sheen: 0.11 },
+  { d: 640, sun: 0xffe2c0, sunI: 2.05, sky: 0xb2c4dc, gnd: 0x3c4452, hemiI: 1.1, fog: 0xa2b4ca, near: 48, far: 156,
+    deep: 0x12344c, shallow: 0x2e8a98, wsky: 0x8ca8c4, foam: 0xdce6ee, inland: 0x1a3a4a, glint: 0xffe4c4, glintI: 1.15, gdir: [0.0, 0.9, -0.43],
+    cLit: 0xf4f6fa, cShade: 0x98a8be, shadow: 0x1a2a44, shA: 0.35, shK: 1.5, caps: 0.3, cloud: 0.7, relief: 0.3, spark: 0.58, sheen: 0.15 },
+  { d: 820, sun: 0xf2eee8, sunI: 1.85, sky: 0xaab8ca, gnd: 0x3c424c, hemiI: 1.1, fog: 0x98a6b6, near: 46, far: 150,
+    deep: 0x13303f, shallow: 0x2e6e78, wsky: 0x8698ac, foam: 0xd6dee6, inland: 0x1c3440, glint: 0xf4eee6, glintI: 0.9, gdir: [-0.05, 0.87, -0.49],
+    cLit: 0xeeeff2, cShade: 0x94a0b2, shadow: 0x1c2636, shA: 0.34, shK: 1.35, caps: 0.2, cloud: 0.55, relief: 0.28, spark: 0.45, sheen: 0.1 },
+  { d: 1080, sun: 0xffc4a2, sunI: 1.95, sky: 0xb4aecc, gnd: 0x423a4c, hemiI: 1.06, fog: 0xaa9cb2, near: 48, far: 154,
+    cLit: 0xffe4d2, cShade: 0x9c90aa, shadow: 0x2a1c3a, shA: 0.38, shK: 1.6, cloud: 0.5 },
+  { d: 1275, sun: 0xffa888, sunI: 1.3, sky: 0x5c7cb0, gnd: 0x2a2c44, hemiI: 1.38, fog: 0x3e4c7a, near: 48, far: 156,
+    cLit: 0xd6c8e2, cShade: 0x566494, shadow: 0x0c1232, shA: 0.44, shK: 1.8, cloud: 0.65 },
+];
+const ARCTIC_CLOUD = { floes: 0.8, fjord: 0.9, channel: 0.7, navalbase: 0.5, snowfort: 0.45, icelake: 0.6 };
+
+// =============================================================================
+// ORBITAL FINALE (stage 5): no ground at all. The planet far below is the planet shader (a plane
+// with the camera: its surface turns at a crawl, the limb and atmosphere move per lighting band);
+// the chunks hold only what floats in between — satellites, rocket stages, an asteroid band,
+// wreckage (some of it tumbling: instanced spinners), and near the end the enemy station's hull
+// passing below. Lighting bands: earth-lit 0–420 · debris storm 420–800 (the night side, city
+// lights, a sunrise on the limb) · station approach 800–1240 · the core arena 1240+ (deep space,
+// a nebula, the planet's limb glowing low on the screen). Air units only: tall props stay out of
+// |x| < 4.6 up to the station, out of |x| < 7.5 in the arena; the hull (≤ 1.0 above GROUND_Y,
+// ~5 units under the gameplay plane) is the only thing ever under the centre.
+// =============================================================================
+const ORBIT_LAYOUT = [
+  { biome: 'earthlit', from: 0,    to: 420 },
+  { biome: 'debris',   from: 420,  to: 800 },
+  { biome: 'station',  from: 800,  to: 1240 },
+  { biome: 'core',     from: 1240, to: Infinity },
+];
+const OR_DEB = 420, OR_STA = 800, OR_CORE = 1240;
+const OR_HULL_A = 872, OR_HULL_B = 1232;                     // the station hull passes below between these
+const OR_LANE = { d0: -Infinity, d1: OR_HULL_A - 6, x: 4.6 };
+const OR_ARENA = { d0: OR_CORE - 6, d1: Infinity, x: 7.5 };
+const OR_DECK = 0.92, OR_TRENCH = 3.4;                       // hull deck height; the open trench down the middle
+
+// space palette (the enemy faction's look: gunmetal hulls, pale armour, red eyes, cold cyan energy)
+const OP = {
+  rock: C(0x5d5752), rockD: C(0x423d39), rockL: C(0x7c756c), ice: C(0x9aaec2),
+  hull: C(0x49505c), hullD: C(0x2e343d), hullL: C(0x5d6571), plate: C(0x6d7582), armour: C(0x959ca6), dark: C(0x1c2027),
+  gold: C(0xbf9646), goldD: C(0x86662c), silver: C(0xb4bac2), white: C(0xd2d6dc),
+  panel: C(0x22356a), frame: C(0x8e96a0), radiator: C(0xc2c7cd),
+  red: C(0xb83a2e), orange: C(0xd07a2c), hazard: C(0xd2ac32),
+  lampR: C(0xff5a44), lampC: C(0x8eeeff), ember: C(0xffa04a), burnt: C(0x2c2826),
+};
+
+// ---- floating props (y = height of the prop's middle above GROUND_Y) ---------------------------
+function satellite(x, d, y, rot, s = 1) {
+  frame(x, d, rot);
+  plain();
+  box(-0.22 * s, -0.27 * s, 0.22 * s, 0.27 * s, y - 0.2 * s, y + 0.2 * s, OP.gold, OP.goldD);
+  topStyle(T_GLASS, 0.24 * s, 0.3 * s);
+  for (const sx of [-1, 1]) {
+    box(sx > 0 ? 0.22 * s : -0.62 * s, -0.03 * s, sx > 0 ? 0.62 * s : -0.22 * s, 0.03 * s, y - 0.02 * s, y + 0.02 * s, OP.frame, OP.frame);
+    box(sx > 0 ? 0.62 * s : -2.0 * s, -0.36 * s, sx > 0 ? 2.0 * s : -0.62 * s, 0.36 * s, y - 0.03 * s, y + 0.02 * s, OP.frame, OP.panel);
+  }
+  plain();
+  LR[0] = 0.02 * s; LH[0] = y + 0.2 * s; LK[0] = 0.9; LR[1] = 0.2 * s; LH[1] = y + 0.34 * s; LK[1] = 1.1; LR[2] = 0.22 * s; LH[2] = y + 0.36 * s; LK[2] = 1.05;
+  lathe(0.06 * s, 0.1 * s, 3, 7, OP.white, 0);
+  disc(0.06 * s, 0.1 * s, 0.2 * s, 0.2 * s, y + 0.345 * s, OP.silver, 7);
+  box(-0.012, -0.2 * s, 0.012, -0.18 * s, y + 0.2 * s, y + 0.55 * s, OP.silver, OP.silver);
+  frameId();
+}
+function rocketStage(x, d, y, rot, L, r) {
+  frame(x, d, rot);
+  tube(0, -L / 2, L / 2 - r * 0.8, y, r, r, OP.white, 7);
+  tube(0, L * 0.12, L * 0.2, y, r * 1.03, r * 1.03, OP.orange, 7);
+  tube(0, L / 2 - r * 0.8, L / 2, y, r, r * 0.35, OP.white, 7);                 // the interstage cap
+  tube(0, -L / 2 - r * 0.5, -L / 2, y, r * 0.62, r, OP.dark, 7);             // nozzle
+  frameId();
+}
+// a torn armour plate: an irregular slab, a rib or two across it, a scorched edge
+function hullShard(x, d, y, rot, s) {
+  frame(x, d, rot);
+  const n = 5 + ((rand() * 3) | 0), a0 = rand() * TAU;
+  for (let i = 0; i < n; i++) { const a = a0 + ((i + rr(-0.25, 0.25)) / n) * TAU, q = s * rr(0.6, 1.0); PX[i] = Math.cos(a) * q * 1.4; PD[i] = Math.sin(a) * q; }
+  const t = rr(0.1, 0.22) * s;
+  prism(n, y - t, y + t, OP.hullD, jit(rand() < 0.5 ? OP.hull : OP.armour, 0.08, TC3));
+  if (!LOWQ) {
+    box(-s * 0.9, -0.05 * s, s * 0.9, 0.05 * s, y + t, y + t + 0.07 * s, OP.hullD, OP.hullL);
+    crackEdge(PX[0] * 0.9, PD[0] * 0.9, PX[1] * 0.9, PD[1] * 0.9, 0.06 * s, OP.burnt, y + t + 0.004);
+  }
+  frameId();
+}
+function asteroid(x, d, y, r, c = OP.rock) {
+  frame(x, d, rand() * TAU);
+  LR[0] = 0; LH[0] = y - 0.72 * r; LK[0] = 0.62;
+  LR[1] = 0.74 * r; LH[1] = y - 0.42 * r; LK[1] = 0.8;
+  LR[2] = r; LH[2] = y; LK[2] = 0.95;
+  LR[3] = 0.78 * r; LH[3] = y + 0.44 * r; LK[3] = 1.04;
+  LR[4] = 0.3 * r; LH[4] = y + 0.72 * r; LK[4] = 1.1;
+  LR[5] = 0; LH[5] = y + 0.8 * r; LK[5] = 1.12;
+  lathe(0, 0, 6, LOWQ ? 6 : 8, jit(c, 0.1, TC3), 0, rr(0.85, 1.2), rr(0.8, 1.15), 0.42);
+  frameId();
+}
+// the orbiting telescope: a long silver tube with its aperture door, two wings of cells
+function telescope(x, d, y, rot) {
+  frame(x, d, rot);
+  tube(0, -2.2, 1.6, y, 0.46, 0.46, OP.silver, 8);
+  tube(0, 1.6, 2.0, y, 0.48, 0.48, OP.dark, 8);
+  box(-0.44, 2.0, 0.44, 2.08, y + 0.1, y + 0.62, OP.silver, OP.silver);            // aperture door, open
+  topStyle(T_GLASS, 0.3, 0.3);
+  for (const sx of [-1, 1]) box(sx > 0 ? 0.5 : -1.9, -1.4, sx > 0 ? 1.9 : -0.5, -0.4, y - 0.02, y + 0.02, OP.frame, OP.panel);
+  plain();
+  frameId();
+}
+// a spent space station: two modules end to end, a node, a truss with radiators and cell wings
+function oldStation(x, d, y, rot) {
+  frame(x, d, rot);
+  tube(0, -3.2, -0.3, y, 0.42, 0.42, OP.white, 8);
+  tube(0, 0.3, 2.6, y, 0.38, 0.38, OP.white, 8);
+  box(-0.34, -0.3, 0.34, 0.3, y - 0.3, y + 0.36, OP.silver, OP.plate);
+  box(-4.2, -0.08, 4.2, 0.08, y + 0.36, y + 0.46, OP.frame, OP.frame);                // the truss
+  topStyle(T_GLASS, 0.3, 0.32);
+  for (const sx of [-1, 1]) {
+    box(sx * 2.6 - 0.62, -1.6, sx * 2.6 + 0.62, -0.1, y + 0.4, y + 0.44, OP.frame, OP.panel);
+    box(sx * 2.6 - 0.62, 0.1, sx * 2.6 + 0.62, 1.6, y + 0.4, y + 0.44, OP.frame, OP.panel);
+  }
+  topStyle(T_ROWS, 0.3, 0.4);
+  box(-1.6, 0.14, -0.6, 0.9, y + 0.44, y + 0.47, OP.radiator, OP.radiator);
+  plain();
+  frameId();
+}
+// a derelict warship broken in two: armoured hull halves, turrets, a glowing break, a spill of plates
+function derelictShip(x, d, y, rot, s) {
+  const hullPart = (d0, d1, bw) => {
+    PX[0] = -0.9 * s; PD[0] = d0; PX[1] = 0.9 * s; PD[1] = d0; PX[2] = 0.9 * s; PD[2] = d1 - bw; PX[3] = 0.3 * s; PD[3] = d1; PX[4] = -0.3 * s; PD[4] = d1; PX[5] = -0.9 * s; PD[5] = d1 - bw;
+    prism(6, y - 0.3 * s, y + 0.3 * s, OP.hullD, OP.hull);
+  };
+  frame(x, d, rot);
+  hullPart(-4.2 * s, -0.5 * s, 0.4 * s);                                                   // stern half
+  box(-0.5 * s, -3.6 * s, 0.5 * s, -1.8 * s, y + 0.3 * s, y + 0.75 * s, OP.hullD, OP.armour);     // engine block
+  for (const sx of [-0.45, 0.45]) tube(sx * s, -4.6 * s, -4.2 * s, y, 0.22 * s, 0.3 * s, OP.dark, 6);
+  frame(x - Math.sin(rot) * 0.6, d + Math.cos(rot) * 0.6, rot + 0.25);
+  hullPart(0.4 * s, 4.8 * s, 1.6 * s);                                                      // bow half, twisted
+  box(-0.4 * s, 1.2 * s, 0.4 * s, 2.2 * s, y + 0.3 * s, y + 0.8 * s, OP.hullD, OP.armour);          // bridge
+  cyl(0, 3.0 * s, 0.3 * s, y + 0.3 * s, y + 0.46 * s, 7, OP.hull, OP.hullL);                   // turret
+  box(-0.05 * s, 3.0 * s, 0.05 * s, 4.1 * s, y + 0.36 * s, y + 0.42 * s, OP.dark, OP.dark);
+  frame(x, d, rot);
+  // the break: dark torn edges with embers glowing in it
+  for (let i = 0; i < 5; i++) {
+    const bx = rr(-0.8, 0.5) * s, bd = rr(-0.6, -0.2) * s;
+    box(bx, bd, bx + rr(0.2, 0.45) * s, bd + rr(0.4, 0.8) * s, y - 0.2 * s, y + rr(0.1, 0.34) * s, OP.burnt, i % 2 ? OP.ember : OP.burnt);
+  }
+  frameId();
+}
+// a defence satellite of the station: a hexagonal platform, twin guns, a red sensor eye
+function turretSat(x, d, y, rot) {
+  frame(x, d, rot);
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * TAU + 0.26; PX[i] = Math.cos(a) * 0.9; PD[i] = Math.sin(a) * 0.9; }
+  prism(6, y - 0.18, y + 0.14, OP.hullD, OP.hull);
+  cyl(0, 0, 0.36, y + 0.14, y + 0.34, 8, OP.hull, OP.armour);
+  for (const sx of [-0.12, 0.12]) box(sx - 0.035, -0.95, sx + 0.035, 0, y + 0.22, y + 0.28, OP.dark, OP.dark);
+  box(-0.07, 0.3, 0.07, 0.42, y + 0.34, y + 0.4, OP.lampR, OP.lampR);
+  topStyle(T_GLASS, 0.25, 0.25);
+  for (const sx of [-1, 1]) box(sx > 0 ? 0.9 : -1.9, -0.3, sx > 0 ? 1.9 : -0.9, 0.3, y - 0.02, y + 0.02, OP.frame, OP.panel);
+  plain();
+  frameId();
+}
+// a beacon buoy: a short mast with a light
+function beacon(x, d, y) {
+  cyl(x, d, 0.1, y - 0.3, y + 0.2, 6, OP.hullD, OP.hull);
+  cyl(x, d, 0.07, y + 0.2, y + 0.34, 5, OP.lampR, OP.lampR);
+}
+
+// the instanced tumblers: an asteroid (≈ 1 across) and a broken satellite (≈ 1.4), centred on 0
+function tumbleRockGeo() {
+  frameId();
+  LR[0] = 0; LH[0] = -0.82; LK[0] = 0.7;
+  LR[1] = 0.7; LH[1] = -0.5; LK[1] = 0.84;
+  LR[2] = 1.0; LH[2] = 0; LK[2] = 0.96;
+  LR[3] = 0.78; LH[3] = 0.5; LK[3] = 1.04;
+  LR[4] = 0; LH[4] = 0.84; LK[4] = 1.1;
+  lathe(0, 0, 5, 8, OP.rock, 0.3, 1, 0.85, 0.44);
+}
+function tumbleWreckGeo() {
+  frameId();
+  solidBox(-0.26, -0.3, 0.26, 0.3, -0.22, 0.22, OP.gold, 0.95);
+  solidBox(0.26, -0.03, 0.55, 0.03, -0.02, 0.02, OP.frame);
+  solidBox(0.55, -0.34, 1.35, 0.34, -0.025, 0.025, OP.panel, 1.1);
+  frame(-0.2, 0, 0.5);
+  solidBox(-1.3, -0.3, -0.26, 0.3, -0.03, 0.03, OP.hull);                                // a torn plate, bent
+  frameId();
+  solidBox(-0.05, -0.05, 0.05, 0.05, 0.22, 0.62, OP.silver);
+}
+
+// ---- the station hull (872–1232), passing below --------------------------------------------
+// two plated decks either side of an open trench (|x| < 3.4, the planet shows through it), crossed by
+// girders; armour bands, vents, hatches, lights along the trench edge; turrets, radiators, antennas,
+// dishes and solar arrays out on the flanks; a docking bay; the reactor ring near the end (the core)
+function stationChunk(ch, k, a, b) {
+  const A = Math.max(a, OR_HULL_A), B = Math.min(b, OR_HULL_B);
+  if (B <= A) return;
+  frameId();
+  for (const side of [-1, 1]) {
+    const x0 = side * OR_TRENCH, x1 = side * 13.2, xa = Math.min(x0, x1), xb = Math.max(x0, x1);
+    // the deck: a gunmetal base (panel joints from the atlas), and on it long armour strips in
+    // segments (dark seams between), conduits in the channels between the strips
+    topStyle(T_SLAB, 2.2, 2.2);
+    box(xa, A, xb, B, 0, OR_DECK, OP.hullD, OP.hull, true);
+    plain();
+    const strips = [[3.95, 5.9], [6.35, 8.9], [9.4, 12.7]];
+    for (let si = 0; si < 3; si++) {
+      const sa = side * strips[si][0], sb = side * strips[si][1], ha = Math.min(sa, sb), hb = Math.max(sa, sb);
+      let dd = Math.floor(A / 5) * 5 + ((si * 1.7) % 5) - 5;
+      while (dd < B) {
+        const len = 2.2 + 3.2 * hash2(Math.round(dd * 3), si * 7 + side + 11), e = dd + len;
+        const s0 = Math.max(dd + 0.12, A), s1 = Math.min(e - 0.12, B);
+        if (s1 - s0 > 0.3) {
+          const tone = hash2(Math.round(dd * 3) + 5, si + side * 3);
+          topStyle(tone < 0.55 ? T_SHUTTER : T_SLAB, 1.2, 0.8);
+          box(ha, s0, hb, s1, OR_DECK, OR_DECK + 0.1 + 0.08 * (si & 1), OP.hullD, tone < 0.2 ? OP.armour : tone < 0.7 ? OP.plate : OP.hullL, true);
+          plain();
+        }
+        dd = e;
+      }
+      if (si < 2 && !LOWQ) { frameId(); pipeD(side * (strips[si][1] + 0.23), A, B, OR_DECK + 0.08, 0.09, si ? OP.hazard : OP.hullL, 5); }
+    }
+    // the leading edge (toward us): an armoured prow band with a row of lights
+    if (A === OR_HULL_A) {
+      box(xa, OR_HULL_A - 0.6, xb, OR_HULL_A + 0.2, 0, OR_DECK + 0.14, OP.hullD, OP.armour);
+      for (let x = xa + 0.6; x < xb - 0.3; x += 1.3) box(x - 0.08, OR_HULL_A - 0.62, x + 0.08, OR_HULL_A - 0.58, OR_DECK - 0.3, OR_DECK - 0.14, OP.lampC, OP.lampC);
+    }
+    // along the trench edge: a hazard stripe, a raised kerb, lights every few units
+    const ex = side * (OR_TRENCH + 0.35);
+    flat(Math.min(ex, ex + side * 0.3), A, Math.max(ex, ex + side * 0.3), B, OR_DECK + 0.004, OP.hazard, 0.9);
+    box(Math.min(x0, x0 + side * 0.22), A, Math.max(x0, x0 + side * 0.22), B, OR_DECK, OR_DECK + 0.1, OP.hullD, OP.hullL);
+    for (let dd = Math.ceil(A / 3) * 3 + 1.5; dd < B - 0.2; dd += 3) box(x0 - 0.02 - (side < 0 ? 0 : 0), dd - 0.1, x0 + 0.02, dd + 0.1, OR_DECK - 0.4, OR_DECK - 0.24, OP.lampC, OP.lampC);
+    // greebles on the deck: vents, hatches, raised blocks, armour bands
+    const ng = LOWQ ? 10 : 24;
+    for (let i = 0; i < ng; i++) {
+      const gx = side * rr(OR_TRENCH + 1.0, 12.4), gd = rr(A + 0.6, B - 0.6), r = rand();
+      if (r < 0.3) { frame(gx, gd, 0); flat(-rr(0.2, 0.5), -rr(0.2, 0.6), rr(0.2, 0.5), rr(0.2, 0.6), OR_DECK + 0.006, OP.dark, 0.9); frameId(); }
+      else if (r < 0.5) { disc(gx, gd, rr(0.2, 0.4), 0, OR_DECK + 0.006, OP.hullL, 8); }
+      else if (r < 0.85) { const w = rr(0.25, 0.8), l = rr(0.3, 1.4), h = rr(0.08, 0.3); box(gx - w / 2, gd - l / 2, gx + w / 2, gd + l / 2, OR_DECK, OR_DECK + h, OP.hullD, jit(OP.plate, 0.06, TC3)); }
+      else { const l = rr(1.5, 3.5); box(gx - 0.14, gd - l / 2, gx + 0.14, gd + l / 2, OR_DECK, OR_DECK + 0.05, OP.hullD, OP.armour); }
+    }
+    // the outer flank: solar arrays beyond the deck edge (the station's power), radiator fins
+    topStyle(T_GLASS, 0.34, 0.34);
+    for (let dd = Math.ceil(A / 7) * 7 + 1; dd < B - 2.8; dd += 7) box(Math.min(side * 13.4, side * 18.5), dd, Math.max(side * 13.4, side * 18.5), dd + 2.6, OR_DECK - 0.24, OR_DECK - 0.2, OP.frame, OP.panel);
+    plain();
+  }
+  // girders across the trench (low; the planet far below between them)
+  for (let dd = Math.ceil((A - 6) / 13) * 13 + 6; dd < B - 0.4; dd += 13) {
+    box(-OR_TRENCH, dd - 0.18, OR_TRENCH, dd + 0.18, 0.4, 0.56, OP.hullD, OP.hull);
+    box(-OR_TRENCH, dd - 0.05, OR_TRENCH, dd + 0.05, 0.56, 0.6, OP.hazard, OP.hazard);
+  }
+  // per chunk features on the flanks (|x| 7 … 12.5) and the reactor ring near the end
+  const f = (k * 7 + 3) % 5;
+  for (const side of [-1, 1]) {
+    const X = (o) => side * o, cd = (a + b) / 2 + (side < 0 ? -4 : 5);
+    if (cd < A + 4 || cd > B - 4) continue;
+    const kind = (f + (side > 0 ? 2 : 0)) % 5;
+    if (kind === 0) {                                                                    // twin turrets
+      for (const o of [-3, 3]) {
+        const tx = X(9.4), td = cd + o;
+        cyl(tx, td, 0.55, OR_DECK, OR_DECK + 0.26, 8, OP.hullD, OP.hull);
+        frame(tx, td, side < 0 ? -0.6 : 0.6);
+        box(-0.35, -0.4, 0.35, 0.4, OR_DECK + 0.26, OR_DECK + 0.56, OP.hull, OP.armour);
+        for (const sx of [-0.14, 0.14]) box(sx - 0.05, 0.4, sx + 0.05, 1.5, OR_DECK + 0.36, OR_DECK + 0.44, OP.dark, OP.dark);
+        box(-0.06, -0.42, 0.06, -0.38, OR_DECK + 0.4, OR_DECK + 0.5, OP.lampR, OP.lampR);
+        frameId();
+      }
+    } else if (kind === 1) {                                                            // radiator fins
+      topStyle(T_ROWS, 0.3, 0.5);
+      for (let i = 0; i < 4; i++) box(X(8.2 + i * 0.9) - 0.06, cd - 3, X(8.2 + i * 0.9) + 0.06, cd + 3, OR_DECK, OR_DECK + rr(1.4, 2.2), OP.radiator, OP.radiator);
+      plain();
+    } else if (kind === 2) {                                                            // antenna mast + a big dish
+      box(X(8.0) - 0.06, cd - 3.2, X(8.0) + 0.06, cd - 3.08, OR_DECK, OR_DECK + 2.6, OP.frame, OP.frame);
+      box(X(8.0) - 0.4, cd - 3.16, X(8.0) + 0.4, cd - 3.12, OR_DECK + 2.2, OR_DECK + 2.26, OP.frame, OP.frame);
+      box(X(8.0) - 0.05, cd - 3.18, X(8.0) + 0.05, cd - 3.1, OR_DECK + 2.6, OR_DECK + 2.72, OP.lampR, OP.lampR);
+      box(X(10.4) - 0.7, cd + 1.3, X(10.4) + 0.7, cd + 2.7, OR_DECK, OR_DECK + 0.4, OP.hullD, OP.hull);
+      addSpinner(ch, 2, X(10.4), GROUND_Y + OR_DECK + 0.4, cd + 2.0, 0.4);
+    } else if (kind === 3) {                                                            // docking bay: a dark recess, lit
+      const bx0 = Math.min(X(6.2), X(11.2)), bx1 = Math.max(X(6.2), X(11.2));
+      flat(bx0, cd - 2.6, bx1, cd + 2.6, OR_DECK + 0.005, OP.dark, 0.95);
+      flat(bx0, cd - 2.6, bx1, cd - 2.45, OR_DECK + 0.008, OP.hazard, 0.9); flat(bx0, cd + 2.45, bx1, cd + 2.6, OR_DECK + 0.008, OP.hazard, 0.9);
+      for (let x = bx0 + 0.5; x < bx1 - 0.3; x += 1.0) { box(x - 0.06, cd - 2.4, x + 0.06, cd - 2.28, OR_DECK, OR_DECK + 0.05, OP.lampC, OP.lampC); box(x - 0.06, cd + 2.28, x + 0.06, cd + 2.4, OR_DECK, OR_DECK + 0.05, OP.lampC, OP.lampC); }
+      frame((bx0 + bx1) / 2, cd, side < 0 ? 0.1 : -0.1);                                 // a shuttle parked in it
+      box(-0.3, -0.9, 0.3, 0.7, OR_DECK, OR_DECK + 0.3, OP.white, OP.armour);
+      flat4(-0.9, -0.5, -0.3, -0.2, -0.3, 0.5, -0.9, -0.2, OR_DECK + 0.12, OP.white, 0.9);
+      flat4(0.3, -0.2, 0.9, -0.5, 0.9, -0.2, 0.3, 0.5, OR_DECK + 0.12, OP.white, 0.9);
+      frameId();
+    } else {                                                                           // command block with window bands
+      sideStyle(T_OFFICE, 1.2, 0.7);
+      box(Math.min(X(7.6), X(11.8)), cd - 2.4, Math.max(X(7.6), X(11.8)), cd + 2.4, OR_DECK, OR_DECK + 0.9, OP.hull, OP.armour);
+      plain();
+      box(Math.min(X(8.4), X(11.0)), cd - 1.6, Math.max(X(8.4), X(11.0)), cd + 1.4, OR_DECK + 0.9, OR_DECK + 1.5, OP.hullD, OP.plate);
+      addSpinner(ch, 0, X(9.7), GROUND_Y + OR_DECK + 1.5, cd - 0.1, 1.8);
+    }
+  }
+  // the reactor ring down in the trench near the end: the core's glow shows through
+  if (a <= 1190 && b > 1190) {
+    ring(0, 1196, 2.3, 2.3, 0.5, 0.42, OP.hull, 20);
+    ring(0, 1196, 1.6, 1.6, 0.34, 0.44, OP.lampC, 20, 0, 1.2);
+    disc(0, 1196, 1.1, 1.1, 0.4, OP.hullD, 14);
+    for (let i = 0; i < 4; i++) { const an = (i / 4) * TAU + 0.4; box(Math.cos(an) * 2.8 - 0.14, 1196 + Math.sin(an) * 2.8 - 0.14, Math.cos(an) * 2.8 + 0.14, 1196 + Math.sin(an) * 2.8 + 0.14, 0.2, 0.52, OP.hullD, OP.hazard); }
+  }
+}
+
+// ---- orbit chunks ----------------------------------------------------------------------
+function genOrbit(w, ch, k, d0) {
+  const d1 = d0 + CHUNK;
+  styleReset();
+  if (d1 > OR_HULL_A - 1 && d0 < OR_HULL_B) stationChunk(ch, k, d0, d1);
+  // what drifts on either side: by band, kept out of the lane (and the arena)
+  const band = d0 + 20 < OR_DEB ? 0 : d0 + 20 < OR_STA ? 1 : d0 + 20 < OR_CORE ? 2 : 3;
+  const xin = (d) => (d > OR_ARENA.d0 - 3 ? OR_ARENA.x : OR_LANE.x) + 0.4;       // the lane, then the wider arena
+  const place = (r, d) => (rand() < 0.5 ? -1 : 1) * rr(xin(d) + r, 14);
+  const nRock = [LOWQ ? 2 : 4, LOWQ ? 5 : 11, LOWQ ? 1 : 3, LOWQ ? 2 : 3][band];
+  const nWreck = [0, LOWQ ? 4 : 9, LOWQ ? 1 : 2, 1][band];
+  const nSat = [LOWQ ? 2 : 3, LOWQ ? 1 : 2, 1, 0][band];
+  const inHull = (d) => d > OR_HULL_A - 2 && d < OR_HULL_B + 1;
+  // the asteroid band: dense in the debris storm, a scatter elsewhere
+  for (let i = 0; i < nRock; i++) {
+    const r = rr(0.18, band === 1 ? 0.75 : 0.55), d = rr(d0, d1), x = place(r * 1.3, d), y = rr(0.6, 3.1);
+    if (inHull(d) && Math.abs(x) < 13.6 && y < OR_DECK + r + 0.4) continue;
+    asteroid(x, d, y, r, rand() < 0.15 ? OP.ice : rand() < 0.5 ? OP.rock : OP.rockD);
+  }
+  for (let i = 0; i < nWreck; i++) {
+    const s = rr(0.4, 1.0), d = rr(d0, d1), x = place(s * 1.5, d), y = rr(0.5, 2.8);
+    if (inHull(d) && Math.abs(x) < 13.6) continue;
+    hullShard(x, d, y, rr(0, TAU), s);
+  }
+  for (let i = 0; i < nSat; i++) {
+    const s = rr(0.6, 1.0), d = rr(d0, d1), x = place(2.1 * s, d), y = rr(1.2, 3.0);
+    if (inHull(d) && Math.abs(x) < 13.6) continue;
+    satellite(x, d, y, rr(-0.6, 0.6) + (rand() < 0.5 ? 0 : Math.PI / 2), s);
+  }
+  if (band === 0 && rand() < 0.45) { const d = rr(d0 + 3, d1 - 3), x = (rand() < 0.5 ? -1 : 1) * rr(7, 11.5); rocketStage(x, d, rr(1.0, 2.4), rr(-1, 1), rr(2.4, 3.6), rr(0.26, 0.36)); }
+  // tumblers (instanced): a few rocks and wrecks turning in place
+  const nt = [1, LOWQ ? 2 : 4, 1, 2][band];
+  for (let i = 0; i < nt; i++) {
+    const type = band === 1 && rand() < 0.5 ? 4 : 3, s = type === 3 ? rr(0.3, 0.75) : rr(0.4, 0.7);
+    const d = rr(d0 + 2, d1 - 2), x = (rand() < 0.5 ? -1 : 1) * rr(xin(d) + 1.4 * s + 0.3, 13), y = rr(1.0, 3.0);
+    if (inHull(d) && y < OR_DECK + 1.6 * s + 0.2) continue;
+    addSpinner(ch, type, x, GROUND_Y + y, d, rr(0.25, 0.9), s);
+  }
+  // landmarks
+  if (k === 4) telescope(-9.6, 176, 2.3, 0.35);
+  if (k === 7) oldStation(10.6, 297, 2.0, -0.25);
+  if (k === 12) derelictShip(-10.4, 498, 1.4, 0.45, 1.05);
+  if (k === 17) derelictShip(10.8, 702, 1.1, -2.6, 0.9);
+  // the approach: the station's defence satellites and beacons (800–872)
+  if (d1 > OR_STA - 8 && d0 < OR_HULL_A) {
+    for (let dd = Math.ceil(Math.max(d0, OR_STA - 8) / 18) * 18; dd < Math.min(d1, OR_HULL_A - 2); dd += 18) {
+      for (const side of [-1, 1]) turretSat(side * rr(8.2, 10.5), dd + rr(-2, 2), rr(1.6, 2.6), side < 0 ? -0.5 : 0.5);
+    }
+    for (let dd = Math.ceil(Math.max(d0, OR_STA) / 9) * 9; dd < Math.min(d1, OR_HULL_A - 1); dd += 9) for (const side of [-1, 1]) beacon(side * 6.2, dd, 1.2);
+  }
+  styleReset();
+}
+
+// light over the planet: a harsh white sun; hemi from below is earthshine. Planet keys: pX/pZ = the
+// nadir relative to the view centre, pF the focal length (world units), pH the orbit height (radii),
+// pAtmW the atmosphere's thickness (radii); psun = toward the sun (y up toward the camera).
+const ORBIT_TOD_SRC = [
+  // earth-lit: the day side under the play area, the limb and its blue glow across the top
+  { d: -60, sun: 0xfff4e8, sunI: 2.5, sky: 0x1c2640, gnd: 0x4a78b4, hemiI: 1.05, fog: 0x05080f, near: 80, far: 260,
+    cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0,
+    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xb6c0cc, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
+    pSpace: 0x020309, pNeb: 0x243a7a, pX: 0, pZ: 26, pF: 17, pH: 0.07, pCover: 0.5, pAtmW: 0.007, pNebI: 0.1, pStar: 0.8, pCityI: 0, psun: [-0.3, 0.8, -0.5] },
+  { d: 380, sun: 0xfff4e8, sunI: 2.5, sky: 0x1c2640, gnd: 0x4a78b4, hemiI: 1.05, fog: 0x05080f, near: 80, far: 260,
+    cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0,
+    pOcean: 0x0a2a5c, pLand: 0x3a5a34, pLand2: 0x8a764e, pCloud: 0xb6c0cc, pAtmos: 0x3e8cff, pGlow: 0xffb07a, pCity: 0xffc070,
+    pSpace: 0x020309, pNeb: 0x243a7a, pX: 4, pZ: 26, pF: 17, pH: 0.07, pCover: 0.55, pAtmW: 0.007, pNebI: 0.1, pStar: 0.8, pCityI: 0.1, psun: [-0.4, 0.45, -0.8] },
+  // debris storm: over the night side (city lights), the sun rising beyond the limb, red nebula
+  { d: 470, sun: 0xffe2c8, sunI: 2.3, sky: 0x241a26, gnd: 0x2c3e66, hemiI: 1.0, fog: 0x0a0608, near: 80, far: 260,
+    cLit: 0x6c6258, cShade: 0x2c2622, shadow: 0x000000, shA: 0, shK: 1, cloud: 0.7,
+    pOcean: 0x0a2046, pLand: 0x2e4430, pLand2: 0x6a5a40, pCloud: 0xa8b0bc, pAtmos: 0x4a7cff, pGlow: 0xff8a5a, pCity: 0xffb45a,
+    pSpace: 0x040204, pNeb: 0x5a2230, pX: 22, pZ: 24, pF: 15, pH: 0.07, pCover: 0.5, pAtmW: 0.007, pNebI: 0.22, pStar: 1.0, pCityI: 1.0, psun: [-0.35, -0.45, -0.82] },
+  { d: 760, sun: 0xffe2c8, sunI: 2.3, sky: 0x241a26, gnd: 0x2c3e66, hemiI: 1.0, fog: 0x0a0608, near: 80, far: 260,
+    cLit: 0x6c6258, cShade: 0x2c2622, shadow: 0x000000, shA: 0, shK: 1, cloud: 0.7,
+    pOcean: 0x0a2046, pLand: 0x2e4430, pLand2: 0x6a5a40, pCloud: 0xa8b0bc, pAtmos: 0x4a7cff, pGlow: 0xff8a5a, pCity: 0xffb45a,
+    pSpace: 0x040204, pNeb: 0x5a2230, pX: 18, pZ: 25, pF: 15, pH: 0.07, pCover: 0.52, pAtmW: 0.007, pNebI: 0.22, pStar: 1.0, pCityI: 1.0, psun: [-0.25, -0.38, -0.89] },
+  // station approach: back into daylight, steel-blue light on the hull
+  { d: 840, sun: 0xf2f4ff, sunI: 2.4, sky: 0x1e2436, gnd: 0x46689e, hemiI: 1.05, fog: 0x04060c, near: 80, far: 260,
+    cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0,
+    pOcean: 0x0a2652, pLand: 0x324c34, pLand2: 0x7a6a4a, pCloud: 0xb4bfcc, pAtmos: 0x4c90ff, pGlow: 0xffa070, pCity: 0xffc070,
+    pSpace: 0x020309, pNeb: 0x283a70, pX: -8, pZ: 28, pF: 17, pH: 0.07, pCover: 0.6, pAtmW: 0.007, pNebI: 0.14, pStar: 0.9, pCityI: 0.25, psun: [-0.5, 0.7, -0.5] },
+  { d: 1200, sun: 0xeef0ff, sunI: 2.35, sky: 0x201e3a, gnd: 0x405a98, hemiI: 1.05, fog: 0x04050c, near: 80, far: 260,
+    cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0,
+    pOcean: 0x0a2450, pLand: 0x304834, pLand2: 0x746448, pCloud: 0xb0bac8, pAtmos: 0x5a86ff, pGlow: 0xff9a78, pCity: 0xffc070,
+    pSpace: 0x03030b, pNeb: 0x3a2a78, pX: -6, pZ: 30, pF: 18, pH: 0.08, pCover: 0.6, pAtmW: 0.008, pNebI: 0.25, pStar: 0.95, pCityI: 0.4, psun: [-0.3, 0.2, -0.93] },
+  // the core arena: higher up, the planet's night side low on the screen, its limb lit from behind
+  { d: 1275, sun: 0xe8e6ff, sunI: 2.2, sky: 0x2a1c46, gnd: 0x3c4e9a, hemiI: 1.12, fog: 0x06040e, near: 80, far: 260,
+    cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0,
+    pOcean: 0x081c44, pLand: 0x283c30, pLand2: 0x5e5040, pCloud: 0x9ca6b8, pAtmos: 0x5c6cff, pGlow: 0xff7aa8, pCity: 0xffb866,
+    pSpace: 0x030210, pNeb: 0x6a2a9a, pX: 0, pZ: 46, pF: 30, pH: 0.25, pCover: 0.55, pAtmW: 0.016, pNebI: 0.55, pStar: 1.0, pCityI: 1.0, psun: [-0.05, -0.55, -0.83] },
+];
+const ORBIT_CLOUD = { earthlit: 0, debris: 0.34, station: 0, core: 0 };
+
+// =============================================================================
 // stage table
 // =============================================================================
 function genCoastal(w, ch, k, d0) {
@@ -5242,6 +7154,32 @@ export const WORLD_STAGES = {
     tod: makeTod(SKIES_TOD_SRC), cloud: SKIES_CLOUD,
     cloudShadowK: () => 0.2,
     deck: true,
+  },
+  arctic: {
+    id: 'arctic', layout: ARCTIC_LAYOUT, salt: 5176381,
+    clear: { from: AR_BASE, to: AR_LAKE }, corridors: [AR_LANES, AR_FJ_LANE, AR_MIDBOSS, AR_ARENA],
+    midboss: AR_MIDBOSS, arena: AR_ARENA,
+    terrainH: arcticH, groundColor: arcticColor,
+    // the frozen sea and the pack-ice channel are all water and props: no ground grid there
+    hasGround: (k, d0) => d0 + CHUNK > AR_FJORD - 6 && !(d0 >= AR_CHAN + 24 && d0 + CHUNK <= AR_QUAY - 1),
+    gen: genArctic,
+    water: { seaFromK: Infinity, alwaysK: 18, calm: arCalm, paint: arPaint, open: (b) => b === 'floes' || b === 'fjord' || b === 'channel' },
+    flatCheck: true, flatFrom: AR_FLAT,
+    tod: makeTod(ARCTIC_TOD_SRC), cloud: ARCTIC_CLOUD,
+    cloudShadowK: (b) => (b === 'floes' || b === 'channel' ? 0.16 : 0.22),
+    deck: false,
+  },
+  orbit: {
+    id: 'orbit', layout: ORBIT_LAYOUT, salt: 2718281,
+    clear: { from: Infinity, to: -Infinity }, corridors: [OR_LANE, OR_ARENA],   // air units only
+    arena: OR_ARENA,
+    terrainH: () => 0, groundColor: (x, d, h, out) => cset(out, OP.hullD),
+    hasGround: () => false,
+    gen: genOrbit,
+    water: null, flatCheck: false,
+    tod: makeTod(ORBIT_TOD_SRC), cloud: ORBIT_CLOUD,
+    cloudShadowK: () => 0,
+    deck: false, planet: true,
   },
 };
 // an unknown biome name would turn the low-cloud alpha into NaN (→ full opacity): check the tables

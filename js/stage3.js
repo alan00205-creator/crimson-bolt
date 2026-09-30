@@ -40,7 +40,9 @@ export const ENEMY = {
     hull: { hw: 3.7, z0: -2.5, z1: -1.05 },
   },
   // boss: parts in hit-test order. The spinal cannons start sealed in their wells (not targets) and
-  // count in the HP bar from the start; the core is armoured until phase 3.
+  // count in the HP bar from the start; the core is armoured until phase 3. hull: the wings and the aft
+  // hull behind every row of parts (it starts past the outer batteries and the core), so shots that
+  // clear the parts spark off the ship instead of flying over it.
   seraph: {
     hp: 1, score: 0, radius: 5.0, air: true, explode: 4, debris: 40, boss: true, model: 'seraph', prewarm: 1,
     parts: [
@@ -51,13 +53,23 @@ export const ENEMY = {
       { key: 'spineR', hp: 420, score: 12000, medals: 3, big: 1.8 },
       { key: 'core', hp: 2450, core: true, score: 250000 },
     ],
-    hull: { hw: 2.3, z0: -8.4, z1: -1.4 },
+    hull: { hw: 5.9, z0: -9.5, z1: -4.0 },
   },
 };
 
 const MIDBOSS_AT = 590;
 const BOSS_AT = 1275;
 
+// The top HUD is fixed CSS px (index.html: score strip ≈ 58 px, boss bar down to ≈ 102 px), so on short
+// phones a row picked relative to zTop can sit under it. zAtRow gives the world z at height y that
+// projects to CSS pixel row py (screen centre column): hover rows are kept at or below it.
+const HUD_ROW = 80;    // clear of the score strip
+const BAR_ROW = 118;   // 16 px under the boss bar
+const rowQ = { x: 0, z: 0 };
+function zAtRow(v, py, y = 0) {
+  const q = v.screenToPlane(v.w / 2, py, rowQ);
+  return v.C.z + (q.z - v.C.z) * (1 - y / v.C.y);
+}
 // shared: turn a boss part toward the player (parts sit in the unit's yawed frame)
 function aimPart(g, e, pt, dt, rate) {
   const obj = pt.obj;
@@ -161,7 +173,7 @@ function lancerAI(x0) {
     const s = e.s, v = g.view, ud = e.mesh.userData, p = g.player;
     if (!s.mode) {
       s.mode = 'in'; s.mt = 0; s.fixedYaw = true; s.yaw = Math.PI;
-      s.z0 = v.zTop - 2.5; s.tz = v.zTop + 3.6 + rnd(0, 1.2); e.x = x0; e.z = s.z0;
+      s.z0 = v.zTop - 2.5; s.tz = Math.max(v.zTop + 3.6, zAtRow(v, HUD_ROW)) + rnd(0, 1.2); e.x = x0; e.z = s.z0;
       if (ud.setCharge) { ud.setCharge(0); ud.setBoost(0.3); }
     }
     s.mt += dt;
@@ -344,7 +356,8 @@ function spawnValkyrie(g) {
 //     orbs → p2 once batteries and pods are gone (or after 42 s): the spinal cannons rise out of
 //     their wells — the lance (telegraph beam, then a needle stream along the locked line) and two
 //     twin guns spraying counter-rotating spirals → p3 once they are gone (or after 40 s): the core
-//     opens — counter-rotating lattices with breathers, aimed fans, and rings when it is low.
+//     opens — counter-rotating lattices and a swaying spiral in turn, breathers with aimed fans, and
+//     rings when it is low.
 // Parts left alive keep firing in the later phases at a reduced rate.
 function seraphAI() {
   return (e, dt, g) => {
@@ -352,16 +365,16 @@ function seraphAI() {
     if (!s.init) {
       s.init = true; s.mode = 'enter'; s.fixedYaw = true; s.yaw = Math.PI; e.invuln = true; e.armored = true;
       s.open = 0; s.raise = 0; s.a = 0; s.b = 0; s.c = 0; s.sway = 0; s.pt = 0; s.ph = 0; s.podSide = 0; s.lance = 'idle';
-      s.z0 = v.zTop - 17; s.baseZ = v.zTop + 12.5; e.x = 0; e.z = s.z0;
+      // station: the core's top edge (e.z − 2.5 − 1.5, raised 0.95; the sway dips 0.6) stays below the boss bar
+      s.z0 = v.zTop - 17; s.baseZ = Math.max(v.zTop + 12.5, zAtRow(v, BAR_ROW, 0.95) + 4.6); e.x = 0; e.z = s.z0;
       s.bat = [0, 1, 2, 3].map((i) => g.partByKey(e, 'battery' + i));
       s.pods = [g.partByKey(e, 'pods0'), g.partByKey(e, 'pods1')];
       s.spF = g.partByKey(e, 'spineF'); s.spL = g.partByKey(e, 'spineL'); s.spR = g.partByKey(e, 'spineR');
       s.spine = [s.spF, s.spL, s.spR];
       s.core = g.partByKey(e, 'core');
       for (const pt of s.spine) if (pt) pt.dead = true;   // sealed in their wells until phase 2
+      if (ud.reset) ud.reset();                           // a pooled model may come back mid-lock or broken
       if (ud.setRaise) ud.setRaise(0);
-      if (ud.setBreak) ud.setBreak(0);
-      if (s.core && s.core.obj.userData.setOpen) s.core.obj.userData.setOpen(0);
     }
     const core = s.core;
     // HP bar: every part (sealed ones count at full health)
@@ -471,18 +484,25 @@ function seraphAI() {
       }
     }
     if (s.mode !== 'p3' || !core || s.open < 0.85) return;
-    // open core: two counter-rotating 3-arm lattices, a breather every 8.5 s with an aimed big fan,
-    // and rings of orbs once it is below 40 %
+    // open core, in 8.5 s cycles that end in a breather with an aimed big fan: two counter-rotating
+    // 3-arm lattices, then a swaying 5-arm spiral (a little sparser), alternating; rings of orbs
+    // join once it is below 40 %
     const cm = g.muzzlePos(core.obj), cx = cm.x, cz = cm.z;
     s.cyc += dt;
-    const breathe = (s.cyc % 8.5) > 7.2;
+    const breathe = (s.cyc % 8.5) > 7.2, sway = Math.floor(s.cyc / 8.5) & 1;
     const rage = core.hp < core.maxHp * 0.4;
     s.ct = (s.ct || 0) - dt;
     if (!breathe && s.ct <= 0) {
-      s.ct = (rage ? 0.1 : 0.11) / fr;
-      s.flip = !s.flip;
-      if (s.flip) { s.a += 0.2; for (let k = 0; k < 3; k++) g.shoot(cx, cz, s.a + (k * TAU) / 3, 4.6); }
-      else { s.c -= 0.25; for (let k = 0; k < 3; k++) g.shoot(cx, cz, s.c + (k * TAU) / 3 + Math.PI / 3, 5.3); }
+      if (sway) {
+        s.ct = (rage ? 0.19 : 0.21) / fr;
+        const a0 = Math.sin(s.cyc * 1.5) * 0.85 + s.cyc * 0.2;
+        for (let k = 0; k < 5; k++) g.shoot(cx, cz, a0 + (k * TAU) / 5, 5.2);
+      } else {
+        s.ct = (rage ? 0.1 : 0.11) / fr;
+        s.flip = !s.flip;
+        if (s.flip) { s.a += 0.2; for (let k = 0; k < 3; k++) g.shoot(cx, cz, s.a + (k * TAU) / 3, 4.6); }
+        else { s.c -= 0.25; for (let k = 0; k < 3; k++) g.shoot(cx, cz, s.c + (k * TAU) / 3 + Math.PI / 3, 5.3); }
+      }
     }
     if (breathe && !s.fanned) { s.fanned = true; g.fan(cx, cz, g.aim(cx, cz), hard ? 7 : 5, hard ? 1.0 : 0.8, 6.8, g.BK.BIG); g.audio.play('lock', { vol: 0.4 }); }
     if (!breathe) s.fanned = false;
@@ -497,6 +517,7 @@ function seraphAI() {
 // blast, then the wreck sinks into the cloud sea — a cloud burst where it goes under, no splash.
 function seraphDeath(e, dt, g) {
   const s = e.s, ud = e.mesh.userData;
+  if (!s.dieT) { const sb = s.spF && s.spF.obj.userData.setBeam; if (sb) sb(0); }   // a lock in progress dies with it
   s.dieT = (s.dieT || 0) + dt;
   const t = s.dieT, y = s.y || 0;
   // the hull flickers as it cooks off

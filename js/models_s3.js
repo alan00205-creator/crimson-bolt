@@ -17,15 +17,16 @@
 //   FRIGATE      small flying warship: pointed hull with a deck, bridge, fore + aft gun
 //                turrets (userData.turrets, each with its own muzzles), two lift nacelles
 //   LANCER       ram craft: long charging lance, delta canards, one big engine; a red
-//                targeting beam (additive, userData.setCharge(0..1)) telegraphs its lane
+//                targeting beam (vertex-alpha blended, userData.setCharge(0..1)) telegraphs its lane
 //   MINELAYER    manta flying wing with a revolving dorsal mine drum (userData.drop() turns it)
 //   VALKYRIE     mid-boss escort cruiser: parts batteryL / batteryR (twin-gun sponsons that
 //                aim) and core (cyan reactor under two shutters, setOpen); reset() for the pool
 //   SERAPH       boss mothership, six-winged: fore wings with gun pods (pods[0..1]), main
 //                wings with batteries (battery[0..3]), spinal cannons that rise from wells
-//                (spineF with a telegraph beam, spineL, spineR — setRaise(0..1)), the citadel
-//                and its reactor core (setOpen). setBreak(0..1) snaps the hull in two and
-//                lets the main wings fall away for the death sequence.
+//                (setRaise(0..1): spineF, whose telegraph beam is spineF.userData.setBeam(0..1),
+//                spineL, spineR), the citadel and its reactor core (setOpen).
+//                setBreak(0..1) snaps the hull in two and lets the main wings fall away for
+//                the death sequence; reset() restores the pooled model's pose.
 //
 // Imports: only 'three' and './modelkit.js' — never models.js (import cycle).
 // House style and helpers: see the modelkit.js header.
@@ -632,10 +633,10 @@ function createValkyrie() {
 // SERAPH — boss mothership, six-winged sky citadel (≈ 17 span, 15 long)
 // =============================================================================
 // Hierarchy (so the death sequence can snap it apart):
-//   pivot ┬ foreHinge (z 0.9) → fore: hull fore + fore wings, spineF, spineL, spineR, pods
-//         ├ aftHinge  (z 0.9) → aft:  hull aft + aft wings + citadel + core collar, core, engine flames
-//         ├ wingHingeL / R (root) → main wing mesh + two batteries each
-//         └ halo (additive ring over the citadel spire)
+//   pivot ┬ foreHinge (z 0.9) → fore: hull fore + fore wings, spineF (+ beam), spineL, spineR, pods
+//         ├ aftHinge  (z 0.9) → aft:  hull aft + aft wings + citadel + core collar, core, engine
+//         │                          flames, halo (additive ring over the citadel spire)
+//         └ wing hinges L / R (root) → main wing mesh + two batteries each
 const SR_SPLIT = 0.9;
 const SR_FORE = [[-6.3, 0.05, 0.12, 0.06], [-5.7, 0.5, 0.36, 0.26], [-4.8, 0.95, 0.55, 0.4], [-3.4, 1.35, 0.7, 0.5], [-1.8, 1.7, 0.8, 0.56],
   [-0.2, 1.95, 0.85, 0.6], [SR_SPLIT, 2.05, 0.86, 0.62]];
@@ -968,6 +969,12 @@ function createSeraph() {
   };
   ud.setBreak(0);
   ud.setRaise(1);
+  /** pooled instances come back posed: whole, spines raised, lance beam off, every gun facing forward */
+  const turning = [...battery, spineF, spineL, spineR];
+  ud.reset = () => {
+    ud.setBreak(0); ud.setRaise(1); beam.m.userData.set(0);
+    for (const p of turning) p.rotation.y = 0;
+  };
   ud.update = (dt, t) => {
     const pulse = 0.8 + Math.sin(t * 3.0) * 0.2;
     for (let i = 0; i < allMats.length; i++) allMats[i].uEmitScale.value = pulse * (1 - brk * 0.6);

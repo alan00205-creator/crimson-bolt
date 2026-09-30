@@ -652,7 +652,6 @@ function createScorpion() {
   pivot.add(core);
   let open = 0;
   core.userData.setOpen = (v) => { open = Math.max(0, Math.min(1, v)); body.geometry = open > 0.5 ? openGeo : closedGeo; core.userData.open = open; };
-  // claws (mirrored)
   // claws (mirrored): a shoulder pivot that aims, the part at the pincer hand (its hit circle)
   const clawKeep = { keep: (x, y, z) => z + 0.15, crumple: 0.1, seed: 21, dir: [0, 0, -1], shards: 9, shardSize: 0.24, band: 0.45 };
   const clawPivots = [];

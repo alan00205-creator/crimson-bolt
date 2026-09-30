@@ -394,8 +394,8 @@ export function scorpionAI() {
 function scorpionDeath(e, dt, g) {
   const s = e.s, ud = e.mesh.userData;
   s.dieT = (s.dieT || 0) + dt;
-  e.gd += g.scrollSpeed * dt;                           // stops dead: the plateau carries it off
-  e.s.y = -sstep(0.3, 1.8, s.dieT) * 0.9;               // legs buckle, the hulk settles
+  // it stops dead (no more station keeping), so the plateau carries it off as the legs buckle
+  e.s.y = -sstep(0.3, 1.8, s.dieT) * 0.9;
   s.boomT = (s.boomT || 0) - dt;
   if (s.boomT <= 0) {
     s.boomT = 0.11;

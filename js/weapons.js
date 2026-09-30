@@ -32,13 +32,16 @@
 // e.uid) and aux (one free float; WAVE: hit-memory slot, OPT_LASER: drone index).
 // addShot() initialises every field and game.removeShot() copies every field.
 //
-// Balance (bolt, measured with the b6 harness: one r 1.3 target 12 units ahead / six spread r 0.75
-// targets 8-13 ahead, jet standing still) — DPS single / spread-total (targets hit):
-//   VULCAN  L1 27 / 27 (2)   L4 40 / 80 (4)    L8 93 / 133 (4)    coverage, point-blank power
-//   LASER   L1 31 / 0        L4 53 / 53 (1)    L8 83 / 83 (1)     single-target burst
-//   PLASMA  L1 26 / 26 (1)   L4 44 / 44 (2)    L8 68 / 68 (3)     auto-aim anywhere ahead, ~15 % less
-//   WAVE    L1 18 / 36 (2)   L4 32 / 128 (4)   L8 52 / 310 (6)    pierce + width, weakest per target
-//   HOMING  L1 9 · L4 29     NUKE L1 12 · L4 33     MULTI L1 12 / 12 · L4 17 / 45 (5): fan coverage
+// Balance (bolt, measured in the dev harness: one r 1.3 target 12 units ahead / six r 0.75 targets
+// spread 8-13 ahead, jet standing still) — DPS single / spread total (targets hit):
+//   VULCAN  L1 27 / 27 (2)   L4 40 / 80 (4)    L8 93 / 133 (4)   coverage; L4 67 point-blank
+//   LASER   L1 31 / 0        L4 53 / 53 (1)    L8 83 / 83 (1)    single-target burst
+//   PLASMA  L1 24 / 24 (1)   L4 42 / 42 (2)    L8 66 / 66 (3)    locks anything ahead: clears the six
+//                                                                  2-HP darts in 1.05 / 0.52 / 0.35 s
+//   WAVE    L1 18 / 37 (2)   L4 29 / 121 (4)   L8 45 / 280 (6)   pierce + width, weakest per target
+//   HOMING  L1 9 · L4 29     NUKE L1 12 · L4 33     MULTI L1 12 / 13 (2) · L4 17 / 41 (5)
+// Option drones (PHANTOM, L4, both drones, tucked single): VULCAN 14, LASER 15, PLASMA 11 (auto-aim,
+// wide too), WAVE 13 (25 over 4 spread targets).
 import { F, flatRot } from './fx.js';
 import { MAIN_WEAPONS, SUB_WEAPONS } from './defs.js';
 
@@ -91,12 +94,12 @@ const DRONE_PLASMA = { range: 12.5, dps: (lv) => 4 + 0.5 * lv, width: (lv) => 0.
 // through boss hulls. Wide and piercing, but every target takes only one wave per interval: the
 // lowest single-target damage of the four.
 export const WAVE = {
-  interval: 0.15, speed: 25, life: 1.3,
+  interval: 0.17, speed: 25, life: 1.25,
   hw: (lv) => 1.3 + 0.55 * lv,   // full half-width
-  dmg: (lv) => 2.1 + 0.6 * lv,   // per target per wave
+  dmg: (lv) => 2.38 + 0.68 * lv, // per target per wave
   hw0: 0.45, grow: 0.42,         // half-width at the gun; seconds to full width
   th: 0.36,                      // half-thickness of the hit band
-  sag: 0.378,                    // the tips trail the apex by sag × half-width (the ARC frame's shape)
+  depth: (hw) => 0.8 + 0.42 * hw, // height of its ARC quad; the tips trail the apex by 0.6 × it
 };
 const DRONE_WAVE = { interval: 0.24, speed: 25, hw: (lv) => 0.7 + 0.05 * lv, dmg: (lv) => 1.1 + 0.12 * lv };
 
@@ -207,6 +210,7 @@ function newBeam() {
 }
 const BEAMS = [newBeam(), newBeam(), newBeam()];             // the jet's
 const DBEAMS = [newBeam(), newBeam(), newBeam(), newBeam()]; // one per option drone
+export const PLASMA_STATE = { BEAMS, DBEAMS };               // read-only view for dev / test pages
 let nBeams = 0;                // jet beams on in the last plasma step
 let plasmaT = -1, droneT = -1; // g.time of the last plasma step (a gap: the beams restart at the gun)
 
@@ -233,7 +237,7 @@ function lockHolds(g, b, gx, gz, range) {
 function lockOn(g, b, t, sound, shared, pitch) {
   if (b.uid !== t.uid) {
     b.lockT = 0; b.arrived = false;
-    if (sound) g.audio.play('lock', { pitch: pitch - (t.armored ? 5 : 0), vol: 0.45 });
+    if (sound) g.audio.play('lock', { pitch: pitch - (t.armored ? 5 : 0), vol: 0.4 });
   }
   b.e = t.e; b.pt = t.part; b.uid = t.uid; b.shared = shared;
   b.tx = t.x; b.tz = t.z; b.tr = t.r; b.armored = t.armored;
@@ -278,42 +282,53 @@ function firstFree() {
 }
 
 // Hand out targets to the jet's n beams (see PLASMA): locks hold while their target lives, is
-// on screen and in reach; an armoured lock gives way to a free soft target, a soft one to a free
-// target that is much closer (after a short commitment); free beams take the best free target,
-// else double up on the first beam's lock.
+// on screen and in reach; a soft lock gives way to a free target that is much closer (after a
+// short commitment); free beams take the best free target, else double up on a lock. Armour is
+// the last resort: while any beam burns something soft, no beam sits on an armoured target.
 function assignBeams(g, n, gx, gz) {
   candT = g.targets;
   gather(g, gx, gz, PLASMA.range);
   nTaken = 0;
   const reach = PLASMA.range * PLASMA.keep;
+  let soft = null; // a beam with its own lock on something it can damage
   for (let k = 0; k < BEAMS.length; k++) {
     const b = BEAMS[k];
     if (k >= n) { release(b); b.on = false; continue; }
     if (b.e && !lockHolds(g, b, gx, gz, reach)) release(b);
-    if (b.e && !b.shared && !b.armored) taken[nTaken++] = b.uid;
+    if (b.e && !b.shared && !b.armored) { taken[nTaken++] = b.uid; if (!soft) soft = b; }
   }
+  // own locks: a much closer free target steals a soft lock; an armoured lock moves to a free
+  // soft target, else doubles up on a soft lock, else stays
   for (let k = 0; k < n; k++) {
     const b = BEAMS[k];
     if (!b.e || b.shared) continue;
-    const c = firstFree();
+    const c = firstFree(), cs = c >= 0 && !candT[candK[c]].armored;
     if (b.armored) {
-      if (c >= 0 && !candT[candK[c]].armored) lockOn(g, b, candT[candK[c]], true, false, k * 3);
-      taken[nTaken++] = b.uid;
-    } else if (c >= 0 && b.lockT > 0.4 && !candT[candK[c]].armored && candS[c] < score(b.tx - gx, b.tz - gz, false) * PLASMA.retarget) {
+      if (cs) { lockOn(g, b, candT[candK[c]], true, false, k * 3); taken[nTaken++] = b.uid; if (!soft) soft = b; }
+      else if (soft) shareLock(b, soft);
+      else taken[nTaken++] = b.uid;
+    } else if (cs && b.lockT > 0.4 && candS[c] < score(b.tx - gx, b.tz - gz, false) * PLASMA.retarget) {
       untake(b.uid);
       lockOn(g, b, candT[candK[c]], true, false, k * 3);
       taken[nTaken++] = b.uid;
     }
   }
+  // free and doubled-up beams: the best free target (armour only when nothing soft burns), else
+  // keep / take a doubled-up lock
   for (let k = 0; k < n; k++) {
     const b = BEAMS[k];
     if (b.e && !b.shared) continue;
     const c = firstFree();
-    if (c >= 0) { lockOn(g, b, candT[candK[c]], true, false, k * 3); taken[nTaken++] = b.uid; continue; }
-    if (b.e) continue; // already doubling up on a live target
-    let o = null;
+    if (c >= 0 && !(soft && candT[candK[c]].armored)) {
+      lockOn(g, b, candT[candK[c]], true, false, k * 3); taken[nTaken++] = b.uid;
+      if (!soft && !b.armored) soft = b;
+      continue;
+    }
+    if (b.e && !(b.armored && soft)) continue; // already doubling up on a live target
+    let o = soft;
     for (let j = 0; j < n && !o; j++) if (j !== k && BEAMS[j].e && !BEAMS[j].shared) o = BEAMS[j];
-    if (o) shareLock(b, o);
+    if (o && o !== b) shareLock(b, o);
+    else if (c >= 0) { lockOn(g, b, candT[candK[c]], true, false, k * 3); taken[nTaken++] = b.uid; }
   }
 }
 // Move a beam: the tip chases its target (or the idle point ahead), the control point sits straight
@@ -345,7 +360,7 @@ function burn(g, b, dt, dps, vol) {
   }
   const amt = dps * dt;
   if (b.pt) g.damagePart(b.e, b.pt, amt); else g.damageEnemy(b.e, amt);
-  if (b.fxT <= 0) { b.fxT = g.fx.lowQuality ? 0.09 : 0.05; g.fx.hitSpark(b.ex, 0.1, b.ez, 1.0, 0.3, 0.85, 1); }
+  if (b.fxT <= 0 && !b.shared) { b.fxT = g.fx.lowQuality ? 0.1 : 0.06; g.fx.hitSpark(b.ex, 0.1, b.ez, 0.75, 0.2, 0.65, 1); } // one spray per target
   if (b.sndT <= 0) { b.sndT = 0.1; g.audio.play('hit', { vol: 0.28 * vol }); }
 }
 function firePlasma(g, p, dt) {
@@ -373,7 +388,7 @@ function drawBeam(fx, b, k, W, A, t, reticle) {
   const B = fx.beams, lowQ = fx.lowQuality;
   const x0 = b.mx, z0 = b.mz, x1 = b.cx, z1 = b.cz, x2 = b.ex, z2 = b.ez;
   const reach = Math.hypot(x1 - x0, z1 - z0) + Math.hypot(x2 - x1, z2 - z1); // ≥ curve length
-  const n = clamp(Math.ceil(reach / (lowQ ? 1.4 : 0.85)), 3, 26);
+  const n = clamp(Math.ceil(reach / (lowQ ? 1.5 : 1.0)), 3, 22);
   const idle = !b.e, arm = b.armored && !idle;
   const cr = arm ? STEEL[0] : PINK[0], cg = arm ? STEEL[1] : PINK[1], cb = arm ? STEEL[2] : PINK[2];
   const ph = (t * 2.4 + k * 0.37) % 1;
@@ -386,10 +401,10 @@ function drawBeam(fx, b, k, W, A, t, reticle) {
     const tip = idle ? 1 - sm * sm * 0.85 : 1;              // an idle beam fades toward its tip
     const a = A * (1 + 0.7 * Math.exp(-dp * dp)) * tip;     // travelling pulse
     const w = W * (0.84 + 0.16 * Math.sin(t * 53 + sm * 13 + k * 2.1)) * (0.78 + 0.22 * sm);
-    const mx = (px + qx) * 0.5, mz = (pz + qz) * 0.5, len = l * 1.75 + w * 0.4;
-    if (!lowQ) B.push(mx, 0.1, mz, w * 2.4, len, rot, F.STREAK, 1, cr * 0.34 * a, cg * 0.3 * a, cb * 0.34 * a, 1, 0); // sheath
-    B.push(mx, 0.1, mz, w, len, rot, F.STREAK, 1, cr * a, cg * a, cb * a, 1, 0.55);                                  // core
-    if (!lowQ && j < n && (j & 1) === 0) B.push(qx, 0.1, qz, w * 1.9, w * 1.9, 0, F.GLOW, 0, cr * 0.3 * a, cg * 0.26 * a, cb * 0.3 * a, 0.45, 0.4); // joint
+    const mx = (px + qx) * 0.5, mz = (pz + qz) * 0.5, len = l * 1.55 + w * 0.35;
+    if (!lowQ) B.push(mx, 0.1, mz, w * 1.6, len, rot, F.STREAK, 1, cr * 0.42 * a, cg * 0.36 * a, cb * 0.42 * a, 1, 0); // sheath
+    B.push(mx, 0.1, mz, lowQ ? w * 1.35 : w, len, rot, F.STREAK, 1, cr * a, cg * a, cb * a, 1, 0.55);                // core (no sheath / bloom on low: wider)
+    if (!lowQ && j < n && j % 3 === 0) B.push(qx, 0.1, qz, w * 1.8, w * 1.8, 0, F.GLOW, 0, cr * 0.3 * a, cg * 0.26 * a, cb * 0.3 * a, 0.5, 0.4); // joint
     px = qx; pz = qz;
   }
   if (idle) { // a soft spark where the beam gives out
@@ -397,9 +412,9 @@ function drawBeam(fx, b, k, W, A, t, reticle) {
     B.push(x2, 0.1, z2, s, s, 0, F.GLOW, 0, cr * 0.5 * A, cg * 0.5 * A, cb * 0.5 * A, 0.7);
     return;
   }
-  const f = (1.1 + 0.25 * Math.sin(t * 31 + k * 1.7)) * (b.arrived ? 1 : 0.6) * (0.7 + 0.3 * A);
-  B.push(x2, 0.1, z2, f, f, t * 7 + k, F.FLARE, 0, cr * A, cg * A, cb * A, 1);
-  if (!reticle) return;
+  if (!reticle) return; // doubled up: the owning beam draws the flare and the reticle
+  const f = (0.95 + 0.2 * Math.sin(t * 31 + k * 1.7)) * (b.arrived ? 1 : 0.6) * (0.7 + 0.3 * A);
+  B.push(x2, 0.1, z2, f, f, t * 7 + k, F.FLARE, 0, cr * 0.75 * A, cg * 0.75 * A, cb * 0.75 * A, 1);
   const lk = Math.min(1, b.lockT / 0.18);                    // lock-in: shrinks onto the target
   const rs = Math.max(1.4, b.tr * 3.1) * (1 + 1.3 * (1 - lk) * (1 - lk) + 0.05 * Math.sin(t * 12 + k)) * (0.75 + 0.25 * A);
   B.push(b.tx, 0.12, b.tz, rs, rs, t * 1.6 + k * 0.8, F.RETICLE, 1, cr * 1.1, cg * 1.1, cb * 1.1, 0.6 + 0.4 * lk, 0.5);
@@ -446,7 +461,7 @@ function waveTouches(ps, i, t) {
   const lat = dz * fx - dx * fz, back = -(dx * fx + dz * fz);
   if (Math.abs(lat) > hw + t.r * 0.8) return false;
   const u = clamp(lat / hw, -1, 1);
-  return Math.abs(back - WAVE.sag * hw * u * u) < WAVE.th + t.r * 0.85;
+  return Math.abs(back - 0.6 * WAVE.depth(hw) * u * u) < WAVE.th + t.r * 0.85; // the ARC frame's parabola
 }
 // Spawn a wave (main or drone) at its apex; full: its full half-width.
 function addWave(g, x, z, vx, vz, dmg, full, age) {
@@ -737,8 +752,8 @@ SHOT[SK.OPTION] = { // the drones' VULCAN pair: drone-tinted tracers
 SHOT[SK.WAVE] = {
   life: WAVE.life,
   update(g, i) {
-    const ps = g.ps, hw = waveHalfWidth(ps.t[i], ps.trail[i]);
-    ps.w[i] = hw; ps.r[i] = hw * 1.08 + WAVE.th; // the circle that holds the whole crescent
+    const ps = g.ps, hw = waveHalfWidth(ps.t[i], ps.trail[i]), tb = 0.6 * WAVE.depth(hw);
+    ps.w[i] = hw; ps.r[i] = Math.sqrt(hw * hw + tb * tb) + WAVE.th; // the circle that holds the whole crescent
   },
   test(g, i, t) { const ps = g.ps; return !waveSeen(ps, i, t.uid) && waveTouches(ps, i, t); },
   hit(g, i, t) {
@@ -764,19 +779,17 @@ SHOT[SK.WAVE] = {
     return 'keep';
   },
   draw(g, i, fx) {
-    // the ARC frame's apex sits 0.25 × its height ahead of the quad centre, its tips at ±0.41 × width
+    // the ARC frame's apex sits 0.31 × its height ahead of the quad centre, its tips at ±0.45 × width
     const ps = g.ps, hw = ps.w[i], t = ps.t[i], small = ps.trail[i] < 1.3;
     const vx = ps.vx[i], vz = ps.vz[i], sp = Math.sqrt(vx * vx + vz * vz) || 1, fx_ = vx / sp, fz_ = vz / sp;
-    const sx = hw * 2.44, sy = sx * 0.62, back = sy * 0.25, rot = flatRot(vx, vz);
+    const sx = hw / 0.45, sy = WAVE.depth(hw), back = sy * 0.31, rot = flatRot(vx, vz);
     // fades in at the gun, dims as it travels (the far screen stays readable), fades out at the end
     const a = Math.min(1, t * 14) * clamp((WAVE.life - t) / 0.3, 0, 1) * (1 - 0.5 * t / WAVE.life) * (small ? 0.75 : clamp(1.2 - 0.06 * hw, 0.8, 1.1));
     const cx = ps.x[i] - fx_ * back, cz = ps.z[i] - fz_ * back;
     const B = fx.beams;
     B.push(cx, 0.1, cz, sx, sy, rot, F.ARC, 1, GOLD[0] * a, GOLD[1] * a, GOLD[2] * a, 1, 0.5);
-    if (fx.lowQuality) return;
-    B.push(cx - fx_ * 0.5, 0.1, cz - fz_ * 0.5, sx * 0.95, sy * 0.95, rot, F.ARC, 1, 0.55 * a, 0.26 * a, 0.03 * a, 0.5, 0); // afterimage
-    if (small) return;
-    const tb = WAVE.sag * hw, gs = 0.55 + hw * 0.07; // glints on the tips
+    if (fx.lowQuality || small) return;
+    const tb = 0.6 * sy, gs = 0.55 + hw * 0.07; // glints on the tips
     for (let s = -1; s <= 1; s += 2) {
       B.push(ps.x[i] - fz_ * hw * s - fx_ * tb, 0.1, ps.z[i] + fx_ * hw * s - fz_ * tb, gs, gs, 0, F.GLOW, 0, 1.1 * a, 0.75 * a, 0.2 * a, 0.7);
     }

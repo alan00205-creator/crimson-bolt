@@ -65,17 +65,20 @@ function frameFn(i, u, v) {
       return [b, smooth(0.55, 0.2, d), b];
     }
     case F.ARC: {
-      // crescent (WAVE): the band inside a leading circle and outside a trailing one, apex at
-      // v -0.5 (front), 0.14 thick there, tapering to points at (±0.82, 0); a narrow glow around
-      // it and a white-hot leading edge that fades toward the tips
-      const d1 = Math.hypot(u, v - 0.4224) - 0.9224; // < 0 inside the leading circle
-      const d2 = Math.hypot(u, v - 0.754) - 1.114;   // > 0 outside the trailing circle
-      const sd = Math.max(d1, -d2);                  // < 0 inside the crescent
-      const span = sat(1 - (u * u) / 0.64);          // 1 at the apex … 0 at the tips
-      const body = sd < 0 ? 1 : Math.exp(-sd * sd * 260) * 0.8;
-      const halo = Math.exp(-Math.max(sd, 0) * 16) * 0.12 * span;
-      const edge = Math.exp(-(d1 + 0.03) * (d1 + 0.03) * 1600) * Math.sqrt(span);
-      return [sat(body * (0.45 + 0.55 * Math.sqrt(span)) + halo), sat(edge * (sd < 0.02 ? 1 : 0.3)), sat(body * (0.35 + 0.65 * span) + halo)];
+      // crescent (WAVE), filling its cell so the quad hugs it (no radial window, see getAtlas):
+      // a parabolic band whose apex leads at v -0.62 and whose tips trail to (±0.9, 0.58),
+      // thickest at the apex and tapering to points; a crisp leading edge with a white-hot line
+      // just behind it, a softer trailing glow. weapons.js maps it (tips at ±0.45 × width,
+      // apex 0.31 × height ahead of the centre) and hit-tests the same parabola.
+      const k = u / 0.9, span = sat(1 - k * k);
+      const vc = -0.62 + 1.2 * k * k, th = 0.34 * Math.pow(span, 0.6) + 0.004;
+      const d = v - vc, lead = -0.4 * th, trail = 0.6 * th;
+      const out = d < lead ? (lead - d) / 0.035 : d > trail ? (d - trail) / 0.07 : 0;
+      const edge = smooth(1.0, 0.92, Math.abs(u)) * smooth(1.0, 0.86, Math.abs(v));
+      const body = Math.exp(-out * out) * (0.4 + 0.6 * Math.sqrt(span)) * edge;
+      const c = (d - lead * 0.5) / (0.16 * th + 0.008);
+      const core = Math.exp(-c * c) * Math.sqrt(span) * edge;
+      return [sat(body), sat(core), sat(body * (0.3 + 0.7 * span))];
     }
     case F.RETICLE: {
       // lock-on reticle: a thin ring broken into four corner arcs, four short ticks pointing in
@@ -107,7 +110,7 @@ function getAtlas() {
       for (let x = 0; x < S; x++) {
         const u = ((x + 0.5) / S) * 2 - 1, v = ((y + 0.5) / S) * 2 - 1;
         const [b0, c0, a0] = frameFn(f, u, v);
-        const w = smooth(1.0, 0.8, Math.hypot(u, v)); // radial window: no straight quad edges
+        const w = f === F.ARC ? 1 : smooth(1.0, 0.8, Math.hypot(u, v)); // radial window: no straight quad edges (ARC fades itself)
         const b = b0 * w, c = c0 * w, a = a0 * w;
         const k = ((oy + y) * cv.width + ox + x) * 4;
         img.data[k] = Math.round(sat(b) * 255);

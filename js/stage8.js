@@ -85,13 +85,6 @@ function zAtRow(v, py, y = 0) {
   return v.C.z + (q.z - v.C.z) * (1 - y / v.C.y);
 }
 const live = (pt) => (pt && !pt.dead ? pt : null);
-/** like stage.js fireTimer, on a named slot of s (a unit with several independent guns) */
-function fireTimerS(s, key, dt, g, interval, first) {
-  if (s[key] === undefined) s[key] = first / g.diff.fr;
-  s[key] -= dt;
-  if (s[key] <= 0) { s[key] += interval / g.diff.fr; return true; }
-  return false;
-}
 /** the jet can be touched by the stage right now (pulls, ambush placement) */
 const jetFree = (g) => g.player.alive && g.player.entering <= 0 && g.phase !== 'bossdead' && g.phase !== 'clear';
 /** bend bullet i sideways: an acceleration c across its path (c > 0 curls it clockwise on screen) — a constant

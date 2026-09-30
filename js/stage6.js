@@ -8,7 +8,7 @@
 //               then kicks the rock away (it tumbles on: an s6_rock) and peels off with a fan
 //   s6_rock     the loose asteroid a raider kicks away, or a field of them drifting across: solid, shoot it
 //   s6_sail     solar-sail fighters: glide in on the light, the film lights up (the telegraph) and the sail
-//               looses a curtain of orbs from along its span — a wall to slip round, not through
+//               looses curtains of orbs from along its span — walls to slip round, not through
 //   s6_comet    comet bombers: streak straight across on a long ion tail, shedding ice shards that hang
 //               for a moment, then fall toward where the jet was
 //   s6_skimmer  ring skimmers: streams crossing the screen (each drops a needle pair as it passes over the
@@ -17,12 +17,13 @@
 //   basilisk    mid-boss: a mechanical serpent winding a figure of eight across the upper screen — gun spines
 //               sprinkling fans from its flanks, a stinger spitting homing venom, hissing fans from the jaws,
 //               then the eye rises: the petrifying gaze (a line of sparks locks, a stream of needles runs down it)
-//   helios      boss (stand-in for now: stage 3's SERAPH)
+//   helios      boss, the corona battleship: turrets, flare launchers (solar flares that burst into rings) and
+//               its prow gun; then the corona wings swing out (focused volleys from their ray tips, prominences
+//               arcing back across the screen); then the petals open on the captive star in its heart
 // Stage-1 carriers bring the items.
 import { STAGE_META } from './defs.js';
 import { F } from './fx.js';
-import { fireTimer, bez, W, makeTimeline, midbossEvent } from './stage.js';
-import * as S3 from './stage3.js';
+import { fireTimer, bez, W, makeTimeline, midbossEvent, bossDefeated } from './stage.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -50,6 +51,19 @@ export const ENEMY = {
       { key: 'tail', hp: 170, score: 7000, medals: 2, big: 1.8 },
       { key: 'core', hp: 610, core: true, score: 40000 },
     ],
+  },
+  // boss: parts in hit-test order. The corona wings start swept back and sealed (not targets) and count in the
+  // HP bar from the start; the core is armoured under its petals until phase 3. hull: the central hull aft of
+  // the core (the spine and the bridge; never in front of a part, and narrower than the aft turret pair).
+  helios: {
+    hp: 1, score: 0, radius: 5.0, air: true, explode: 4, debris: 40, boss: true, model: 'helios', prewarm: 1,
+    parts: [
+      { key: 'turret', list: true, hp: 160, score: 5000 },
+      { key: 'flareL', hp: 240, score: 9000, medals: 2, big: 1.8 }, { key: 'flareR', hp: 240, score: 9000, medals: 2, big: 1.8 },
+      { key: 'wingL', hp: 500, score: 20000, medals: 4, big: 2.4 }, { key: 'wingR', hp: 500, score: 20000, medals: 4, big: 2.4 },
+      { key: 'core', hp: 1600, core: true, score: 300000 },
+    ],
+    hull: { hw: 1.0, z0: -6.6, z1: -2.0 },
   },
 };
 
@@ -109,7 +123,7 @@ function riderAI(x0, vx = 0, vz = 2.6, kick = 0.4) {
     }
     if (s.mode === 'ride') {
       e.x += vx * dt; e.z += vz * dt;
-      if (fireTimer(e, dt, g, 2.4, 0.9)) s.burst = 3;
+      if (fireTimer(e, dt, g, 2.2, 0.8)) s.burst = 4;
       if (s.burst > 0) {
         s.bt = (s.bt || 0) - dt;
         if (s.bt <= 0) { s.bt = 0.14; s.burst--; if (g.canFire(e)) { const m = g.muzzlePos(e.mesh); g.shoot(m.x, m.z, g.aim(m.x, m.z), 7.2); } }
@@ -150,8 +164,9 @@ function rockAI(vx, vz, spin = 1, top = false) {
 // solar-sail fighters
 // --------------------------------------------------------------------------------
 // Glides in on a curve from beyond the top (from `side`), the sail banked into the turn; then `cycles`
-// times: the film lights up (the telegraph, 0.95 s), it looses a curtain — orbs strung along its span, all
-// flying at the jet together — and reaches a little way across; then it catches the light and sails away.
+// times: the film lights up (the telegraph, 0.95 s), it looses two curtains (three from loop 2) — orbs strung
+// along its span, all flying at the jet together — and reaches a little way across; then it catches the light
+// and sails away.
 function sailAI(x0, side = 1, zf = 0.24, cycles = 2) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
@@ -173,7 +188,7 @@ function sailAI(x0, side = 1, zf = 0.24, cycles = 2) {
       e.z = s.tz + Math.sin(e.t * 1.6) * 0.15;
       if (ud.setCharge) { ud.setCharge(Math.min(1, s.mt / 0.85)); ud.setSail(0, 1.15); }
       if (s.mt > 0.95) {
-        s.mode = 'fire'; s.mt = 0; s.walls = g.diff.level >= 1.5 ? 2 : 1; s.wt = 0;
+        s.mode = 'fire'; s.mt = 0; s.walls = g.diff.level >= 1.5 ? 3 : 2; s.wt = 0;
         if (ud.setCharge) ud.setCharge(0);
       }
     } else if (s.mode === 'fire') {
@@ -184,7 +199,7 @@ function sailAI(x0, side = 1, zf = 0.24, cycles = 2) {
         if (g.canFire(e)) curtain(g, mx, mz, 5, (ud.spread || 1.9), 5.4);
         g.fx.p.emit(mx, 0.3, mz, 0, 0, 0, 0.3, 1.2, 4.4, [1.4, 1.1, 2.2, 0.8], [0.3, 0.2, 0.6, 0], F.RING, 0, OPT_RING);
       }
-      if (s.mt > 0.5) {
+      if (s.mt > 0.8) {
         s.n++;
         if (s.n >= cycles) { s.mode = 'out'; s.mt = 0; s.dx = e.x > 0 ? 1 : -1; if (ud.setThrust) ud.setThrust(1); }
         else { s.mode = 'reach'; s.mt = 0; s.rx0 = e.x; s.rx1 = clamp(e.x + (g.player.x > e.x ? 2.6 : -2.6), -6.5, 6.5); if (ud.setThrust) ud.setThrust(0.7); }
@@ -501,15 +516,339 @@ function spawnBasilisk(g) {
 }
 
 // --------------------------------------------------------------------------------
-// boss: stand-in until HELIOS is in (stage 3's SERAPH)
+// solar flares (HELIOS lobs them)
 // --------------------------------------------------------------------------------
+// Flies from where it was launched to (tx, tz) (easing in over `fly` s), hangs there swelling for `fuse` s,
+// then bursts into a ring of orbs. Shoot it down first and it never bursts.
+function flareAI(tx, tz, fly = 1.25, fuse = 1.0) {
+  return (e, dt, g) => {
+    const s = e.s, ud = e.mesh.userData;
+    if (!s.init) { s.init = true; s.x0 = e.x; s.z0 = e.z; s.fixedYaw = true; s.yaw = 0; if (ud.setFuse) ud.setFuse(0); }
+    if (e.t < fly) {
+      const u = ease(e.t / fly);
+      e.x = s.x0 + (tx - s.x0) * u; e.z = s.z0 + (tz - s.z0) * u;
+      if (Math.random() < 0.7) plasmaPuff(g, e.x, e.z - 0.3, 0, -1, 0.45);
+    } else {
+      const k = (e.t - fly) / fuse;
+      if (ud.setFuse) ud.setFuse(k);
+      if (k >= 1) {
+        if (g.canFire(e)) g.ring(e.x, e.z, g.diff.level >= 1.5 ? 14 : 12, 4.2, rnd(0, TAU));
+        g.fx.explosion(e.x, 0.2, e.z, 1.2, { debris: 0 });
+        g.fx.p.emit(e.x, 0.2, e.z, 0, 0, 0, 0.35, 1.0, 5.0, FLARE_RING_A, FLARE_RING_B, F.RING, 0, OPT_RING);
+        g.audio.play('explodeS', { pan: clamp(e.x / 10, -1, 1) });
+        e.alive = false;
+      }
+    }
+  };
+}
+const FLARE_RING_A = [2.6, 1.6, 0.6, 0.9], FLARE_RING_B = [0.8, 0.3, 0.05, 0];
+
+// --------------------------------------------------------------------------------
+// boss: HELIOS, the corona battleship
+// --------------------------------------------------------------------------------
+// p1: four turrets fire aimed twin-needle bursts, the flank launchers take turns lobbing solar flares (they
+//     hang, swell and burst into rings — shoot them), the prow gun fires big-orb fans → p2 once the turrets and
+//     launchers are gone (or after 44 s): the corona wings swing out; in turn each lights its collector glass
+//     and fires a focused volley (needle bursts from its five ray tips, all converging on the jet), and now
+//     and then their tips throw prominences (orbs arcing up and falling back across the screen) → p3 once
+//     both wings are gone (or after 42 s): the petals open on the captive star — a four-arm spiral that
+//     reverses, prominence fountains, and a coronal mass ejection every few seconds (the star swells, then
+//     two woven rings); low on HP it rages faster.
+// Parts left alive keep firing in the later phases at a reduced rate.
+const BAR_ROW = 118;   // 16 px under the boss bar
+function heliosAI() {
+  return (e, dt, g) => {
+    const s = e.s, ud = e.mesh.userData, v = g.view;
+    if (!s.init) {
+      s.init = true; s.mode = 'enter'; s.fixedYaw = true; s.yaw = Math.PI; e.invuln = true; e.armored = true;
+      s.open = 0; s.spread = 0; s.a = 0; s.b = 0; s.c = 0; s.sway = 0; s.pt = 0; s.ph = 0; s.heat = 0;
+      // station: the core's top edge (e.z − 0.6 − 1.25, raised ~1) stays below the boss bar
+      s.z0 = v.zTop - 16; s.baseZ = Math.max(v.zTop + 11.5, zAtRow(v, BAR_ROW, 1.0) + 3.3); e.x = 0; e.z = s.z0;
+      s.tur = [0, 1, 2, 3].map((k) => g.partByKey(e, 'turret' + k));
+      s.fl = [g.partByKey(e, 'flareL'), g.partByKey(e, 'flareR')];
+      s.wg = [g.partByKey(e, 'wingL'), g.partByKey(e, 'wingR')];
+      s.core = g.partByKey(e, 'core');
+      for (const w of s.wg) if (w) w.dead = true;                 // swept back and sealed until phase 2
+      s.flT = 2.2; s.flSide = 0; s.flCh = -1; s.prowT = 3.0; s.focT = 1.2; s.focSide = 0; s.focCh = -1; s.promT = 3.5;
+      if (ud.reset) ud.reset();
+    }
+    const core = s.core;
+    // HP bar: every part (sealed ones count at full health)
+    let hp = 0, max = 0;
+    for (let i = 0; i < e.parts.length; i++) { const pt = e.parts[i]; max += pt.maxHp; hp += Math.max(0, pt.hp); }
+    g.ui.setBossHP(hp / max);
+    if (e.dying) { heliosDeath(e, dt, g); return; }
+    // the drive plume streams off the stern, up toward the Sun
+    if (Math.random() < 0.7) plasmaPuff(g, e.x + (Math.random() < 0.5 ? -1.1 : 1.1) * (Math.random() < 0.4 ? 0 : 1), e.z - 8.2, rnd(-0.1, 0.1), -1, 0.9);
+    if (s.mode === 'enter') {
+      const k = ease(e.t / 5.5);
+      e.z = s.z0 + (s.baseZ - s.z0) * k;
+      e.x = Math.sin(e.t * 0.7) * 0.5 * (1 - k);
+      if (e.t > 5.5) { s.mode = 'p1'; s.ph = 0; e.invuln = false; }
+      return;
+    }
+    s.pt += dt; s.ph += dt;
+    // movement: a slow, heavy sway that widens as it loses its armament
+    const want = s.mode === 'p1' ? 1.3 : s.mode === 'p2' ? 1.9 : 2.5;
+    s.sway += (want - s.sway) * Math.min(1, dt * 0.4);
+    e.x = Math.sin(s.pt * 0.29) * s.sway;
+    e.z = s.baseZ + Math.sin(s.pt * 0.43) * 0.5;
+
+    // phase changes
+    let outer = 0;
+    for (let i = 0; i < 4; i++) if (live(s.tur[i])) outer++;
+    if (live(s.fl[0])) outer++;
+    if (live(s.fl[1])) outer++;
+    if (s.mode === 'p1' && (!outer || s.ph > 44)) {
+      s.mode = 'p2'; s.ph = 0;
+      g.audio.play('warning', { vol: 0.5 }); g.shake.add(0.35);
+    }
+    if (s.mode !== 'p1' && s.spread < 1) {            // the corona wings swing out
+      s.spread = Math.min(1, s.spread + dt / 2.0);
+      if (ud.setWings) ud.setWings(s.spread);
+      if (s.spread > 0.6) for (const w of s.wg) if (w && w.dead && !w.obj.userData.destroyed) w.dead = false;
+      if (Math.random() < 0.5) g.fx.smokePuff(e.x + (Math.random() < 0.5 ? -2.4 : 2.4), 0.6, e.z - 2.5 + rnd(-0.5, 0.5), 0.6, 0.6);
+    }
+    const wL = live(s.wg[0]), wR = live(s.wg[1]);
+    if (s.mode === 'p2' && s.spread >= 1 && ((!wL && !wR) || s.ph > 42)) {
+      s.mode = 'p3'; s.ph = 0; s.cyc = 0; s.cmeT = 3.5;
+      g.shake.add(0.6); g.ui.flash(0.35); g.audio.play('explodeL'); g.audio.play('warning', { vol: 0.5 });
+    }
+    // the petals open on the star in phase 3
+    s.open += ((s.mode === 'p3' ? 1 : 0) - s.open) * Math.min(1, dt * 1.4);
+    if (core && core.obj.userData.setOpen) core.obj.userData.setOpen(s.open);
+    e.armored = s.open < 0.85;
+    s.heat = Math.max(0, s.heat - dt * 1.5);
+    if (ud.setStar) ud.setStar(s.heat);
+
+    // turrets track the jet (aiming is free; firing is gated below)
+    for (let i = 0; i < 4; i++) { const t = live(s.tur[i]); if (t) aimPartH(g, e, t, dt, 2.4); }
+    if (!g.canFire(e)) { for (const f of s.fl) if (f) f.obj.userData.setCharge(0); for (const w of s.wg) if (w) w.obj.userData.setCharge(0); s.flCh = -1; s.focCh = -1; return; }
+    const fr = g.diff.fr, hard = g.diff.level >= 1.5;
+    const late = s.mode === 'p1' ? 1 : s.mode === 'p2' ? 0.7 : 0.55;   // leftover guns slow down
+    // turrets: aimed 3-round twin-needle bursts, staggered
+    for (let i = 0; i < 4; i++) {
+      const t = live(s.tur[i]);
+      if (!t) continue;
+      t.fireT -= dt * late;
+      if (t.fireT <= 0) { t.fireT = (2.5 + i * 0.18) / fr; t.burst = 3; t.bt = 0; }
+      if (t.burst > 0) {
+        t.bt -= dt;
+        if (t.bt <= 0) {
+          t.bt = 0.1; t.burst--;
+          const ang = t.obj.rotation.y + e.yaw - Math.PI;
+          for (let q = 0; q < 2; q++) { const m = g.muzzlePos(t.obj, q); g.shoot(m.x, m.z, ang, 9.2, g.BK.NEEDLE); }
+        }
+      }
+    }
+    // flare launchers: in turn, a 0.7 s glow in the tube, then a flare lobbed out ahead of the jet
+    s.flT -= dt * late;
+    if (s.flCh < 0 && s.flT <= 0) {
+      for (let q = 0; q < 2; q++) { s.flSide ^= 1; if (live(s.fl[s.flSide])) { s.flCh = 0; break; } }
+      s.flT = 3.4 / fr;
+    }
+    if (s.flCh >= 0) {
+      const f = live(s.fl[s.flSide]);
+      if (!f) s.flCh = -1;
+      else {
+        s.flCh += dt;
+        f.obj.userData.setCharge(Math.min(1, s.flCh / 0.7));
+        if (s.flCh > 0.7) {
+          s.flCh = -1; f.obj.userData.setCharge(0);
+          const m = g.muzzlePos(f.obj), mx = m.x, mz = m.z, p = g.player;
+          const tx = clamp(p.x + rnd(-2.6, 2.6), -6.5, 6.5), tz = clamp(p.z - rnd(7, 9.5), v.zTop + 7, v.zTop + (v.zBottom - v.zTop) * 0.55);
+          g.spawn('s6_flare', { x: mx, z: mz, ai: flareAI(tx, tz) });
+          g.fx.p.emit(mx, 0.6, mz, 0, 0, 0, 0.18, 0.8, 2.6, FLARE_RING_A, FLARE_RING_B, F.FLARE, 0, OPT_PUFF);
+          g.audio.play('missile', { vol: 0.5, pitch: -6 }); g.shake.add(0.1);
+        }
+      }
+    }
+    // the prow gun: aimed big-orb fans
+    s.prowT -= dt * (s.mode === 'p3' ? 0.4 : late);
+    if (s.prowT <= 0) { s.prowT = 4.4 / fr; const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, g.aim(m.x, m.z), 5, 0.8, 6.2, g.BK.BIG); }
+    if (s.mode === 'p1') return;
+    // corona wings: in turn, the glass lights (0.8 s), then each ray tip fires a 3-needle burst at the jet — five
+    // converging lines; now and then the tips throw prominences
+    if (s.spread >= 1) {
+      s.focT -= dt;
+      if (s.focCh < 0 && s.focT <= 0 && (wL || wR)) {
+        s.focSide ^= 1; if (!live(s.wg[s.focSide])) s.focSide ^= 1;
+        s.focCh = 0; s.focT = (s.mode === 'p2' ? 2.0 : 3.4) / fr;
+        g.audio.play('lock', { vol: 0.35, pitch: 4 });
+      }
+      if (s.focCh >= 0) {
+        const w = live(s.wg[s.focSide]);
+        if (!w) s.focCh = -1;
+        else {
+          s.focCh += dt;
+          w.obj.userData.setCharge(Math.min(1, s.focCh / 0.8));
+          if (s.focCh > 0.8 && !s.focFired) {
+            s.focFired = true; s.fb = 3; s.fbt = 0;
+            g.audio.play('missile', { vol: 0.45, pitch: 3 });
+          }
+          if (s.focFired) {
+            s.fbt -= dt;
+            if (s.fbt <= 0 && s.fb > 0) {
+              s.fbt = 0.11; s.fb--;
+              for (let k = 0; k < 5; k++) { const m = g.muzzlePos(w.obj, k); g.shoot(m.x, m.z, g.aim(m.x, m.z), 8.4, g.BK.NEEDLE); }
+            }
+            if (s.fb <= 0) { s.focCh = -1; s.focFired = false; w.obj.userData.setCharge(0); }
+          }
+        }
+      }
+      s.promT -= dt;
+      if (s.promT <= 0 && (wL || wR)) {
+        s.promT = (s.mode === 'p2' ? 4.6 : 6.5) / fr;
+        for (const w of s.wg) {
+          if (!live(w)) continue;
+          for (const k of [0, 4]) {
+            const m = g.muzzlePos(w.obj, k), mx = m.x, mz = m.z, inward = mx > e.x ? -1 : 1;
+            for (let q = 0; q < 2; q++) prominence(g, mx, mz, Math.PI + inward * (0.35 + q * 0.3), 5.0 + q * 0.6, 4.8);
+          }
+        }
+      }
+    }
+    if (s.mode !== 'p3' || !core || s.open < 0.85) return;
+    // the captive star: a reversing four-arm spiral, prominence fountains, coronal mass ejections
+    const cm = g.muzzlePos(core.obj), cx = cm.x, cz = cm.z;
+    const rage = core.hp < core.maxHp * 0.4;
+    s.cyc += dt;
+    s.ct = (s.ct || 0) - dt;
+    if (s.ct <= 0 && s.cmeT > 0.9) {
+      s.ct = (rage ? 0.13 : 0.15) / fr;
+      const dir = Math.floor(s.cyc / 2.8) & 1 ? -1 : 1, arms = rage || hard ? 4 : 3;
+      s.a += 0.23 * dir;
+      for (let k = 0; k < arms; k++) g.shoot(cx, cz, s.a + (k * TAU) / arms, rage ? 4.7 : 4.4);
+    }
+    s.fnT = (s.fnT ?? 1.4) - dt;
+    if (s.fnT <= 0) {
+      s.fnT = (rage ? 2.3 : 2.9) / fr;
+      const n = hard ? 9 : 7;
+      for (let k = 0; k < n; k++) prominence(g, cx, cz, Math.PI + (k / (n - 1) - 0.5) * 1.6, rnd(4.6, 5.8), 5.2);
+      g.fx.p.emit(cx, 0.8, cz, 0, 0, 0, 0.25, 1.4, 4.0, FLARE_RING_A, FLARE_RING_B, F.FLARE, 0, OPT_PUFF);
+    }
+    s.cmeT -= dt;
+    if (s.cmeT <= 0.9 && s.cmeT + dt > 0.9) g.audio.play('lock', { vol: 0.5, pitch: -8 });
+    if (s.cmeT <= 0.9) s.heat = Math.max(s.heat, 1 - s.cmeT / 0.9);     // the star swells: the telegraph
+    if (s.cmeT <= 0) {
+      s.cmeT = (rage ? 6.8 : 8.2) / fr;
+      const n = hard ? 20 : 16;
+      s.b += 0.5;
+      g.ring(cx, cz, n, 3.9, s.b * (TAU / (2 * n)), g.BK.BIG);
+      if (rage || hard) g.ring(cx, cz, n, 5.1, (s.b + 1) * (TAU / (2 * n)));
+      g.fx.shockwave(cx, 0.3, cz, 12, [2.6, 1.8, 0.8, 1], 0.6);
+      g.shake.add(0.35); g.ui.flash(0.15); g.audio.play('explodeL', { vol: 0.7 });
+    }
+  };
+}
+/** an orb launched up at `ang` (π = straight up the screen) at `speed` that the Sun's pull (`pull`, down the
+ *  screen) bends into an arc and throws back across the play area: a prominence */
+function prominence(g, x, z, ang, speed, pull) {
+  const i = g.shoot(x, z, ang, speed);
+  if (i >= 0) g.eb.az[i] = pull * g.diff.bs;
+}
+// turn a boss part toward the player (parts sit in the unit's yawed frame)
+function aimPartH(g, e, pt, dt, rate) {
+  const obj = pt.obj;
+  let d = Math.atan2(-(g.player.x - pt.x), -(g.player.z - pt.z)) - e.yaw - obj.rotation.y;
+  while (d > Math.PI) d -= TAU; while (d < -Math.PI) d += TAU;
+  obj.rotation.y += clamp(d, -rate * dt, rate * dt);
+}
+// Death: the guns still standing blow in turn while blasts run over the wings and hull; the captive star goes
+// critical — it swells white, the petals are flung off, a nova flash tears the wings away — then the wreck is
+// drawn back up into the Sun, shrinking, burning.
+const NOVA_A = [3.0, 2.6, 1.8, 1], NOVA_B = [1.4, 0.5, 0.1, 0];
+const BURN_A = [2.4, 1.2, 0.35, 0.9], BURN_B = [0.9, 0.22, 0.04, 0], OPT_BURN = { drag: 0.6, vrot: 0 };
+function heliosDeath(e, dt, g) {
+  const s = e.s, ud = e.mesh.userData;
+  if (!s.dieT) { for (const f of s.fl) if (f) f.obj.userData.setCharge(0); for (const w of s.wg) if (w) w.obj.userData.setCharge(0); }
+  s.dieT = (s.dieT || 0) + dt;
+  const t = s.dieT;
+  if (ud.setFlash && t < 2.2) ud.setFlash(Math.max(0, Math.sin(t * 23)) * 0.35);
+  // guns still standing blow one after another
+  s.popT = (s.popT ?? 0.15) - dt;
+  if (s.popT <= 0 && t < 1.6) {
+    s.popT = 0.2;
+    let pt = null;
+    for (let i = 0; i < e.parts.length && !pt; i++) if (!e.parts[i].dead && !e.parts[i].core && !e.parts[i].obj.userData.destroyed) pt = e.parts[i];
+    if (pt) {
+      pt.dead = true;
+      if (pt.obj.userData.setDestroyed) pt.obj.userData.setDestroyed(true);
+      g.fx.explosion(pt.x, 0.4, pt.z, Math.min(1.8, pt.big), { debris: 8, color: ud.debrisColor });
+      g.audio.play('explodeL', { vol: 0.7 });
+    }
+  }
+  // blasts over the hull and wings
+  s.boomT = (s.boomT || 0) - dt;
+  if (s.boomT <= 0 && t < 2.3) {
+    s.boomT = 0.12;
+    const side = (s.side = -(s.side || 1)), x = e.x + side * rnd(0.5, 5.5), z = e.z + rnd(-5, 5);
+    g.fx.explosion(x, 0.4, z, rnd(0.9, 1.5), { debris: 4, color: ud.debrisColor });
+    g.audio.play('explodeM', { vol: 0.55, pan: clamp(x / 9, -1, 1) });
+    g.shake.add(0.1);
+  }
+  // the star goes critical: it swells and whitens, then the nova
+  if (ud.setStar) ud.setStar(Math.min(1.5, t / 1.3));
+  const cz = e.z + 0.6;
+  if (t > 0.6 && t < 1.6 && Math.random() < 0.6) g.fx.p.emit(e.x + rnd(-0.6, 0.6), 1.2, cz + rnd(-0.6, 0.6), 0, 0, 0, 0.2, 1.2, 3.4, NOVA_A, NOVA_B, F.GLOW, 0, OPT_RING);
+  if (t > 1.6 && !s.nova) {
+    s.nova = true;
+    g.fx.p.emit(e.x, 1.4, cz, 0, 0, 0, 0.45, 3, 16, NOVA_A, NOVA_B, F.GLOW, 0, OPT_RING);
+    g.fx.explosion(e.x, 0.8, cz, 3.2, { debris: 16, color: ud.debrisColor });
+    g.fx.shockwave(e.x, 0.2, cz, 26, [2.8, 2.2, 1.2, 1], 0.9);
+    g.audio.play('explodeL'); g.shake.add(0.6); g.ui.flash(0.6);
+  }
+  if (ud.setBreak) ud.setBreak(clamp((t - 1.6) / 1.6, 0, 1));
+  if (t > 2.2 && !s.final) {
+    s.final = true;
+    g.fx.explosion(e.x, 0.5, e.z, 3.8, { debris: 40, color: ud.debrisColor });
+    g.fx.shockwave(e.x, 0.1, e.z, 32, [2.8, 2.0, 1.0, 1], 1.0);
+    g.fx.shockwave(e.x, 0.1, e.z, 19, [3.0, 2.6, 1.8, 1], 0.8);
+    g.ui.flash(0.7); g.shake.add(1);
+    g.audio.play('bossDown');
+    g.haptic([80, 50, 200]);
+    for (let i = 0; i < 18; i++) g.dropItem('medal', e.x + rnd(-5, 5), e.z + rnd(-3, 3));
+  }
+  // the wreck is drawn back up into the Sun: it climbs away, shrinking and burning (the sink stops short of
+  // GROUND_Y: the space kit's depth-only occluder there would swallow it)
+  if (t > 1.8) {
+    const k = t - 1.8;
+    e.z -= (0.6 + k * k * 1.6) * dt;
+    s.pitch = -Math.min(0.3, k * 0.1);
+    s.y = -4.8 * smooth(k / 3.2);
+    e.mesh.scale.setScalar(1 - 0.62 * smooth(k / 3.0));
+    if (Math.random() < 0.8) {
+      OPT_BURN.vrot = rnd(-2, 2);
+      const sc = e.mesh.scale.x;
+      g.fx.p.emit(e.x + rnd(-4, 4) * sc, (s.y || 0) + 0.6, e.z + rnd(-5, 5) * sc, rnd(-0.6, 0.6), rnd(0.5, 2), rnd(0.5, 2.5), rnd(0.4, 0.8), rnd(0.6, 1.0) * sc, rnd(1.6, 2.6) * sc, BURN_A, BURN_B, F.FIRE, 0, OPT_BURN);
+    }
+  }
+  if (t > 5.2) {
+    e.alive = false;
+    g.ui.boss(false);
+  }
+}
+function spawnHelios(g) {
+  const e = g.spawn('helios', { x: 0, z: g.view.zTop - 16, ai: heliosAI() });
+  e.onDeath = () => { e.s.dieT = 0; bossDefeated(g, e); };
+  let wingsDown = 0;
+  e.onPartDestroyed = (en, pt) => {
+    if (pt.key.startsWith('flare')) g.dropItem('P', pt.x, pt.z, { color: g.player.main });
+    else if (pt.key.startsWith('wing')) {
+      wingsDown++;
+      if (wingsDown === 1) g.dropItem('S', pt.x, pt.z, { sub: g.player.sub || 'H' });
+      else g.dropItem('B', pt.x, pt.z);
+    }
+  };
+  return e;
+}
 
 // --------------------------------------------------------------------------------
 // spawn helpers for this stage's units (the stage-1 ones come from W)
 // --------------------------------------------------------------------------------
 const W6 = {
   // n skimmers in a stream from the −dir edge, `gap` s apart
-  stream(g, dir, zf = 0.24, n = 5, gap = 0.3, speed = 6.4) {
+  stream(g, dir, zf = 0.24, n = 5, gap = 0.36, speed = 6.4) {
     for (let i = 0; i < n; i++) g.later(i * gap, () => g.spawn('s6_skimmer', { x: -dir * 11.5, z: -60, ai: streamAI(dir, zf, speed, 0.5, i * 0.9) }));
   },
   // n skippers hopping across from the −dir edge
@@ -532,75 +871,75 @@ const W6 = {
 // --------------------------------------------------------------------------------
 const TIMELINE = makeTimeline((at) => {
   // MARS ──────────────────────────────────────────────
-  at(24, (g) => W6.stream(g, 1, 0.22));
-  at(40, (g) => W6.stream(g, -1, 0.3));
-  at(56, (g) => W.carrier(g, 0, ['P']));
-  at(72, (g) => W6.sail(g, -3, -1, 0.22, 2));
-  at(94, (g) => { W6.sail(g, -4.5, -1, 0.2, 1); W6.sail(g, 4.5, 1, 0.26, 1); });
-  at(118, (g) => W6.skip(g, 1, 0.16, 3));
-  at(138, (g) => W6.riders(g, [-4, 4], 0.8));
-  at(158, (g) => { W6.sail(g, 0, 1, 0.2, 2); g.later(1.6, () => W6.stream(g, -1, 0.34, 5)); });
-  at(180, (g) => W.carrier(g, 3, ['S']));
-  at(192, (g) => W6.comet(g, -7, 5));
-  at(210, (g) => W6.riders(g, [-5, 0, 5], 0.5));
-  at(232, (g) => { W6.stream(g, 1, 0.2, 5); g.later(1.2, () => W6.stream(g, -1, 0.3, 5)); });
-  at(254, (g) => { W6.sail(g, -5, -1, 0.2, 1); W6.sail(g, 0, 1, 0.26, 1); W6.sail(g, 5, 1, 0.2, 1); });
-  at(276, (g) => { W6.comet(g, 7, -4); g.later(1.4, () => W6.comet(g, -7, 4)); });
-  at(296, (g) => W.carrier(g, -2, ['P', 'B']));
-  at(310, (g) => { W6.riders(g, [-3, 3], 0.4); g.later(1.2, () => W6.skip(g, -1, 0.14, 3)); });
+  at(22, (g) => W6.stream(g, 1, 0.22));
+  at(36, (g) => W6.stream(g, -1, 0.3));
+  at(52, (g) => W.carrier(g, 0, ['P']));
+  at(66, (g) => { W6.sail(g, -3, -1, 0.22, 2); g.later(1.8, () => W6.skip(g, 1, 0.14, 3)); });
+  at(88, (g) => { W6.sail(g, -4.5, -1, 0.2, 1); W6.sail(g, 4.5, 1, 0.26, 1); });
+  at(106, (g) => { W6.riders(g, [-4, 4], 0.8); g.later(1.5, () => W6.stream(g, 1, 0.34, 5)); });
+  at(128, (g) => W6.comet(g, -7, 5));
+  at(142, (g) => { W6.sail(g, 0, 1, 0.2, 2); g.later(1.6, () => W6.stream(g, -1, 0.34, 6)); });
+  at(164, (g) => W.carrier(g, 3, ['S']));
+  at(176, (g) => { W6.riders(g, [-5, 0, 5], 0.5); g.later(2.2, () => W6.skip(g, -1, 0.14, 3)); });
+  at(198, (g) => { W6.comet(g, 7, -4); g.later(1.4, () => W6.comet(g, -7, 4)); });
+  at(218, (g) => { W6.stream(g, 1, 0.2, 6); g.later(1.2, () => W6.stream(g, -1, 0.3, 6)); });
+  at(238, (g) => { W6.sail(g, -5, -1, 0.2, 1); W6.sail(g, 0, 1, 0.26, 1); W6.sail(g, 5, 1, 0.2, 1); });
+  at(262, (g) => { W6.riders(g, [-6, -2, 2, 6], 0.45); g.later(2.5, () => W6.comet(g, -7, 6)); });
+  at(284, (g) => W.carrier(g, -2, ['P', 'B']));
+  at(298, (g) => { W6.skip(g, 1, 0.14, 4); g.later(0.8, () => W6.sail(g, 3, 1, 0.24, 2)); });
   // ASTEROID BELT ──────────────────────────────────────
-  at(334, (g) => { W6.riders(g, [-5, -1.5, 2, 5.5], 0.45); });
-  at(356, (g) => W6.comet(g, -6, 6, ['S']));
-  at(374, (g) => { W6.skip(g, 1, 0.16, 4); g.later(1.4, () => W6.skip(g, -1, 0.22, 3)); });
-  at(396, (g) => { W6.sail(g, -4, -1, 0.22, 2); g.later(1.4, () => W6.riders(g, [4], 0)); });
-  at(418, (g) => { W6.rocks(g, [[-6.5, 0, 1.1], [-2, 0.5, 0.9], [3, 1.0, -0.8], [6.5, 1.4, -1.1], [-4.5, 2.1, 1.0], [1, 2.6, 0.2]]); g.later(2.6, () => W6.stream(g, 1, 0.26, 5)); });
-  at(444, (g) => W.carrier(g, 0, ['P']));
-  at(458, (g) => { W6.comet(g, -7, 3); g.later(1.1, () => W6.comet(g, 7, -3)); });
-  at(482, (g) => W6.riders(g, [-6, -2, 2, 6], 0.55, 0.36));
-  at(506, (g) => { W6.sail(g, -5, -1, 0.2, 1); W6.sail(g, 5, 1, 0.2, 1); g.later(1.8, () => W6.sail(g, 0, 1, 0.3, 1)); });
-  at(530, (g) => { W6.stream(g, 1, 0.2, 6, 0.28); W6.stream(g, -1, 0.32, 6, 0.28); });
-  at(550, (g) => W.carrier(g, -3, ['B']));
-  at(564, (g) => { W6.riders(g, [-4, 4], 0.3, 0.34); W6.rocks(g, [[0, 0.8, 0], [-6, 1.2, 1.2], [6, 1.6, -1.2]]); });
+  at(326, (g) => { W6.rocks(g, [[-6.5, 0, 1.1], [-2, 0.5, 0.9], [3, 1.0, -0.8], [6.5, 1.4, -1.1]]); W6.riders(g, [-4, 4], 0.6); });
+  at(346, (g) => { W6.comet(g, -6, 6, ['S']); g.later(1.2, () => W6.stream(g, 1, 0.24, 6)); });
+  at(364, (g) => { W6.riders(g, [-5, -1.5, 2, 5.5], 0.45); g.later(2.4, () => W6.skip(g, -1, 0.14, 4)); });
+  at(388, (g) => { W6.sail(g, -4, -1, 0.22, 2); W6.sail(g, 4, 1, 0.3, 2); g.later(1.4, () => W6.rocks(g, [[0, 0, 0], [-3, 0.6, 0.5], [3, 1.2, -0.5]])); });
+  at(414, (g) => { W6.rocks(g, [[-6.5, 0, 1.1], [-2, 0.5, 0.9], [3, 1.0, -0.8], [6.5, 1.4, -1.1], [-4.5, 2.1, 1.0], [1, 2.6, 0.2]]); g.later(2.2, () => W6.stream(g, 1, 0.26, 6)); g.later(3.2, () => W6.riders(g, [-3, 3], 0.4)); });
+  at(440, (g) => W.carrier(g, 0, ['P']));
+  at(452, (g) => { W6.comet(g, -7, 3); g.later(1.1, () => W6.comet(g, 7, -3)); g.later(2.0, () => W6.skip(g, 1, 0.16, 3)); });
+  at(474, (g) => W6.riders(g, [-6, -2, 2, 6], 0.55, 0.36));
+  at(496, (g) => { W6.sail(g, -5, -1, 0.2, 1); W6.sail(g, 5, 1, 0.2, 1); g.later(1.8, () => W6.sail(g, 0, 1, 0.3, 2)); });
+  at(518, (g) => { W6.stream(g, 1, 0.2, 7, 0.36); W6.stream(g, -1, 0.32, 7, 0.36); g.later(2.6, () => W6.comet(g, 6, -6)); });
+  at(542, (g) => W.carrier(g, -3, ['B']));
+  at(554, (g) => { W6.riders(g, [-4, 4], 0.3, 0.34); W6.rocks(g, [[0, 0.8, 0], [-6, 1.2, 1.2], [6, 1.6, -1.2]]); g.later(1.8, () => W6.skip(g, -1, 0.14, 3)); });
   at(MIDBOSS_AT, (g) => midbossEvent(g, spawnBasilisk));
-  at(628, (g) => W.carrier(g, 2, ['S']));
-  at(644, (g) => { W6.riders(g, [-5, 0, 5], 0.5); g.later(2, () => W6.stream(g, -1, 0.24, 5)); });
-  at(666, (g) => W6.comet(g, 6, -6, ['P']));
-  at(684, (g) => { W6.sail(g, -3.5, -1, 0.2, 2); W6.sail(g, 3.5, 1, 0.28, 2); });
+  at(626, (g) => W.carrier(g, 2, ['S']));
+  at(640, (g) => { W6.riders(g, [-5, 0, 5], 0.5); g.later(2, () => W6.stream(g, -1, 0.24, 6)); });
+  at(660, (g) => { W6.comet(g, 6, -6, ['P']); g.later(1.0, () => W6.rocks(g, [[-5, 0, 0.6], [5, 0.5, -0.6], [0, 1.2, 0]])); });
+  at(680, (g) => { W6.sail(g, -3.5, -1, 0.2, 2); W6.sail(g, 3.5, 1, 0.28, 2); g.later(2.2, () => W6.skip(g, 1, 0.14, 3)); });
   // JUPITER ───────────────────────────────────────────
-  at(708, (g) => { W6.comet(g, -7.5, 2); g.later(0.8, () => W6.comet(g, 7.5, -2)); });
-  at(730, (g) => { W6.skip(g, 1, 0.14, 5, 0.45); });
-  at(752, (g) => { W6.sail(g, -5, -1, 0.2, 2); W6.sail(g, 0, 1, 0.3, 2); W6.sail(g, 5, 1, 0.2, 2); g.later(2.5, () => W.carrier(g, 0, ['P'])); });
-  at(782, (g) => W6.riders(g, [-6, -1, 4], 0.5));
-  at(804, (g) => { W6.comet(g, -8, 0); W6.comet(g, -4, 4); g.later(0.6, () => W6.comet(g, 0, 8)); });
-  at(830, (g) => { W6.sail(g, -4, -1, 0.22, 2); W6.sail(g, 4, 1, 0.22, 2); g.later(1, () => W6.stream(g, 1, 0.34, 6)); });
-  at(854, (g) => W.carrier(g, -3, ['P', 'S']));
-  at(868, (g) => W6.riders(g, [-6, -2, 2, 6], 0.4, 0.36));
-  at(894, (g) => { W6.comet(g, 7, -7); g.later(0.7, () => W6.comet(g, -7, 7)); g.later(1.2, () => W6.stream(g, -1, 0.22, 6)); });
-  at(920, (g) => { W6.sail(g, -5.5, -1, 0.2, 1); W6.sail(g, 5.5, 1, 0.2, 1); g.later(1.4, () => { W6.sail(g, -2, -1, 0.3, 1); W6.sail(g, 2, 1, 0.3, 1); }); });
-  at(946, (g) => W.carrier(g, 0, ['1UP']));
+  at(706, (g) => { W6.comet(g, -7.5, 2); g.later(0.8, () => W6.comet(g, 7.5, -2)); g.later(1.8, () => W6.stream(g, 1, 0.3, 6)); });
+  at(728, (g) => { W6.skip(g, 1, 0.14, 5, 0.45); g.later(1.4, () => W6.riders(g, [-4, 4], 0.4)); });
+  at(750, (g) => { W6.sail(g, -5, -1, 0.2, 2); W6.sail(g, 0, 1, 0.3, 2); W6.sail(g, 5, 1, 0.2, 2); g.later(2.5, () => W.carrier(g, 0, ['P'])); });
+  at(776, (g) => { W6.riders(g, [-6, -1, 4], 0.5); g.later(1.6, () => W6.stream(g, -1, 0.22, 6)); });
+  at(798, (g) => { W6.comet(g, -8, 0); W6.comet(g, -4, 4); g.later(0.6, () => W6.comet(g, 0, 8)); });
+  at(822, (g) => { W6.sail(g, -4, -1, 0.22, 2); W6.sail(g, 4, 1, 0.22, 2); g.later(1, () => W6.stream(g, 1, 0.34, 7)); });
+  at(846, (g) => W.carrier(g, -3, ['P', 'S']));
+  at(858, (g) => { W6.riders(g, [-6, -2, 2, 6], 0.4, 0.36); g.later(2.6, () => W6.skip(g, -1, 0.14, 4)); });
+  at(882, (g) => { W6.comet(g, 7, -7); g.later(0.7, () => W6.comet(g, -7, 7)); g.later(1.2, () => W6.stream(g, -1, 0.22, 7)); });
+  at(906, (g) => { W6.sail(g, -5.5, -1, 0.2, 1); W6.sail(g, 5.5, 1, 0.2, 1); g.later(1.4, () => { W6.sail(g, -2, -1, 0.3, 1); W6.sail(g, 2, 1, 0.3, 1); }); });
+  at(930, (g) => { W6.riders(g, [-5, 0, 5], 0.4); g.later(1.6, () => W6.comet(g, 6, -3)); });
+  at(948, (g) => W.carrier(g, 0, ['1UP']));
   // (rest beat)
-  at(970, (g) => { W6.stream(g, 1, 0.2, 6); g.later(1.4, () => W6.stream(g, -1, 0.3, 6)); });
-  at(988, (g) => { W6.comet(g, -7, 6); g.later(1.2, () => W6.comet(g, 7, -6, ['B'])); });
+  at(970, (g) => { W6.stream(g, 1, 0.2, 7); g.later(1.4, () => W6.stream(g, -1, 0.3, 7)); });
+  at(988, (g) => { W6.comet(g, -7, 6); g.later(1.2, () => W6.comet(g, 7, -6, ['B'])); g.later(2.2, () => W6.skip(g, 1, 0.16, 4)); });
   // SATURN'S RINGS ─────────────────────────────────────
-  at(1008, (g) => { W6.stream(g, 1, 0.18, 8, 0.24); g.later(1.0, () => W6.stream(g, -1, 0.3, 8, 0.24)); });
-  at(1032, (g) => W6.riders(g, [-5, 0, 5], 0.5, 0.36));
-  at(1052, (g) => { W6.sail(g, -5, -1, 0.2, 2); W6.sail(g, 5, 1, 0.2, 2); g.later(1.6, () => W6.sail(g, 0, 1, 0.3, 1)); });
-  at(1076, (g) => W.carrier(g, 3, ['P']));
-  at(1090, (g) => { W6.comet(g, -8, -1); g.later(0.5, () => W6.comet(g, -3, 3)); g.later(1.0, () => W6.comet(g, 3, 8)); });
-  at(1114, (g) => { W6.skip(g, 1, 0.14, 5, 0.45); g.later(1.2, () => W6.stream(g, -1, 0.3, 6)); });
-  at(1138, (g) => W6.riders(g, [-6, -2, 2, 6], 0.4, 0.34));
-  at(1160, (g) => { W6.sail(g, -4, -1, 0.22, 2); W6.sail(g, 4, 1, 0.22, 2); g.later(2, () => W6.comet(g, 0, 6)); });
-  at(1184, (g) => W.carrier(g, -2, ['B']));
-  at(1198, (g) => { W6.stream(g, 1, 0.2, 7); W6.stream(g, -1, 0.32, 7); g.later(1.5, () => W6.sail(g, 0, 1, 0.24, 1)); });
-  at(1218, (g) => W6.riders(g, [-4, 4], 0.3, 0.34));
+  at(1006, (g) => { W6.stream(g, 1, 0.18, 9, 0.34); g.later(1.0, () => W6.stream(g, -1, 0.3, 9, 0.34)); });
+  at(1028, (g) => { W6.riders(g, [-5, 0, 5], 0.5, 0.36); g.later(1.8, () => W6.rocks(g, [[-6, 0, 0.8], [6, 0.4, -0.8]])); });
+  at(1046, (g) => { W6.sail(g, -5, -1, 0.2, 2); W6.sail(g, 5, 1, 0.2, 2); g.later(1.6, () => W6.sail(g, 0, 1, 0.3, 2)); });
+  at(1070, (g) => { W.carrier(g, 3, ['P']); g.later(1.2, () => W6.skip(g, -1, 0.14, 4)); });
+  at(1086, (g) => { W6.comet(g, -8, -1); g.later(0.5, () => W6.comet(g, -3, 3)); g.later(1.0, () => W6.comet(g, 3, 8)); g.later(2.2, () => W6.stream(g, 1, 0.3, 7)); });
+  at(1110, (g) => { W6.skip(g, 1, 0.14, 5, 0.45); g.later(1.2, () => W6.stream(g, -1, 0.3, 7)); g.later(2.4, () => W6.sail(g, 4, 1, 0.24, 1)); });
+  at(1132, (g) => { W6.riders(g, [-6, -2, 2, 6], 0.4, 0.34); g.later(2.2, () => W6.comet(g, -7, 5)); });
+  at(1154, (g) => { W6.sail(g, -4, -1, 0.22, 2); W6.sail(g, 4, 1, 0.22, 2); g.later(2, () => W6.comet(g, 0, 6)); });
+  at(1176, (g) => W.carrier(g, -2, ['B']));
+  at(1188, (g) => { W6.stream(g, 1, 0.2, 8); W6.stream(g, -1, 0.32, 8); g.later(1.5, () => W6.sail(g, 0, 1, 0.24, 1)); });
+  at(1210, (g) => { W6.riders(g, [-4, 4], 0.3, 0.34); g.later(1.2, () => W6.skip(g, 1, 0.14, 3)); });
 });
 
 export const STAGE = {
   ...STAGE_META[5],
-  placeholder: true,
   timeline: TIMELINE,
   midbossAt: MIDBOSS_AT, bossAt: BOSS_AT,
-  spawnBoss: (g) => S3.STAGE.spawnBoss(g), // stand-in for HELIOS
+  spawnBoss: spawnHelios,
   // enemies toughen through the belt, over Jupiter and in the rings
   hpSeg: (d) => (d < 320 ? 1 : d < 700 ? 1.12 : d < 1000 ? 1.24 : 1.34),
   scroll: 7, warnScroll: 3, bossScroll: 2.2,

@@ -785,6 +785,343 @@ function createBasilisk() {
   ud.dispose = () => { for (const m of allMats) m.dispose(); skeleton.dispose(); };
   return g;
 }
+// =============================================================================
+// HELIOS — boss: the corona battleship (≈ 14.8 long, 15 across with its wings spread)
+// =============================================================================
+// Hierarchy (it faces the jet: yaw π, the prow at the bottom of the screen, the drives toward the Sun):
+//   pivot ┬ hull (static): the armoured hull and its heat-shield prow, the sun-emblem collar round the core
+//         │   well, the bridge tower, turret pads, wing pivot housings, radiator fins, the drive block + flames
+//         ├ turret0..3 (parts; twin barrels along −z, rotation.y aims)   fore pair, aft pair
+//         ├ flareL, flareR (parts): mortar launchers on the flank sponsons (setCharge lights the tube)
+//         ├ hingeR / hingeL (the left one mirrored: scale.x = −1) → wingR / wingL (parts): the corona wings,
+//         │   a fan of collector glass on brass ribs with five ray emitters on the rim; their hinges swing them
+//         │   out (setWings(0..1): 0 swept back along the flanks, 1 spread square to the hull); the wing's
+//         │   setCharge lights its glass. hinge.userData.muzzles = [pivot] (the rays run pivot → emitter)
+//         └ core (part): the captive star (an orb of plasma) under four armour petals on the collar rim and its
+//             corona halo (additive); setOpen(0..1) opens the petals and raises the star, setStar(v) its heat
+// setBreak(0..1) tears the wings away, flings the petals and cracks the hull for the death; reset() restores
+// the pooled pose.
+const HE_SHIFT = 1.2;                                                 // the pivot sits this far aft of the unit's centre
+const HE_CORE = [0, 0.72, -0.6];                                      // the core well (collar centre, deck level)
+const HE_TURRETS = [[-1.35, -3.7], [1.35, -3.7], [-1.8, 1.5], [1.8, 1.5]];   // turret pads (x, z)
+const HE_FLARE = [2.55, 0.42, -2.3];                                  // right flare launcher (base)
+const HE_PIVOT = [2.35, 0.34, 1.35];                                  // right wing pivot
+const HE_WING = { r0: 0.5, r1: 4.4, tip: 5.2, half: 0.55, c: 2.8 };  // the wing's fan (span along +x), its hit centre
+const HE_WING_FOLD = -Math.PI / 2 + 0.6;                             // hinge yaw folded (swept back and a little out)
+/** 10-point armoured section with a flat top [z, halfWidth, top, bottom]. Edges: 0 top, 1/9 bevels, 2/8 upper flanks,
+ *  3/7 lower flanks, 4/6 chines, 5 keel */
+function ring10([z, w, tp, bt], y = 0) {
+  return [[-w * 0.36, y + tp, z], [w * 0.36, y + tp, z], [w * 0.8, y + tp * 0.78, z], [w, y + tp * 0.3, z], [w * 0.86, y - bt * 0.4, z],
+    [w * 0.45, y - bt, z], [-w * 0.45, y - bt, z], [-w * 0.86, y - bt * 0.4, z], [-w, y + tp * 0.3, z], [-w * 0.8, y + tp * 0.78, z]];
+}
+const HE_HULL = [[-7.2, 0.25, 0.3, 0.2], [-6.3, 1.1, 0.42, 0.35], [-5.0, 1.8, 0.55, 0.5], [-3.2, 2.3, 0.65, 0.6], [-1.0, 2.55, 0.7, 0.65],
+  [1.5, 2.5, 0.72, 0.65], [3.8, 2.3, 0.68, 0.6], [5.4, 2.0, 0.6, 0.55], [6.5, 1.6, 0.5, 0.45]];
+const HE_GLASS = S(lin('#48170a'), rgb(0.07, 0.016, 0.003)), HE_GLASS2 = S(lin('#5c2a0c'), rgb(0.09, 0.03, 0.004));   // collector glass
+function buildHeliosHull() {
+  const b = new GB();
+  // ---- the hull: silver deck plates, brass bevels, bronze flanks with glowing heat vents, a dark keel
+  const d0 = b.n;
+  b.loft(HE_HULL.map((sec) => ring10(sec)), (i, j) => {
+    if (j === 0) return i === 0 ? K.hullDk : (i & 1) ? K.plateLt : K.plate;
+    if (j === 1 || j === 9) return i === 0 ? K.brassDk : (i & 1) ? K.brass : K.brassDk;
+    if (j === 2 || j === 8) return i === 2 || i === 5 ? G_SUND : i === 0 ? K.hullXDk : K.hull;
+    if (j === 3 || j === 7) return K.hullDk;
+    return K.hullXDk;
+  }, K.hullDk, K.hullXDk);
+  const d1 = b.n;
+  // the prow: an armoured ram with a gold chevron, the prow gun at its tip
+  b.block({ x: 0, y: 0.38, z: -5.5, w: 1.7, d: 2.8, h: 0.34, tw: 0.9, td: 2.3, oz: 0.25, bev: 0.08, top: K.hull, bevS: K.brass, side: K.hullDk, front: K.hullXDk });
+  b.decal([[-0.5, 0.726, -5.3], [0, 0.726, -6.2], [0.5, 0.726, -5.3], [0.36, 0.726, -5.1], [0, 0.726, -5.85], [-0.36, 0.726, -5.1]].slice(0, 3), G_SUN);
+  b.lathe([0, 0.34, -6.9], [0, 0, -1], [[0, 0.3], [0.5, 0.26], [0.5, 0.34], [0.72, 0.34], [0.72, 0.18]], 8, (i) => (i === 2 ? K.brassLt : K.hullDk), null, G_SUNH, { phase: Math.PI / 8 });
+  hazardDrape(b, -1.6, -2.75, 1.6, -2.75, 0.28, 10, K.copper, K.black, d0, d1, 0.012, 1);
+  // ---- the core well: a brass collar studded with sunfire nodes round a dark pit, twelve gold rays round it on the deck
+  const [cx, cy, cz] = HE_CORE;
+  b.lathe([cx, cy - 0.02, cz], [0, 1, 0], [[0, 1.78], [0.14, 1.72], [0.26, 1.52], [0.22, 1.22], [0.0, 1.12]], 16,
+    (i, j) => (i === 1 ? (j % 4 === 1 ? G_SUN : (j & 1) ? K.brass : K.brassLt) : i === 0 ? K.brassDk : K.hullXDk), null, null, { phase: Math.PI / 16 });
+  b.lathe([cx, cy - 0.01, cz], [0, 1, 0], [[0, 1.12], [0, 0.0]], 16, K.black);
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * TAU + Math.PI / 12, r0 = 1.86, r1 = k & 1 ? 2.2 : 2.45, w = 0.07;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    if (Math.abs(cz + sa * r1) > 7) continue;
+    const pts = [[cx + ca * r0 - sa * w, cy + 0.004, cz + sa * r0 + ca * w], [cx + ca * r1, cy + 0.004, cz + sa * r1], [cx + ca * r0 + sa * w, cy + 0.004, cz + sa * r0 - ca * w]];
+    const y = b.surfaceY(pts[1][0], pts[1][2], d0, d1);
+    if (y === null) continue;
+    for (const q of pts) q[1] = Math.max(q[1], (b.surfaceY(q[0], q[2], d0, d1) ?? y) + 0.01);
+    b.decal(pts, k & 1 ? G_SUND : G_SUN);
+  }
+  // ---- the spine to the bridge, the bridge tower (a gold window band facing forward), masts, a dish
+  b.block({ x: 0, y: 0.66, z: 1.85, w: 0.9, d: 1.4, h: 0.2, tw: 0.8, td: 1.3, top: K.plate, side: K.hullDk });
+  b.decal([[-0.06, 0.865, 1.2], [0.06, 0.865, 1.2], [0.06, 0.865, 2.5], [-0.06, 0.865, 2.5]], G_SUN);
+  b.block({ x: 0, y: 0.66, z: 3.5, w: 2.0, d: 1.9, h: 0.52, tw: 1.8, td: 1.7, bev: 0.06, top: K.plateLt, bevS: K.brass, side: K.hull, front: K.hullDk });
+  b.block({ x: 0, y: 1.18, z: 3.65, w: 1.3, d: 1.15, h: 0.4, tw: 1.1, td: 0.95, bev: 0.05, top: K.plate, bevS: K.brassLt, side: K.hullDk });
+  b.decal([[-0.62, 1.5, 3.02], [0.62, 1.5, 3.02], [0.6, 1.3, 3.08], [-0.6, 1.3, 3.08]], G_SUN, [0, 0.3, -1]);
+  b.decal([[-0.9, 1.1, 2.58], [0.9, 1.1, 2.58], [0.88, 0.92, 2.6], [-0.88, 0.92, 2.6]], G_SUND, [0, 0.3, -1]);
+  b.lathe([0, 1.58, 4.0], [0, 1, 0], [[0, 0.05], [0.12, 0.34], [0.2, 0.38]], 8, (i) => (i === 1 ? K.plateLt : K.plate), null, K.plateDk);
+  // ---- turret pads
+  for (const [x, z] of HE_TURRETS) b.lathe([x, 0.62, z], [0, 1, 0], [[0, 0.62], [0.12, 0.6], [0.14, 0.5]], 8, (i) => (i === 0 ? K.hullDk : K.brassDk), null, K.hull, { phase: Math.PI / 8 });
+  // ---- the drive block and three drive bells
+  b.block({ x: 0, y: -0.45, z: 5.9, w: 3.6, d: 1.3, h: 1.05, tw: 3.3, td: 1.2, bev: 0.08, top: K.hull, bevS: K.brassDk, side: K.hullDk, back: K.hullXDk });
+  const f0 = b.n;
+  // (right side; mirrored) flank sponson for the flare launcher, the wing pivot housing, radiator fins, the outer bell
+  b.block({ x: 2.3, y: -0.05, z: HE_FLARE[2], w: 0.9, d: 1.5, h: 0.5, tw: 0.8, td: 1.3, bev: 0.05, top: K.plate, bevS: K.brass, side: K.hull });
+  b.lathe([HE_PIVOT[0], 0.0, HE_PIVOT[2]], [0, 1, 0], [[0, 0.52], [0.34, 0.5], [0.46, 0.4], [0.5, 0.2]], 10, (i, j) => (i === 1 ? ((j & 1) ? K.brass : K.brassLt) : i === 0 ? K.hullDk : K.hullXDk), null, G_SUND, { phase: Math.PI / 10 });
+  for (let k = 0; k < 3; k++) {
+    const r = b.n, z = 3.4 + k * 0.75;
+    b.plate([[2.05, z - 0.28], [3.15 - k * 0.12, z - 0.12], [3.15 - k * 0.12, z + 0.12], [2.05, z + 0.28]], 0.0, 0.08, k === 1 ? G_SUND : K.hullDk, K.brassDk, K.hullXDk);
+    b.xform(r, M(2.05, 0.04, z, 0, 0, 0.35).multiply(M(-2.05, -0.04, -z)));
+  }
+  b.lathe([1.12, 0.05, 6.5], [0, 0, 1], [[0, 0.52], [0.2, 0.56], [0.52, 0.44]], 10, (i) => (i === 0 ? K.brassDk : i === 1 ? K.hull : K.hullDk), null, G_SUN, { phase: Math.PI / 10 });
+  b.block({ x: 1.7, y: 0.72, z: 2.6, w: 0.05, d: 0.05, h: 1.0, top: G_RD, side: K.plateDk });
+  b.mirrorX(f0);
+  b.lathe([0, 0.05, 6.5], [0, 0, 1], [[0, 0.6], [0.24, 0.64], [0.6, 0.5]], 10, (i) => (i === 0 ? K.brassDk : i === 1 ? K.hull : K.hullDk), null, G_SUNH, { phase: Math.PI / 10 });
+  return b;
+}
+function buildHeliosTurret() {   // part-local, twin barrels along −z
+  const b = new GB();
+  b.lathe([0, -0.02, 0], [0, 1, 0], [[0, 0.56], [0.1, 0.55], [0.18, 0.44], [0.22, 0.0]], 8, (i, j) => (i === 0 ? K.hullDk : i === 1 ? ((j & 1) ? K.brass : K.brassLt) : K.hullXDk), null, null, { phase: Math.PI / 8 });
+  b.block({ x: 0, y: 0.12, z: 0.06, w: 0.78, d: 0.9, h: 0.34, tw: 0.62, td: 0.72, oz: 0.06, bev: 0.05, top: K.plateLt, bevS: K.brass, side: K.hull, front: K.hullDk });
+  for (const x of [-0.15, 0.15]) {
+    b.lathe([x, 0.28, -0.36], [0, 0, -1], [[0, 0.075], [0.66, 0.062], [0.66, 0.08], [0.8, 0.08], [0.8, 0.035]], 6, (i) => (i === 2 ? K.brassLt : K.hullDk), null, G_SUNH, { phase: Math.PI / 6 });
+  }
+  b.decal([[-0.18, 0.462, 0.05], [0.18, 0.462, 0.05], [0.18, 0.462, 0.3], [-0.18, 0.462, 0.3]], K.copper);
+  b.decal([[-0.14, 0.462, -0.26], [0.14, 0.462, -0.26], [0.1, 0.462, -0.15], [-0.1, 0.462, -0.15]], G_SUN);
+  return b;
+}
+function buildHeliosFlare() {   // part-local: a squat launcher, the mortar tube raised up and forward (−z)
+  const b = new GB();
+  b.block({ x: 0, y: 0, z: 0.05, w: 1.0, d: 1.2, h: 0.4, tw: 0.86, td: 1.02, bev: 0.05, top: K.plate, bevS: K.brass, side: K.hull, front: K.hullDk });
+  const dir = [0, 0.8, -0.6];
+  b.lathe([0, 0.3, 0.2], dir, [[0, 0.36], [0.2, 0.34], [0.22, 0.3], [0.86, 0.28], [0.9, 0.34], [1.02, 0.34], [1.02, 0.22]], 8,
+    (i, j) => (i === 4 ? K.brassLt : i === 1 ? K.brassDk : (j & 1) ? K.hull : K.hullLt), null, G_SUNH, { phase: Math.PI / 8 });
+  for (const sg of [-1, 1]) b.block({ x: 0.38 * sg, y: 0.2, z: 0.25, w: 0.1, d: 0.7, h: 0.5, tw: 0.08, td: 0.4, oz: -0.12, top: K.brass, side: K.hullDk });
+  b.decal([[-0.36, 0.401, 0.42], [0.36, 0.401, 0.42], [0.36, 0.401, 0.56], [-0.36, 0.401, 0.56]], G_SUND);
+  return b;
+}
+/** a corona wing (part-local: the hit centre at the origin; the pivot at (−HE_WING.c, 0, 0), the fan along +x):
+ *  collector glass in two bands between brass ribs, a scalloped rim of sun rays with an emitter at each tip */
+function buildHeliosWing() {
+  const b = new GB();
+  const { r0, r1, tip, half } = HE_WING, rm = (r0 + r1) * 0.52, NS = 5;
+  const P = (r, a, y = 0.06) => [Math.cos(a) * r, y, Math.sin(a) * r];
+  const A = (k) => -half + (2 * half * k) / NS;
+  // underside and edge (one dark plate over the whole fan)
+  const out = [];
+  for (let k = 0; k <= NS; k++) out.push([Math.cos(A(k)) * r1, Math.sin(A(k)) * r1]);
+  for (let k = NS; k >= 0; k--) out.push([Math.cos(A(k)) * r0, Math.sin(A(k)) * r0]);
+  b.plate(out, -0.08, 0.04, K.hullDk, K.brassDk, K.hullXDk);
+  // the glass, two bands per sector
+  for (let k = 0; k < NS; k++) {
+    const a0 = A(k) + 0.02, a1 = A(k + 1) - 0.02;
+    b.quadN(P(r0 + 0.1, a0), P(rm, a0), P(rm, a1), P(r0 + 0.1, a1), [0, 1, 0], k & 1 ? HE_GLASS2 : HE_GLASS);
+    b.quadN(P(rm + 0.08, a0), P(r1 - 0.1, a0), P(r1 - 0.1, a1), P(rm + 0.08, a1), [0, 1, 0], k & 1 ? HE_GLASS : HE_GLASS2);
+  }
+  // brass ribs along the sector edges, a brass band across the middle, a lit rim
+  for (let k = 0; k <= NS; k++) {
+    const a = A(k), c = Math.cos(a), s = Math.sin(a), w = k === 0 || k === NS ? 0.09 : 0.06;
+    b.quadN([c * r0 - s * w, 0.075, s * r0 + c * w], [c * r1 - s * w, 0.075, s * r1 + c * w], [c * r1 + s * w, 0.075, s * r1 - c * w], [c * r0 + s * w, 0.075, s * r0 - c * w], [0, 1, 0], k === 0 ? K.brassLt : K.brass);
+  }
+  for (let k = 0; k < NS; k++) {
+    b.quadN(P(rm - 0.04, A(k), 0.07), P(rm + 0.06, A(k), 0.07), P(rm + 0.06, A(k + 1), 0.07), P(rm - 0.04, A(k + 1), 0.07), [0, 1, 0], K.brassDk);
+    b.quadN(P(r1 - 0.1, A(k), 0.07), P(r1, A(k), 0.07), P(r1, A(k + 1), 0.07), P(r1 - 0.1, A(k + 1), 0.07), [0, 1, 0], G_SUND);
+  }
+  // the rays: a spike out of the rim at the middle of each sector, an emitter at its tip
+  for (let k = 0; k < NS; k++) {
+    const a = (A(k) + A(k + 1)) / 2, w = 0.2;
+    const base = [P(r1 - 0.05, a - w / r1 * 2.2, 0.02), P(r1 - 0.05, a + w / r1 * 2.2, 0.02), P(r1 - 0.05, a, 0.14)];
+    b.spike(base, P(tip, a, 0.04), (q) => (q === 2 ? K.plateLt : q ? K.brass : K.brassLt));
+    const t = P(tip - 0.12, a, 0.05);
+    b.block({ x: t[0], y: 0.0, z: t[2], w: 0.2, d: 0.2, h: 0.12, top: G_SUNH, side: G_SUN });
+  }
+  // the root: a brass knuckle round the pivot
+  b.lathe([0, -0.1, 0], [0, 1, 0], [[0, 0.62], [0.24, 0.58], [0.3, 0.3]], 8, (i) => (i === 0 ? K.brassDk : K.brass), null, K.hullDk);
+  b.xform(0, M(-HE_WING.c, 0, 0));
+  return b;
+}
+/** one armour petal of the core (petal-local: its hinge on the collar rim along z at the origin, the petal leaning
+ *  in over the well toward −x; four of them, turned about the well, close into a dome) */
+function buildHeliosPetal() {
+  const b = new GB();
+  const R = 1.2, N = 4, rows = [[0, 1.0, 0.0], [0.28, 0.95, 0.34], [0.55, 0.8, 0.62], [0.8, 0.52, 0.82], [0.96, 0.18, 0.92]];
+  // quarter-dome shell: rows along the petal's reach (in toward the well's axis and up)
+  const rings = rows.map(([u, span, h]) => {
+    const pts = [];
+    for (let k = 0; k <= N; k++) { const a = (k / N - 0.5) * (Math.PI / 2) * span; pts.push([-u * R * Math.cos(a), h * 0.9, Math.sin(a) * R * (1 - u * 0.2)]); }
+    return pts;
+  });
+  for (let i = 0; i < rings.length - 1; i++) {
+    for (let k = 0; k < N; k++) {
+      const st = i === 0 ? K.brassDk : k === 0 || k === N - 1 ? K.plateDk : (i + k) & 1 ? K.plateLt : K.plate;
+      b.quadO(rings[i][k], rings[i][k + 1], rings[i + 1][k + 1], rings[i + 1][k], [-R * 0.5, -0.4, 0], st);
+      b.quadO(rings[i][k], rings[i][k + 1], rings[i + 1][k + 1], rings[i + 1][k], [-R * 0.5, 2.0, 0], K.hullXDk);
+    }
+  }
+  // a gold seam down the middle and a sun mark near the tip
+  const m0 = rings[1][2], m1 = rings[3][2];
+  b.decal([[m0[0] + 0.01, m0[1] + 0.02, -0.05], [m1[0] + 0.01, m1[1] + 0.02, -0.04], [m1[0] + 0.01, m1[1] + 0.02, 0.04], [m0[0] + 0.01, m0[1] + 0.02, 0.05]], G_SUND, [-0.4, 1, 0]);
+  return b;
+}
+/** the star's corona (additive, flat): a glow disc and long uneven rays */
+function buildHeliosHalo() {
+  const pos = [], col = [];
+  const N = 14, hot = [1.3, 0.8, 0.3], mid = [0.9, 0.35, 0.06], zero = [0, 0, 0];
+  for (let k = 0; k < N; k++) {
+    const a = (k / N) * TAU, a0 = a - 0.14, a1 = a + 0.14, r = 1.9 + (hash3(k, 2.1, 7.7) * 1.4);
+    pos.push(Math.cos(a0) * 1.05, 0, Math.sin(a0) * 1.05, Math.cos(a1) * 1.05, 0, Math.sin(a1) * 1.05, Math.cos(a) * r, 0, Math.sin(a) * r);
+    col.push(...mid, ...mid, ...zero);
+  }
+  const M1 = 20;
+  for (let k = 0; k < M1; k++) {
+    const a0 = (k / M1) * TAU, a1 = ((k + 1) / M1) * TAU;
+    pos.push(0, 0, 0, Math.cos(a0) * 2.0, 0, Math.sin(a0) * 2.0, Math.cos(a1) * 2.0, 0, Math.sin(a1) * 2.0);
+    col.push(...hot, ...zero, ...zero);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.computeBoundingSphere();
+  return g;
+}
+function createHelios() {
+  const g = new THREE.Group(); g.name = 'boss';
+  const pivot = new THREE.Group(); pivot.name = 'pivot'; g.add(pivot);
+  pivot.position.z = HE_SHIFT;   // the unit's centre sits between the core and the bridge (the prow 6 ahead of it)
+  const ud = g.userData;
+  ud.kind = 'boss:helios';
+  ud.radius = 5.0;
+  ud.debrisColor = new THREE.Color('#6a5444');
+  const allMats = [];
+  const mat = (r = 0.55, m = 0.32) => { const x = bodyMat(r, m); allMats.push(x); return x; };
+  const hullMat = mat();
+  const hull = new THREE.Group(); hull.name = 'hull';
+  hull.add(new THREE.Mesh(GG('ext:s6:helios.hull', buildHeliosHull), hullMat));
+  pivot.add(hull);
+  const flameMat = additiveMat();
+  const flames = new THREE.Mesh(G('ext:s6:helios.flames', () => buildFlame([[-1.12, 0.05, 1.3], [0, 0.05, 1.55], [1.12, 0.05, 1.3]], FLAME_SUN_BIG)), flameMat);
+  flames.position.set(0, 0, 7.05); flames.userData.noShadow = true; flames.renderOrder = 2;
+  hull.add(flames);
+  // ---- turrets
+  const turKeep = { keep: (x, y, z) => z + 0.3, crumple: 0.1, seed: 71, dir: [0, 0.4, -1], shards: 8, shardSize: 0.2, band: 0.35 };
+  const turret = HE_TURRETS.map(([x, z], k) => destructiblePart({ key: 'ext:s6:helios.turret', build: buildHeliosTurret, name: 'turret' + k, radius: 0.78,
+    muzzles: [new THREE.Vector3(-0.15, 0.28, -1.2), new THREE.Vector3(0.15, 0.28, -1.2)], wreck: turKeep, sag: [0.12, -0.08, 0.1], pos: [x, 0.66, z], mat: mat() }));
+  for (const t of turret) { t.rotation.order = 'YXZ'; pivot.add(t); }
+  // ---- flare launchers on the flank sponsons
+  const flKeep = { keep: (x, y, z) => 0.45 - y, crumple: 0.12, seed: 73, dir: [0, 1, 0], shards: 8, shardSize: 0.22, band: 0.3 };
+  const flares = [-1, 1].map((sg) => {
+    const m = mat();
+    const pt = destructiblePart({ key: 'ext:s6:helios.flare', build: buildHeliosFlare, name: sg < 0 ? 'flareL' : 'flareR', radius: 0.85,
+      muzzles: [new THREE.Vector3(0, 1.1, -0.45)], wreck: flKeep, sag: [0.1, -0.1, 0.1 * sg], pos: [HE_FLARE[0] * sg, HE_FLARE[1], HE_FLARE[2]], mat: m });
+    let ch = 0;
+    /** 0..1: the mortar tube glows (a flare about to go) */
+    pt.userData.setCharge = (v) => { ch = Math.max(0, Math.min(1, v)); };
+    pt.userData.charge = () => ch;
+    pt.userData.mat = m;
+    pivot.add(pt);
+    return pt;
+  });
+  // ---- the corona wings on their hinges (the left hinge mirrored)
+  const wingKeep = { keep: (x, y, z) => x + 0.6, crumple: 0.16, seed: 79, dir: [1, 0.3, 0], shards: 12, shardSize: 0.3, band: 0.5 };
+  const hinges = [], wings = [];
+  for (const sg of [1, -1]) {
+    const mirror = new THREE.Group(); mirror.scale.x = sg;
+    const hinge = new THREE.Object3D(); hinge.name = sg > 0 ? 'hingeR' : 'hingeL';
+    hinge.position.set(HE_PIVOT[0], HE_PIVOT[1], HE_PIVOT[2]); hinge.rotation.order = 'YXZ';
+    hinge.userData.muzzles = [new THREE.Vector3(0, 0, 0)];
+    const m = mat(0.5, 0.35);
+    const w = destructiblePart({ key: 'ext:s6:helios.wing', build: buildHeliosWing, name: sg > 0 ? 'wingR' : 'wingL', radius: 1.8,
+      muzzles: [-2, -1, 0, 1, 2].map((q) => { const a = (q * 2 * HE_WING.half) / 5; return new THREE.Vector3(Math.cos(a) * HE_WING.tip - HE_WING.c, 0.1, Math.sin(a) * HE_WING.tip); }),
+      wreck: wingKeep, sag: [0.1, -0.25, -0.25], pos: [HE_WING.c, 0, 0], mat: m });
+    let ch = 0;
+    /** 0..1: the collector glass lights up */
+    w.userData.setCharge = (v) => { ch = Math.max(0, Math.min(1, v)); };
+    w.userData.charge = () => ch;
+    w.userData.mat = m;
+    hinge.add(w);
+    mirror.add(hinge);
+    pivot.add(mirror);
+    hinges.push(hinge); wings.push(w);
+  }
+  // ---- the core: the captive star under four petals, its corona
+  const coreMat = mat(0.5, 0.35), starMat = bodyMat(0.4, 0.1);
+  const starGeo = GG('ext:s6:helios.star', () => orbGB(0.95, 0, SUNH, 11.3)), starDead = GG('ext:s6:helios.starDead', () => orbGB(0.85, 0, SUNH, 13.7, true));
+  const star = new THREE.Mesh(starGeo, starMat);
+  const haloMat = additiveMat();
+  const halo = new THREE.Mesh(G('ext:s6:helios.halo', buildHeliosHalo), haloMat);
+  halo.userData.noShadow = true; halo.renderOrder = 3; halo.visible = false;
+  const petalGeo = GG('ext:s6:helios.petal', buildHeliosPetal);
+  const petalHinges = [], petals = [];
+  for (let k = 0; k < 4; k++) {
+    const frame = new THREE.Object3D(); frame.rotation.y = (k * TAU) / 4 + Math.PI / 4;
+    const h = new THREE.Object3D(); h.position.set(1.18, 0.02, 0);
+    const pm = new THREE.Mesh(petalGeo, coreMat);
+    h.add(pm); frame.add(h);
+    petalHinges.push({ frame, h }); petals.push(pm);
+  }
+  const core = makePart('core', 1.25, [{ mesh: star, intact: starGeo, wreck: starDead }, ...petals.map((pm) => ({ mesh: pm, hideOnDestroy: true })), { mesh: halo, hideOnDestroy: true }],
+    [new THREE.Vector3(0, 0.4, 0)]);
+  for (const ph of petalHinges) core.add(ph.frame);
+  core.add(halo);
+  core.userData.materials.push(coreMat);
+  core.userData.setFlash = flashFn([coreMat, starMat]);
+  core.position.set(HE_CORE[0], HE_CORE[1], HE_CORE[2]);
+  let openT = 0, heat = 0;
+  core.userData.open = 0;
+  core.userData.setOpen = (v) => {
+    openT = Math.max(0, Math.min(1, v)); core.userData.open = openT;
+    const e = openT < 0.5 ? 2 * openT * openT : 1 - Math.pow(-2 * openT + 2, 2) / 2;
+    for (const ph of petalHinges) ph.h.rotation.z = -e * 125 * DEG;
+    star.position.y = -0.38 + e * 0.95;   // shut: sunk in the well under the petals; open: risen out of it
+    halo.position.y = 0.3 + e * 0.4;
+    halo.visible = e > 0.05 && !core.userData.destroyed;
+  };
+  /** 0..1: the star's heat (swells and whitens; 1 = about to go) */
+  ud.setStar = (v) => { heat = Math.max(0, Math.min(1.5, v)); };
+  core.userData.setOpen(0);
+  pivot.add(core);
+  ud.parts = { turret, flareL: flares[0], flareR: flares[1], wingL: wings[1], wingR: wings[0], core };
+  ud.hinges = { R: hinges[0], L: hinges[1] };
+  ud.muzzles = [new THREE.Vector3(0, 0.34, -7.7 + HE_SHIFT)];   // the prow gun (group-local)
+  let spread = 0;
+  /** 0: the wings swept back along the flanks … 1: spread square to the hull */
+  ud.setWings = (v) => { spread = Math.max(0, Math.min(1, v)); const e = spread * spread * (3 - 2 * spread); for (const h of hinges) h.rotation.y = HE_WING_FOLD * (1 - e); };
+  const flashAll = flashFn([...allMats, starMat]);
+  ud.setFlash = flashAll;
+  // ---- death: 0 = whole … 1 = the wings torn away and falling, the petals flung, the hull broken-backed
+  let brk = 0;
+  ud.setBreak = (v) => {
+    brk = Math.max(0, Math.min(1, v));
+    const e = brk * brk * (3 - 2 * brk);
+    for (let k = 0; k < 2; k++) { const h = hinges[k]; h.position.set(HE_PIVOT[0] + 1.6 * e, HE_PIVOT[1] - 1.3 * e, HE_PIVOT[2] + (k ? -0.8 : 0.9) * e); h.rotation.x = (k ? 0.5 : -0.4) * e; h.rotation.z = -0.6 * e; }
+    for (let k = 0; k < 4; k++) { petalHinges[k].h.position.set(1.18 + 1.8 * e, 0.02 + 0.8 * e, 0); }
+    hull.rotation.set(0.12 * e, 0, -0.16 * e);
+  };
+  ud.setBreak(0);
+  /** pooled instances come back posed: whole, wings swept back, petals shut, guns forward, the star at rest */
+  ud.reset = () => {
+    ud.setBreak(0); ud.setWings(0); heat = 0; core.userData.setOpen(0);
+    for (const t of turret) t.rotation.set(0, 0, 0);
+    for (const f of flares) f.userData.setCharge(0);
+    for (const w of wings) w.userData.setCharge(0);
+    star.scale.setScalar(1); halo.scale.setScalar(1);
+  };
+  ud.reset();
+  ud.update = (dt, t) => {
+    const p = (0.82 + Math.sin(t * 2.4) * 0.18) * (1 - brk * 0.6);
+    for (let i = 0; i < allMats.length; i++) allMats[i].uEmitScale.value = p;
+    for (const f of flares) if (!f.userData.destroyed) f.userData.mat.uEmitScale.value = p + f.userData.charge() * (2.4 + Math.sin(t * 40) * 0.5);
+    for (const w of wings) if (!w.userData.destroyed) w.userData.mat.uEmitScale.value = p + w.userData.charge() * (5.5 + Math.sin(t * 23) * 1.2);
+    const hot = core.userData.destroyed ? 0 : heat;
+    starMat.uEmitScale.value = core.userData.destroyed ? 0.7 : (0.34 + openT * 0.5 + hot * 0.9) * (1 + Math.sin(t * 9) * 0.1);
+    star.rotation.y += dt * (0.4 + openT * 1.8 + hot * 3);
+    star.scale.setScalar(1 + hot * 0.35 + Math.sin(t * 13) * 0.03 * openT);
+    if (halo.visible) { halo.rotation.y -= dt * (0.5 + hot); halo.scale.setScalar((0.8 + openT * 0.35 + hot * 0.6) * (1 + Math.sin(t * 6.3) * 0.05)); haloMat.color.setScalar(0.7 + hot * 0.6 + Math.sin(t * 17) * 0.06); }
+    flames.scale.set(1, 1, (1 + Math.sin(t * 37) * 0.08 + Math.sin(t * 23) * 0.05) * (1 - brk * 0.85));
+    flameMat.color.setScalar(0.9 + Math.sin(t * 29) * 0.1);
+    pivot.position.y = Math.sin(t * 0.55) * 0.12;
+  };
+  ud.dispose = () => { for (const m of allMats) m.dispose(); starMat.dispose(); haloMat.dispose(); flameMat.dispose(); };
+  return g;
+}
+
 export const ENEMIES = {
   s6_raider: createRaider,
   s6_rock: createRock,
@@ -794,4 +1131,4 @@ export const ENEMIES = {
   s6_flare: createFlare,
   basilisk: createBasilisk,
 };
-export const BOSSES = {};
+export const BOSSES = { helios: createHelios };

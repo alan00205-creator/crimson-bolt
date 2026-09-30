@@ -1997,7 +1997,7 @@ const SONGDEF = {
         lead: 'g4:2 g4:1 g4:1 bb4:4 d5:6 c5:2 | a4:4 f4:4 d5:8 | g4:2 g4:1 g4:1 d5:4 g5:6 f5:2 | e5:8 c#5:4 e5:4 |' +
               'd5:2 d5:1 d5:1 f5:4 bb5:6 a5:2 | a5:8 c6:4 a5:4 | g5:4 f5:4 d5:4 bb4:4 | e5:2 a5:2 c#6:2 e6:6 r:4',
         bass: 'halves*4 pump*3 build', drums: 'milT*3 fS milB*3 fD', crash: [0, 4], rise: 2,
-        gtr: 'brk*4 ch16*3 hold', arp: 'bellA*4 arpB*4', pad: 0.8,
+        gtr: 'brk*4 ch16*3 hold', arp: 'bellA*4 arpB*4',
         p2: { harm: 1 },
       },
       D: {
@@ -2263,10 +2263,10 @@ const SONGDEF = {
         p2: { harm: 1, drums: 'orB*3 bC orB*3 fT', gtr: 'gal*3 syn gal*2 push hit', arp: 'bellA*8' },
       },
       B: {
-        chords: 'Eb Bb F Gm Eb Bb Cm D', lead: ORBIT_CHORUS7 + ' f#6:4 d6:4 a5:4 f#5:4', pad: 0.7,
+        chords: 'Eb Bb F Gm Eb Bb Cm D', lead: ORBIT_CHORUS7 + ' f#6:4 d6:4 a5:4 f#5:4',
         bass: 'oct16*7 build', drums: 'bC*7 fS', crash: [0, 4], gtr: 'half*7 push',
         stab: 'hB none hA none hB none hA hA', arp: 'arpO*8',
-        p2: { dbl: 'brass-12', pad: 0, arp: 'bellSky*8' },
+        p2: { dbl: 'brass-12', arp: 'bellSky*8' },
       },
       C: {
         chords: 'Cm Cm Gm Gm Ab Ab D D', leadV: 'brass', padV: 'choir', pad: 1,
@@ -2281,7 +2281,7 @@ const SONGDEF = {
         lead: ORBIT_CHORUS7 + ' a5:2 d6:2 f#6:2 d6:2 a5:2 c6:2 d6:2 f#6:2',
         bass: 'oct16*6 p16 build', drums: 'bD*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
         gtr: 'half*6 ch16 hold', stab: 'hB none hA none hB none hD none', arp: 'arpC*8',
-        p2: { dbl: 'bell+12' },
+        p2: { arp: 'arpO*6 arpC*2' },
       },
     },
   },

@@ -1683,9 +1683,9 @@ vec2 webLayer(vec2 p, vec2 gx, vec2 gy) {
 vec3 oldGalaxy(vec2 p) {
   vec2 ci = floor(p), cf = fract(p);
   vec4 h = textureLod(uNoise, (ci * 32.0 + vec2(5.5, 11.5)) / 256.0, 0.0);
-  if (h.r < 0.55) return vec3(0.0);
+  if (h.r < 0.45) return vec3(0.0);
   vec4 h2 = textureLod(uNoise, (ci * 32.0 + vec2(19.5, 3.5)) / 256.0, 0.0);
-  float sz = 0.06 + 0.1 * h2.b;
+  float sz = 0.05 + 0.13 * h2.b * h2.b;
   vec2 o = cf - 0.5 - (vec2(h.b, h2.r) - 0.5) * (1.0 - 5.0 * sz);
   float an = h2.g * 12.566, ca = cos(an), sa = sin(an);
   o = vec2(ca * o.x - sa * o.y, sa * o.x + ca * o.y);
@@ -1705,7 +1705,7 @@ vec3 oldGalaxy(vec2 p) {
 // the time wrap stays seamless), brighter on the side turning toward us
 vec3 diskLight(float r, vec2 v, vec2 gv0, vec2 gv1, float gr0, float gr1, vec3 fp, float tilt) {
   float x = (r - ${HOLE_RIN.toFixed(2)}) * ${(1 / (HOLE_ROUT - HOLE_RIN)).toFixed(5)};
-  float prof = smoothstep(0.0, 0.03, x) * pow(max(1.0 - x, 0.0), 1.7) * (0.55 + 0.8 * exp(-x * 8.0));
+  float prof = smoothstep(0.0, 0.03, x) * pow(max(1.0 - x, 0.0), 1.7) * (0.45 + 0.65 * exp(-x * 8.0));
   if (prof <= 0.0) return vec3(0.0);
   float v2 = max(dot(v, v), 1e-6);
   float psi = atan(v.y, v.x) * ${(DISK_N / (2 * Math.PI)).toFixed(6)};
@@ -2056,9 +2056,10 @@ void main() {
       vec4 gr = textureGrad(uNoise, gq, gx * 24.0, gy * 24.0);
 #endif
       float lane = pow(1.0 - abs(gr.r * 2.0 - 1.0), 5.0);
-      vec4 ms = textureGrad(uNoise, uv * 2.0, gx * 2.0, gy * 2.0);
-      float umbra = smoothstep(0.83, 0.845, ms.g), pen = smoothstep(0.79, 0.83, ms.g);
-      pc = uHot * 2.4 * (0.3 + 0.7 * pow(mu, 0.5)) * (1.0 - 0.38 * lane);
+      vec4 ms = textureGrad(uNoise, uv * 3.0, gx * 3.0, gy * 3.0);
+      float sv = ms.g * 0.7 + ms.b * 0.3;
+      float umbra = smoothstep(0.8, 0.81, sv), pen = smoothstep(0.765, 0.8, sv);
+      pc = uHot * 1.75 * (0.3 + 0.7 * pow(mu, 0.5)) * (1.0 - 0.4 * lane);
       pc = mix(mix(pc, vec3(0.2, 0.09, 0.035), pen * 0.88), vec3(0.015, 0.007, 0.003), umbra);
       pc += uGlow * (0.6 * pow(max(1.0 - mu, 0.0), 3.0) * smoothstep(0.55, 0.7, ms.b) + 2.0 * pow(max(1.0 - mu, 0.0), 10.0));   // faculae, the rim
     }
@@ -2125,13 +2126,13 @@ void main() {
     vec3 fp = vec3(0.0);
 #endif
     vec3 direct = diskLight(rd, dp, dFdx(dp), dFdy(dp), dFdx(rd), dFdy(rd), fp, uPos.w);
-    vec3 arcs = diskLight(rl, av, dFdx(av), dFdy(av), dFdx(rl), dFdy(rl), fp, uPos.w) * (up > 0.0 ? 1.1 : 0.6)
+    vec3 arcs = diskLight(rl, av, dFdx(av), dFdy(av), dFdx(rl), dFdy(rl), fp, uPos.w) * (up > 0.0 ? 1.5 : 0.55)
       * smoothstep(0.0, 0.3, abs(up) / max(hb, 1e-3));
     float fwh = fwidth(hb);
     float outside = smoothstep(1.0 - fwh, 1.0 + fwh, hb);
     float ring = exp(-(hb - 1.025) * (hb - 1.025) / (0.0004 + fwh * fwh));
     float near = 1.0 - step(0.0, up);
-    vec3 hc = col * outside + (direct * (outside + near * (1.0 - outside)) + arcs * outside) + uHot * ring * 1.4;
+    vec3 hc = col * outside + (direct * (outside + near * (1.0 - outside)) + arcs * outside) + uHot * ring * 0.8;
     col = mix(col, hc, uMix2.y);
   }
 #endif
@@ -6064,6 +6065,7 @@ const SKIES_CLOUD = { stratosphere: 0.95, storm: 1.0, golden: 0.8, nearspace: 0.
 // =============================================================================
 const DRIFT_PER = 24, DRIFT_F = 10, DRIFT_MAX = 48;    // per chunk / floats per record / instances per type
 const D_DISH = 0, D_ROCK = 1, D_WRECK = 2, D_SLED = 3, D_SAT = 4, D_SHARD = 5;
+const D_ICE = 6, D_MOONLET = 7, D_CRYSTAL = 8, D_HUSK = 9, D_GATE = 10, D_MONO = 11, D_FRACTAL = 12, D_MIRROR = 13;
 const DRIFT_TYPES = [
   { name: 'dish', build: bigDishGeo, move: 0 },
   { name: 'rock', build: tumbleRockGeo, move: 1 },
@@ -6071,6 +6073,15 @@ const DRIFT_TYPES = [
   { name: 'sled', build: sledGeo, move: 2 },
   { name: 'satellite', build: tumbleSatGeo, move: 1 },
   { name: 'shard', build: tumbleShardGeo, move: 1 },
+  // stages 6–8 (built after the others, so the geometry above and the state the builders leave are unchanged)
+  { name: 'ice', build: tumbleIceGeo, move: 1 },
+  { name: 'moonlet', build: moonletGeo, move: 1 },
+  { name: 'crystal', build: crystalGeo, move: 1 },
+  { name: 'husk', build: huskGeo, move: 1 },
+  { name: 'gate', build: gateGeo, move: 0 },
+  { name: 'monolith', build: monolithGeo, move: 1 },
+  { name: 'fractal', build: fractalGeo, move: 1 },
+  { name: 'mirror', build: mirrorGeo, move: 1 },
 ];
 // register one drift prop (see DRIFT_TYPES); the phase comes from the chunk's random stream
 function addDrift(ch, type, x, y, d, spin, scale, a = 0, b = 0, c = 0) {
@@ -6211,6 +6222,157 @@ function sledGeo() {
     vtx(-0.14, y, -0.95, c, 1.25, 0, 0); vtx(0.14, y, -0.95, c, 1.25, 0, 0); vtx(0.03, y, -3.4, c, 0.6, 0, 0);
     vtx(-0.14, y, -0.95, c, 1.25, 0, 0); vtx(0.03, y, -3.4, c, 0.6, 0, 0); vtx(-0.03, y, -3.4, c, 0.6, 0, 0);
   }
+}
+
+// ---- the later worlds' pieces (stages 6–8) --------------------------------------------------------
+// their palette: solar hardware (foil, hot radiators), ice, alien chitin and crystal, the void's black stone
+const KP = {
+  ice: C(0xb8c8d8), iceD: C(0x7c8ea2), snow: C(0xe2e8ee), foil: C(0xd8b870), foilD: C(0x9a7a3c), mirror: C(0xc8d0dc),
+  heat: C(0xff8a3c), glow: C(0xffd070), rust: C(0x7a4a34), marsRock: C(0x7a5444), marsRockD: C(0x5a3a30),
+  chitin: C(0x3a2c3e), chitinD: C(0x241a2a), chitinL: C(0x5a4658), vein: C(0x68ffc8), veinD: C(0x2a8a78),
+  crystal: C(0x5aa8d8), crystalD: C(0x2a5a8a), crystalL: C(0x9ae0ff), core: C(0xc8f4ff), amber: C(0xe0a040),
+  black: C(0x0c0c10), stone: C(0x2a2a32), edge: C(0x78d8ff), violet: C(0x8a6aff), land: C(0x4a7a44), sea: C(0x2a5a8a),
+};
+// a triangle between three points (x, height above GROUND_Y, d) of the current frame, wound to face away from
+// (ox, oh, od), a point inside the solid (its back is culled: props that tumble show every side)
+function tri(ax, ah, ad, bx, bh, bd, cx, ch, cd, c, k, ox, oh, od) {
+  if (!room(3)) return;
+  const ux = bx - ax, uh = bh - ah, ud = bd - ad, vx = cx - ax, vh = ch - ah, vd = cd - ad;
+  // the normal in (x, h, −d) (the emitter maps d to −z) against the outward direction
+  const nx = uh * -vd + ud * vh, nh = -ud * vx - ux * -vd, nd = ux * vh - uh * vx;
+  if (nx * (ax - ox) + nh * (ah - oh) + nd * -(ad - od) < 0) { vtx(ax, GROUND_Y + ah, ad, c, k, 0, 0); vtx(cx, GROUND_Y + ch, cd, c, k, 0, 0); vtx(bx, GROUND_Y + bh, bd, c, k, 0, 0); }
+  else { vtx(ax, GROUND_Y + ah, ad, c, k, 0, 0); vtx(bx, GROUND_Y + bh, bd, c, k, 0, 0); vtx(cx, GROUND_Y + ch, cd, c, k, 0, 0); }
+}
+// a crystal: an n-sided prism from (x, h, d) along the unit axis u, closed at its foot, its last quarter a
+// point (tipC, brightest vertex colours: it glows in the bloom); self-checked against the clear zones
+const SX = new Float32Array(8), SH = new Float32Array(8), SD = new Float32Array(8);
+function spike(x, h, d, ux, uh, ud, len, r, n, c, tipC) {
+  // a basis round the axis: a = u × up (u × x when the axis is near vertical), b = u × a
+  let ax = -ud, ah = 0, ad = ux;
+  if (Math.abs(uh) > 0.9) { ax = 0; ah = ud; ad = -uh; }
+  const al = Math.hypot(ax, ah, ad); ax /= al; ah /= al; ad /= al;
+  const bx = uh * ad - ud * ah, bh = ud * ax - ux * ad, bd = ux * ah - uh * ax;
+  const L = len * 0.72, tx = x + ux * len, th = h + uh * len, td = d + ud * len;
+  const cx = x + ux * L * 0.5, ch = h + uh * L * 0.5, cd = d + ud * L * 0.5;          // inside
+  let xa = Math.min(x, tx), xb = Math.max(x, tx), da = Math.min(d, td), db = Math.max(d, td);
+  checkTall(xa - r, da - r, xb + r, db + r, Math.max(h, th) + r);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU, ca = Math.cos(a) * r, sa = Math.sin(a) * r;
+    SX[i] = ax * ca + bx * sa; SH[i] = ah * ca + bh * sa; SD[i] = ad * ca + bd * sa;
+  }
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n, k = 0.82 + 0.18 * Math.cos((i + 0.5) / n * TAU - 2.3);
+    const x0 = x + SX[i], h0 = h + SH[i], d0 = d + SD[i], x1 = x + SX[j], h1 = h + SH[j], d1 = d + SD[j];
+    const X0 = x0 + ux * L, H0 = h0 + uh * L, D0 = d0 + ud * L, X1 = x1 + ux * L, H1 = h1 + uh * L, D1 = d1 + ud * L;
+    tri(x0, h0, d0, x1, h1, d1, X1, H1, D1, c, k, cx, ch, cd);
+    tri(x0, h0, d0, X1, H1, D1, X0, H0, D0, c, k, cx, ch, cd);
+    tri(X0, H0, D0, X1, H1, D1, tx, th, td, tipC, 1.2 * k, cx, ch, cd);
+    if (i > 0 && i < n - 1) tri(x + SX[0], h + SH[0], d + SD[0], x0, h0, d0, x1, h1, d1, c, 0.7, cx, ch, cd);
+  }
+}
+// a round patch on a solid's surface (a crater, a hatch): an n-gon at (x, h, d) facing the unit normal
+function patch(x, h, d, nx, nh, nd, r, c, k, n = 7) {
+  let ax = -nd, ah = 0, ad = nx;
+  if (Math.abs(nh) > 0.9) { ax = 0; ah = nd; ad = -nh; }
+  const al = Math.hypot(ax, ah, ad) || 1; ax /= al; ah /= al; ad /= al;
+  const bx = nh * ad - nd * ah, bh = nd * ax - nx * ad, bd = nx * ah - nh * ax;
+  const px = x + nx * 0.02, ph = h + nh * 0.02, pd = d + nd * 0.02;
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * TAU, a1 = ((i + 1) / n) * TAU, c0 = Math.cos(a0) * r, s0 = Math.sin(a0) * r, c1 = Math.cos(a1) * r, s1 = Math.sin(a1) * r;
+    tri(px, ph, pd, px + ax * c0 + bx * s0, ph + ah * c0 + bh * s0, pd + ad * c0 + bd * s0, px + ax * c1 + bx * s1, ph + ah * c1 + bh * s1, pd + ad * c1 + bd * s1,
+      c, k, x - nx, h - nh, d - nd);
+  }
+}
+// ice from Saturn's rings (≈ 1.2 across): a lumpy snowball, a glassier facet or two
+function tumbleIceGeo() {
+  frameId();
+  LR[0] = 0; LH[0] = -0.66; LK[0] = 0.8; LR[1] = 0.6; LH[1] = -0.4; LK[1] = 0.9; LR[2] = 0.88; LH[2] = 0.04; LK[2] = 1.0;
+  LR[3] = 0.64; LH[3] = 0.48; LK[3] = 1.08; LR[4] = 0; LH[4] = 0.74; LK[4] = 1.15;
+  lathe(0, 0, 5, 7, KP.snow, 0.5, 1.12, 0.82, 0.5);
+  patch(0.5, 0.3, 0.1, 0.62, 0.55, 0.1, 0.24, KP.ice, 1.1, 5);
+  patch(-0.3, -0.2, -0.5, -0.4, -0.3, -0.75, 0.2, KP.iceD, 0.95, 5);
+}
+// a moonlet (≈ 2.4 × 2 × 1.8 before scaling): a potato of dark rock, its craters (Phobos' Stickney the biggest)
+function moonletGeo() {
+  frameId();
+  LR[0] = 0; LH[0] = -0.9; LK[0] = 0.72; LR[1] = 0.66; LH[1] = -0.72; LK[1] = 0.82; LR[2] = 1.0; LH[2] = -0.3; LK[2] = 0.92;
+  LR[3] = 1.06; LH[3] = 0.15; LK[3] = 1.0; LR[4] = 0.86; LH[4] = 0.58; LK[4] = 1.06; LR[5] = 0.4; LH[5] = 0.86; LK[5] = 1.1; LR[6] = 0; LH[6] = 0.94; LK[6] = 1.12;
+  lathe(0, 0, 7, 12, KP.marsRock, 0.2, 1.2, 0.95, 0.26);
+  const cr = [[0.62, 0.44, 0.2, 0.42], [-0.5, 0.6, 0.35, 0.26], [0.1, -0.2, -0.95, 0.3], [-0.95, -0.1, 0.1, 0.22], [0.35, -0.7, 0.5, 0.2], [0.05, 0.9, -0.3, 0.16]];
+  for (const [nx, nh, nd, r] of cr) {
+    const l = Math.hypot(nx, nh, nd), ex = nx / l, eh = nh / l, ed = nd / l;
+    patch(ex * 1.05, eh * 0.86, ed * 0.98, ex, eh, ed, r * 1.25, KP.marsRock, 1.15, 8);
+    patch(ex * 1.06, eh * 0.87, ed * 0.99, ex, eh, ed, r, KP.marsRockD, 0.7, 8);
+  }
+}
+// an alien crystal cluster (≈ 2 across): a core and five hexagonal crystals, their points glowing
+function crystalGeo() {
+  frameId();
+  const dirs = [[0, 1, 0, 1.3], [0.8, 0.4, 0.3, 1.0], [-0.7, 0.3, -0.5, 1.1], [0.2, -0.9, 0.5, 0.9], [-0.4, -0.5, 0.7, 0.8], [0.5, -0.2, -0.85, 0.85]];
+  for (const [ux, uh, ud, l] of dirs) {
+    const n = Math.hypot(ux, uh, ud);
+    spike(0, 0, 0, ux / n, uh / n, ud / n, l, 0.17 + 0.05 * l, 6, KP.crystal, KP.crystalL);
+  }
+  LR[0] = 0; LH[0] = -0.3; LK[0] = 0.8; LR[1] = 0.32; LH[1] = 0; LK[1] = 1.0; LR[2] = 0; LH[2] = 0.3; LK[2] = 1.1;
+  lathe(0, 0, 3, 6, KP.crystalD, 0.3);
+}
+// a bio-mechanical husk (≈ 2.2 long): a ribbed pod of chitin, glowing slits between the ribs, two spines
+function huskGeo() {
+  frameId();
+  const R = [0, 0.3, 0.46, 0.4, 0.52, 0.46, 0.5, 0.36, 0], H = [-1.1, -0.95, -0.6, -0.35, -0.05, 0.25, 0.5, 0.85, 1.1];
+  for (let i = 0; i < 8; i++) { LR[i] = R[i]; LH[i] = H[i]; LK[i] = 0.8 + 0.05 * i; }
+  lathe(0, 0, 8, 8, KP.chitin, 0.2, 1.0, 0.85, 0.12);
+  LR[0] = 0.36; LH[0] = 0.85; LK[0] = 1.0; LR[1] = 0; LH[1] = 1.1; LK[1] = 1.0;
+  lathe(0, 0, 2, 8, KP.chitinL, 0.2, 1.0, 0.85);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU + 0.4, c = Math.cos(a), s = Math.sin(a);
+    patch(c * 0.43, -0.2, s * 0.37, c, 0, s, 0.12, KP.vein, 1.25, 5);
+    patch(c * 0.45, 0.38, s * 0.39, c, 0, s, 0.1, KP.vein, 1.25, 5);
+  }
+  spike(0.3, 0.2, 0.1, 0.9, 0.35, 0.25, 0.8, 0.06, 4, KP.chitinD, KP.chitinL);
+  spike(-0.3, -0.3, -0.1, -0.85, -0.2, -0.5, 0.7, 0.05, 4, KP.chitinD, KP.chitinL);
+}
+// an alien gate (turns about y; ≈ 4 across): a flat ring of ten segments, a glowing rim, spokes to a core
+function gateGeo() {
+  frameId();
+  const n = 10;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU;
+    frame(Math.cos(a) * 1.7, Math.sin(a) * 1.7, a);
+    solidBox(-0.26, -0.44, 0.26, 0.44, -0.16, 0.16, i % 2 ? KP.chitin : KP.stone, 1.0);
+    solidBox(-0.08, -0.3, 0.08, 0.3, 0.16, 0.3, KP.violet, 1.2);
+  }
+  frameId();
+  ring(0, 0, 1.36, 1.36, 0.1, 0.12, KP.edge, 20, 0, 1.2);
+  for (let i = 0; i < 3; i++) { frame(0, 0, (i / 3) * TAU + 0.5); solidBox(-0.05, 0.25, 0.05, 1.4, -0.05, 0.05, KP.stone, 0.9); }
+  frameId();
+  solidBox(-0.26, -0.26, 0.26, 0.26, -0.22, 0.22, KP.chitinL, 1.0);
+  solidBox(-0.12, -0.12, 0.12, 0.12, 0.22, 0.34, KP.core, 1.25);
+}
+// a monolith (1 : 4 : 9): black stone, the faintest light along its long edges
+function monolithGeo() {
+  frameId();
+  solidBox(-0.1, -0.4, 0.1, 0.4, -0.9, 0.9, KP.black, 1.0);
+  for (const [x, d] of [[-0.1, -0.4], [0.1, -0.4], [-0.1, 0.4], [0.1, 0.4]]) solidBox(x - 0.012, d - 0.012, x + 0.012, d + 0.012, -0.9, 0.9, KP.edge, 0.9);
+}
+// a fractal construct: the Menger sponge's first step (twenty cubes round the tunnels), a light at its heart
+function fractalGeo() {
+  frameId();
+  const s = 0.32, g = 0.015;
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
+    if ((i === 0) + (j === 0) + (k === 0) >= 2) continue;
+    solidBox(i * s - s / 2 + g, k * s - s / 2 + g, i * s + s / 2 - g, k * s + s / 2 - g, j * s - s / 2 + g, j * s + s / 2 - g, (i + j + k) & 1 ? KP.stone : KP.black, 1.0);
+  }
+  solidBox(-0.1, -0.1, 0.1, 0.1, -0.1, 0.1, KP.core, 1.25);
+}
+// a mirror of the solar collectors, torn loose (≈ 2 across): gold foil on a frame, a spar across it
+function mirrorGeo() {
+  frameId();
+  solidBox(-0.95, -0.95, 0.95, 0.95, -0.012, 0.012, KP.foil, 1.15);
+  solidBox(-1.0, -0.04, 1.0, 0.04, -0.05, 0.05, KP.foilD, 0.9);
+  solidBox(-0.04, -1.0, 0.04, 1.0, -0.05, 0.05, KP.foilD, 0.9);
+  for (const s of [-1, 1]) { solidBox(-1.0, s * 0.96 - 0.03, 1.0, s * 0.96 + 0.03, -0.03, 0.03, OP.frame, 0.9); solidBox(s * 0.96 - 0.03, -1.0, s * 0.96 + 0.03, 1.0, -0.03, 0.03, OP.frame, 0.9); }
+  solidBox(-0.12, -0.12, 0.12, 0.12, -0.14, 0.14, OP.hullD, 1.0);
 }
 
 // =============================================================================
@@ -7875,9 +8037,156 @@ const SO_ARENA = { d0: 1234, d1: Infinity, x: 7.5 };
 function solarTurn(d, kind) {
   return kind === 0 ? -d * 0.0008 : kind === 1 ? -(d - 860) * 0.0014 : kind === 2 ? (d - 1100) * 0.01 : -(d - 1250) * 0.0005;
 }
+// ---- solar props (y = height of the prop's middle above GROUND_Y) ---------------------------------
+// a Mars cycler (the Mars band's landmark): a truss spine of modules, a wheel of habitat segments round its
+// hub, cell wings, a cargo pod at each end, running lights
+function cycler(x, d, y, rot) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  frame(x, d, rot);
+  box(-0.1, -5.2, 0.1, 5.2, y - 0.1, y + 0.1, OP.frame, OP.frame);
+  tube(0, -4.9, -2.4, y, 0.4, 0.4, OP.white, 8);
+  tube(0, 2.4, 4.9, y, 0.4, 0.4, OP.white, 8);
+  tube(0, -5.3, -4.9, y, 0.2, 0.4, OP.dark, 8);
+  cyl(0, 0, 0.7, y - 0.3, y + 0.34, 10, OP.silver, OP.plate);
+  topStyle(T_GLASS, 0.3, 0.3);
+  for (const sd of [-3.7, 3.7]) for (const sx of [-1, 1]) box(sx > 0 ? 0.45 : -2.4, sd - 0.6, sx > 0 ? 2.4 : -0.45, sd + 0.6, y - 0.02, y + 0.02, OP.frame, OP.panel);
+  plain();
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * TAU, rx = Math.cos(a) * 2.5, rd = Math.sin(a) * 2.5;
+    frame(x + rx * c - rd * s, d + rx * s + rd * c, rot + a);
+    box(-0.26, -0.62, 0.26, 0.62, y - 0.22, y + 0.2, OP.hullD, i % 3 ? OP.white : OP.armour);
+    if (i % 3 === 0) box(-0.05, -0.05, 0.05, 0.05, y + 0.2, y + 0.26, OP.lampC, OP.lampC);
+  }
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * TAU + 0.5;
+    frame(x, d, rot + a);
+    box(-0.05, 0.7, 0.05, 2.3, y - 0.05, y + 0.05, OP.frame, OP.frame);
+  }
+  frame(x, d, rot);
+  box(-0.06, -5.35, 0.06, -5.25, y + 0.1, y + 0.2, OP.lampR, OP.lampR);
+  box(-0.06, 5.25, 0.06, 5.35, y + 0.1, y + 0.2, OP.lampC, OP.lampC);
+  frameId();
+}
+// a raiders' mining rig on an asteroid: a drill derrick, fuel tanks, a hab, a conveyor boom out over the
+// void with a glowing ore chute, warning lamps
+function minerRig(x, d, y, r, rot) {
+  asteroid(x, d, y, r, OP.rockD);
+  const top = y + r * 0.62;
+  frame(x, d, rot);
+  for (const [px, pd] of [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]]) box(px - 0.05, pd - 0.05, px + 0.05, pd + 0.05, top - 0.3, top + 1.15, OP.hazard, OP.hazard);
+  for (const h of [0.25, 0.7]) { box(-0.35, -0.35, 0.35, -0.28, top + h, top + h + 0.06, OP.frame, OP.frame); box(-0.35, 0.28, 0.35, 0.35, top + h, top + h + 0.06, OP.frame, OP.frame); }
+  box(-0.4, -0.4, 0.4, 0.4, top + 1.15, top + 1.3, OP.hullD, OP.redD);
+  box(-0.07, -0.07, 0.07, 0.07, top + 1.3, top + 1.42, OP.lampR, OP.lampR);
+  cyl(0.75 * r, -0.35 * r, 0.26, top - 0.35, top + 0.25, 8, OP.white, OP.silver);
+  cyl(0.72 * r, 0.3 * r, 0.22, top - 0.4, top + 0.12, 8, OP.orange, OP.silver);
+  tube(-0.55 * r, -0.4, 0.8, top - 0.1, 0.24, 0.24, OP.white, 7);
+  box(-0.1, 0.4, 0.1, r + 1.9, top - 0.05, top + 0.08, OP.frame, OP.hazard);
+  box(-0.16, r + 1.6, 0.16, r + 2.0, top - 0.3, top + 0.08, OP.hullD, KP.heat);
+  box(-0.06, r + 1.95, 0.06, r + 2.05, top + 0.05, top + 0.15, OP.lampR, OP.lampR);
+  frameId();
+}
+// a gas harvester floating over Jupiter: a hexagonal deck, a dome, tanks, a long scoop boom reaching down
+// into the clouds (its funnel glowing with heat), radiator fins
+function harvester(x, d, y, rot) {
+  frame(x, d, rot);
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * TAU + 0.26; PX[i] = Math.cos(a) * 2.1; PD[i] = Math.sin(a) * 2.1; }
+  topStyle(T_SLAB, 1.4, 1.4);
+  prism(6, y - 0.3, y, OP.hullD, OP.deck);
+  plain();
+  LR[0] = 0.9; LH[0] = y; LK[0] = 0.85; LR[1] = 0.78; LH[1] = y + 0.36; LK[1] = 1.0; LR[2] = 0.46; LH[2] = y + 0.62; LK[2] = 1.08; LR[3] = 0; LH[3] = y + 0.72; LK[3] = 1.12;
+  lathe(0, 0, 4, 10, OP.white, 0);
+  for (let i = 0; i < 3; i++) { const a = (i / 3) * TAU + 0.8; cyl(Math.cos(a) * 1.45, Math.sin(a) * 1.45, 0.32, y, y + 0.5, 8, OP.orange, OP.silver); }
+  topStyle(T_ROWS, 0.3, 0.5);
+  for (let i = 0; i < 4; i++) box(-2.9 - i * 0.02, -1.2 + i * 0.75, -2.1, -0.95 + i * 0.75, y - 0.1, y - 0.05, KP.heat, KP.heat);
+  plain();
+  box(-0.12, 2.0, 0.12, 5.2, y - 0.2, y - 0.02, OP.frame, OP.hazard);
+  cone(0, 5.4, 0.5, y - 0.9, y - 0.1, 8, OP.hullD);
+  disc(0, 5.4, 0.28, 0.28, y - 0.12, KP.glow, 8, 1.25);
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * TAU + 0.26; box(Math.cos(a) * 2.0 - 0.05, Math.sin(a) * 2.0 - 0.05, Math.cos(a) * 2.0 + 0.05, Math.sin(a) * 2.0 + 0.05, y, y + 0.1, OP.lampC, OP.lampC); }
+  frameId();
+}
+// a ring miners' station on a chunk of ring ice: a docking frame, tanks, a hab, lights
+function ringStation(x, d, y, rot) {
+  frame(x, d, rot);
+  LR[0] = 0; LH[0] = y - 1.0; LK[0] = 0.75; LR[1] = 1.3; LH[1] = y - 0.6; LK[1] = 0.88; LR[2] = 1.6; LH[2] = y; LK[2] = 1.0;
+  LR[3] = 1.2; LH[3] = y + 0.5; LK[3] = 1.08; LR[4] = 0; LH[4] = y + 0.72; LK[4] = 1.14;
+  lathe(0, 0, 5, 9, KP.snow, 0.3, 1.1, 0.9, 0.3);
+  box(-0.9, -0.5, 0.9, 0.5, y + 0.5, y + 0.8, OP.hullD, OP.plate);
+  tube(0, -2.6, -0.5, y + 0.66, 0.3, 0.3, OP.white, 7);
+  box(-1.4, 0.6, -1.3, 2.8, y + 0.55, y + 0.65, OP.frame, OP.frame);
+  box(1.3, 0.6, 1.4, 2.8, y + 0.55, y + 0.65, OP.frame, OP.frame);
+  box(-1.4, 2.7, 1.4, 2.8, y + 0.55, y + 0.65, OP.frame, OP.hazard);
+  for (const sx of [-0.55, 0.55]) cyl(sx, 0, 0.22, y + 0.8, y + 1.2, 8, OP.orange, OP.silver);
+  for (const [lx, ld] of [[-1.35, 2.75], [1.35, 2.75], [0, -2.6]]) box(lx - 0.05, ld - 0.05, lx + 0.05, ld + 0.05, y + 0.65, y + 0.75, OP.lampC, OP.lampC);
+  frameId();
+}
+// a collector array by the Sun: a truss along d, mirror panels tilted toward the light, glowing radiators
+function solarArray(x, d, y, len, side) {
+  box(x - 0.08, d - len / 2, x + 0.08, d + len / 2, y - 0.08, y + 0.08, OP.frame, OP.frame);
+  for (let q = -len / 2 + 0.8; q < len / 2 - 0.6; q += 1.7) {
+    // the panel's face only (tilted up toward the camera: its back is never seen)
+    const a = x + side * 0.2, b = x + side * 2.6, lo = y - 0.1, hi = y + 0.75, mx = (a + b) / 2, mh = y - 2;
+    tri(a, lo, d + q - 0.7, b, hi, d + q - 0.7, b, hi, d + q + 0.7, KP.foil, 1.15, mx, mh, d + q);
+    tri(a, lo, d + q - 0.7, b, hi, d + q + 0.7, a, lo, d + q + 0.7, KP.foil, 1.15, mx, mh, d + q);
+    box(Math.min(x - side * 0.2, x - side * 1.2), d + q - 0.1, Math.max(x - side * 0.2, x - side * 1.2), d + q + 0.1, y - 0.05, y + 0.02, KP.heat, KP.heat);
+  }
+  checkTall(Math.min(x, x + side * 2.6), d - len / 2, Math.max(x, x + side * 2.6), d + len / 2, y + 0.75);
+}
+
+// ---- solar chunks -------------------------------------------------------------------------------
 function genSolar(w, ch, k, d0) {
+  const d1 = d0 + CHUNK, dm = d0 + 20;
   styleReset();
-  genSpaceDrift(w, ch, k, d0);
+  const band = dm < 320 ? 0 : dm < 700 ? 1 : dm < 1000 ? 2 : dm < 1240 ? 3 : 4;
+  const xin = (d) => (d > SO_ARENA.d0 - 3 ? SO_ARENA.x : SO_LANE.x) + 0.4;
+  const side = () => (rand() < 0.5 ? -1 : 1);
+  const rockC = band === 3 ? KP.snow : band === 0 ? KP.marsRock : OP.rock;
+  // the belt's rock fields: a clump or two per chunk beside the lanes, a scatter elsewhere (ice by Saturn)
+  const nField = [0, LOWQ ? 2 : 3, 0, LOWQ ? 1 : 2, 0][band];
+  for (let f = 0; f < nField; f++) {
+    const s = side(), fd = rr(d0 + 4, d1 - 4), fx = s * rr(7.6, 10.2), n = LOWQ ? 5 : 10;
+    for (let i = 0; i < n; i++) {
+      const r = rr(0.2, i === 0 ? 1.2 : 0.7), d = fd + rr(-4, 4), x = fx + rr(-3, 3);
+      if (Math.abs(x) < xin(d) + r * 1.3) continue;
+      asteroid(x, d, rr(0.7, 3.0), r, band === 3 ? (rand() < 0.6 ? KP.snow : KP.ice) : rand() < 0.4 ? OP.rockD : rand() < 0.5 ? OP.rock : OP.rockL);
+    }
+  }
+  const nRock = [LOWQ ? 1 : 2, LOWQ ? 2 : 5, 1, LOWQ ? 2 : 4, 1][band];
+  for (let i = 0; i < nRock; i++) {
+    const r = rr(0.15, 0.5), d = rr(d0, d1), x = side() * rr(xin(d) + r * 1.3, 11);
+    asteroid(x, d, rr(0.6, 3.1), r, band === 3 ? KP.ice : jit(rockC, 0.1, TC2));
+  }
+  if (band === 0 && rand() < 0.5) { const d = rr(d0 + 3, d1 - 3), s = side(); satellite(s * rr(7.8, 10), d, rr(1.2, 2.8), rr(-0.5, 0.5), rr(0.6, 0.9)); }
+  if (band === 4) for (const s of [-1, 1]) if (rand() < 0.75) solarArray(s * rr(9.0, 10.0), rr(d0 + 8, d1 - 8), rr(1.4, 2.4), rr(9, 14), s);
+  // landmarks
+  if (k === 3) cycler(-9.2, 128, 2.2, 0.12);
+  if (k === 7) cycler(9.5, 292, 1.9, -0.2);
+  if (k === 10) minerRig(8.4, 417, 1.4, 1.3, -1.2);
+  if (k === 13) minerRig(-8.6, 538, 1.5, 1.5, 1.4);
+  if (k === 16) minerRig(8.5, 655, 1.3, 1.2, -1.0);
+  if (k === 19) harvester(-9.2, 782, 2.2, 1.3);
+  if (k === 23) harvester(9.3, 938, 2.0, -1.4);
+  if (k === 27) ringStation(8.9, 1092, 1.6, -1.3);
+  if (k === 29) ringStation(-9.0, 1178, 1.8, 1.2);
+  // tumblers beside the lanes: rocks (and ice by Saturn, loose mirrors by the Sun)
+  const nt = [1, LOWQ ? 2 : 4, 1, LOWQ ? 2 : 4, 2][band];
+  for (let i = 0; i < nt; i++) {
+    const type = band === 3 ? D_ICE : band === 4 ? (rand() < 0.6 ? D_MIRROR : D_SHARD) : D_ROCK, s = type === D_ROCK || type === D_ICE ? rr(0.3, 0.75) : rr(0.4, 0.65);
+    const d = rr(d0 + 2, d1 - 2), x = side() * rr(xin(d) + 1.4 * s + 0.3, 11);
+    addDrift(ch, type, x, rr(1.0, 3.0), d, rr(0.25, 0.9), s, rr(0.1, 0.3));
+  }
+  // the deep layer far below them: Mars' satellites and its moons, the belt's thick drift of rock, ice round
+  // Jupiter and in Saturn's rings, loose mirrors and wreckage in the corona
+  const nd = [LOWQ ? 2 : 4, LOWQ ? 5 : 12, LOWQ ? 1 : 3, LOWQ ? 5 : 12, LOWQ ? 2 : 4][band];
+  for (let i = 0; i < nd; i++) {
+    const r = rand(), d = rr(d0, d1), y = -rr(2.5, 14), x = side() * rr(5.3 - y * 0.12, 17);
+    const type = band === 0 ? (r < 0.5 ? D_SAT : D_ROCK) : band === 1 ? (r < 0.85 ? D_ROCK : D_ICE) : band === 2 ? (r < 0.6 ? D_ICE : D_ROCK) : band === 3 ? (r < 0.85 ? D_ICE : D_ROCK) : (r < 0.5 ? D_MIRROR : D_SHARD);
+    const s = type === D_ROCK || type === D_ICE ? rr(0.5, band === 1 || band === 3 ? 1.7 : 1.2) : rr(0.6, 1.1);
+    addDrift(ch, type, x, y, d, rr(0.12, 0.5), s, rr(0.3, 0.9));
+  }
+  if (k === 3) addDrift(ch, D_MOONLET, -12.5, -10, 150, 0.03, 3.4, 0.2);    // Phobos
+  if (k === 6) addDrift(ch, D_MOONLET, 13, -12, 262, 0.04, 1.8, 0.2);       // Deimos
+  if (k === 26) addDrift(ch, D_MOONLET, -13.5, -11, 1062, 0.05, 2.6, 0.3);  // a shepherd moon, dusted with ice
   styleReset();
 }
 // light: a white sun, warmer toward the end; hemi from below is the body's light. The body's colours:
@@ -7889,7 +8198,7 @@ const solarKey = (d, sunI, hemiI, o) => ({ d, sun: 0xfff2e4, sunI, sky: 0x1e1c24
 const MARS = { pKind: 0, pOcean: 0x3a2622, pLand: 0x7e4630, pLand2: 0xa8784e, pCloud: 0xd8b8a0, pAtmos: 0xc88a6e, pGlow: 0x7aa0ff, pAtmW: 0.006, psun: [-0.45, 0.75, -0.5] };
 const JUPITER = { pKind: 1, pOcean: 0x3e4c5a, pLand: 0x5a301a, pLand2: 0x9a5e32, pCloud: 0xac9674, pHot: 0x9a3c26, pAtmos: 0xa8967c, pGlow: 0xffc890, pAtmW: 0.01, psun: [-0.45, 0.8, -0.4] };
 const SATURN = { pKind: 2, pRing: 1, pLand: 0x947648, pLand2: 0x6a6450, pCloud: 0xc8b890, pGas: 0xa89a7e, pGas2: 0x70685c, pAtmos: 0xc8b484, pGlow: 0xffd8a0, pAtmW: 0.01, psun: [0.2, 0.85, -0.5] };
-const SUN = { pKind: 3, pHot: 0xffa850, pAtmos: 0xff8a3c, pGlow: 0xff5a30, pAtmW: 0.03, pSpace: 0x070302, pStar: 0.25, pNebI: 0, psun: [0, 1, 0] };
+const SUN = { pKind: 3, pHot: 0xffa040, pAtmos: 0xff8a3c, pGlow: 0xff5a30, pAtmW: 0.03, pSpace: 0x070302, pStar: 0.25, pNebI: 0, psun: [0, 1, 0] };
 const SOLAR_TOD_SRC = [
   // Mars under the play area, its haze and limb across the top
   solarKey(-60, 2.4, 1.0, { ...MARS, pX: 0, pZ: 26, pF: 17, pH: 0.1 }),
@@ -7911,8 +8220,8 @@ const SOLAR_TOD_SRC = [
   // Saturn: far off over its pole, the rings round it; then over the rings themselves, the globe on the left
   solarKey(1040, 2.3, 1.0, { ...SATURN, pX: -44, pZ: -70, pF: 17, pH: 14, pSide: 0 }),
   solarKey(1100, 2.3, 1.0, { ...SATURN, pX: 2, pZ: -32, pF: 17, pH: 4, pSide: 0 }),
-  solarKey(1150, 2.3, 1.0, { ...SATURN, pX: -2.5, pZ: -2, pF: 9, pH: -0.38, pSide: 1.85 }),
-  solarKey(1222, 2.3, 1.0, { ...SATURN, pX: -2.5, pZ: -2, pF: 9, pH: -0.38, pSide: 1.85 }),
+  solarKey(1150, 2.3, 1.0, { ...SATURN, pX: 1.5, pZ: -2, pF: 9, pH: -0.38, pSide: 1.85 }),
+  solarKey(1222, 2.3, 1.0, { ...SATURN, pX: 1.5, pZ: -2, pF: 9, pH: -0.38, pSide: 1.85 }),
   solarKey(1240, 2.4, 1.0, { ...SATURN, pX: -8, pZ: 40, pF: 9, pH: 2, pSide: 1.85 }),
   solarKey(1247, 2.4, 1.0, { ...SATURN, pX: -60, pZ: 40, pF: 9, pH: 3, pSide: 1.85 }),
   // the Sun: in from the left, its limb across the top of the screen, the corona and prominences below
@@ -7937,11 +8246,111 @@ const GALAXY_LAYOUT = [
 ];
 const GA_LANE = { d0: -Infinity, d1: 1234, x: 5 };
 const GA_ARENA = { d0: 1234, d1: Infinity, x: 7.5 };
+// ---- alien props (y = height of the prop's foot or middle above GROUND_Y) ---------------------------
+// a floating outcrop of alien crystal: a dark rock, crystals growing up and out of it, their points glowing
+function crystalOutcrop(x, d, y, s) {
+  frame(x, d, rand() * TAU);
+  LR[0] = 0; LH[0] = y - 0.9 * s; LK[0] = 0.62; LR[1] = 0.8 * s; LH[1] = y - 0.45 * s; LK[1] = 0.8;
+  LR[2] = 1.0 * s; LH[2] = y; LK[2] = 0.95; LR[3] = 0.55 * s; LH[3] = y + 0.28 * s; LK[3] = 1.05; LR[4] = 0; LH[4] = y + 0.34 * s; LK[4] = 1.1;
+  lathe(0, 0, 5, LOWQ ? 6 : 8, jit(KP.chitinD, 0.1, TC3), 0, rr(0.85, 1.2), rr(0.8, 1.15), 0.4);
+  frameId();
+  const n = LOWQ ? 3 : 5 + ((rand() * 3) | 0);
+  for (let i = 0; i < n; i++) {
+    const a = rand() * TAU, tilt = i === 0 ? 0.08 : rr(0.25, 0.75), ux = Math.cos(a) * Math.sin(tilt), ud = Math.sin(a) * Math.sin(tilt), uh = Math.cos(tilt);
+    const len = (i === 0 ? rr(1.4, 1.9) : rr(0.6, 1.3)) * s, r = (i === 0 ? 0.22 : rr(0.1, 0.18)) * s;
+    const bx = x + ux * 0.3 * s, bd = d + ud * 0.3 * s;
+    if (y + 0.2 * s + uh * len > MAX_H - 0.1) continue;
+    spike(bx, y + 0.1 * s, bd, ux, uh, ud, len, r, 6, rand() < 0.5 ? KP.crystal : KP.crystalD, KP.crystalL);
+  }
+}
+// a pylon of the swarm: a ribbed spire of chitin on a foot of rock, veins glowing, an orb of light on top
+function pylon(x, d, y, h) {
+  frame(x, d, rand() * TAU);
+  LR[0] = 0; LH[0] = y - 0.6; LK[0] = 0.65; LR[1] = 0.7; LH[1] = y - 0.2; LK[1] = 0.85; LR[2] = 0.55; LH[2] = y + 0.1; LK[2] = 1.0; LR[3] = 0; LH[3] = y + 0.2; LK[3] = 1.05;
+  lathe(0, 0, 4, 7, KP.chitinD, 0, 1, 1, 0.3);
+  for (let i = 0; i < 6; i++) { LR[i] = (i & 1 ? 0.2 : 0.28) * (1 - i * 0.1); LH[i] = y + 0.1 + (i / 5) * h; LK[i] = 0.8 + i * 0.05; }
+  LR[5] = 0.1;
+  lathe(0, 0, 6, 6, KP.chitin, 0.3);
+  for (let i = 0; i < 3; i++) { LR[i] = [0.2, 0.26, 0][i]; LH[i] = y + h + [0, 0.2, 0.45][i]; LK[i] = 1.25; }
+  lathe(0, 0, 3, 6, KP.vein, 0.3);
+  disc(0, 0, 0.5, 0.5, y - 0.18, KP.veinD, 8, 1.1);
+  frameId();
+}
+// a warp gate of the swarm lying in space: a ring of segments round a swirling violet mouth (bright at the
+// heart), its rim lit
+function warpGate(x, d, y, R) {
+  const n = 14;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU;
+    frame(x + Math.cos(a) * R, d + Math.sin(a) * R, a);
+    box(-0.32, -R * 0.24, 0.32, R * 0.24, y - 0.25, y + 0.2, KP.chitinD, i % 2 ? KP.chitin : KP.stone);
+    box(-0.1, -R * 0.12, 0.1, R * 0.12, y + 0.2, y + 0.34, KP.violet, KP.violet);
+  }
+  frameId();
+  ring(x, d, R - 0.46, R - 0.46, 0.14, y + 0.02, KP.edge, 28, 0, 1.2);
+  // the mouth: a fan from a bright heart to a violet edge, swirled
+  const m = 28, rm = R - 0.46;
+  if (room(m * 6)) for (let i = 0; i < m; i++) {
+    const a0 = (i / m) * TAU, a1 = ((i + 1) / m) * TAU, tw = 0.9;
+    const mx = x + Math.cos(a0 + tw) * rm * 0.45, md = d + Math.sin(a0 + tw) * rm * 0.45, nx2 = x + Math.cos(a1 + tw) * rm * 0.45, nd2 = d + Math.sin(a1 + tw) * rm * 0.45;
+    vtx(x, GROUND_Y + y - 0.1, d, KP.core, 1.2, 0, 0); vtx(mx, GROUND_Y + y - 0.1, md, KP.violet, 1.1, 0, 0); vtx(nx2, GROUND_Y + y - 0.1, nd2, KP.violet, 1.1, 0, 0);
+    vtx(mx, GROUND_Y + y - 0.1, md, KP.violet, 1.1, 0, 0); vtx(x + Math.cos(a0) * rm, GROUND_Y + y - 0.1, d + Math.sin(a0) * rm, KP.chitinD, 0.9, 0, 0); vtx(x + Math.cos(a1) * rm, GROUND_Y + y - 0.1, d + Math.sin(a1) * rm, KP.chitinD, 0.9, 0, 0);
+    vtx(mx, GROUND_Y + y - 0.1, md, KP.violet, 1.1, 0, 0); vtx(x + Math.cos(a1) * rm, GROUND_Y + y - 0.1, d + Math.sin(a1) * rm, KP.chitinD, 0.9, 0, 0); vtx(nx2, GROUND_Y + y - 0.1, nd2, KP.violet, 1.1, 0, 0);
+  }
+}
+// a hive cluster: ribbed pods of chitin grown together, joined by tendrils, their sacs glowing
+function hivePods(x, d, y, s) {
+  const n = LOWQ ? 2 : 3 + ((rand() * 2) | 0);
+  let px = x, pd = d;
+  for (let i = 0; i < n; i++) {
+    const h = rr(0.8, 1.5) * s, r = rr(0.4, 0.6) * s, cx = x + rr(-1.2, 1.2) * s, cd = d + rr(-1.4, 1.4) * s;
+    frame(cx, cd, rand() * TAU);
+    for (let j = 0; j < 7; j++) { const t = j / 6; LR[j] = (j === 0 || j === 6 ? 0 : (0.75 + 0.25 * (j & 1)) * Math.sin(t * Math.PI) * r * 1.3); LH[j] = y + (t - 0.4) * h; LK[j] = 0.75 + 0.07 * j; }
+    lathe(0, 0, 7, LOWQ ? 6 : 8, jit(KP.chitin, 0.12, TC3), 0, 1, rr(0.8, 1.0), 0.15);
+    disc(0, 0, r * 0.35, r * 0.35, y + 0.6 * h + 0.005, KP.vein, 7, 1.2);
+    frameId();
+    if (i > 0) { frame((px + cx) / 2, (pd + cd) / 2, Math.atan2(-(cx - px), cd - pd)); const L = Math.hypot(cx - px, cd - pd) / 2; tube(0, -L, L, y - 0.1, 0.1 * s, 0.14 * s, KP.chitinD, 5); frameId(); }
+    px = cx; pd = cd;
+  }
+  checkTall(x - 2 * s, d - 2 * s, x + 2 * s, d + 2 * s, y + 0.8 * s);
+}
+
+// ---- galaxy chunks ------------------------------------------------------------------------------
 function genGalaxy(w, ch, k, d0) {
+  const d1 = d0 + CHUNK, dm = d0 + 20;
   styleReset();
-  genSpaceDrift(w, ch, k, d0);
+  const band = dm < 420 ? 0 : dm < 800 ? 1 : dm < 1240 ? 2 : 3;
+  const xin = (d) => (d > GA_ARENA.d0 - 3 ? GA_ARENA.x : GA_LANE.x) + 0.4;
+  const side = () => (rand() < 0.5 ? -1 : 1);
+  // what floats beside the lanes: crystal outcrops in the nebula, pylons among the clusters, the hive in the
+  // dust, far-out crystal by the core
+  const nOut = [LOWQ ? 1 : 2, 1, 0, 1][band];
+  for (let i = 0; i < nOut; i++) { const s = rr(0.7, 1.1), d = rr(d0 + 3, d1 - 3); crystalOutcrop(side() * rr(xin(d) + 1.6 * s + 0.6, band === 3 ? 11 : 10), d, rr(1.2, 2.2), s); }
+  if (band === 1 && rand() < 0.8) { const d = rr(d0 + 3, d1 - 3); pylon(side() * rr(xin(d) + 1.2, 9.5), d, rr(0.8, 1.4), rr(1.4, 2.2)); }
+  if (band === 2) for (let i = 0; i < (LOWQ ? 1 : 2); i++) { const s = rr(0.8, 1.1), d = rr(d0 + 4, d1 - 4); hivePods(side() * rr(xin(d) + 2.2 * s + 0.5, 10), d, rr(1.2, 2.0), s); }
+  if (band === 0 || band === 2) for (let i = 0; i < (LOWQ ? 1 : 2); i++) { const r = rr(0.15, 0.45), d = rr(d0, d1); asteroid(side() * rr(xin(d) + r * 1.3, 11), d, rr(0.6, 3.0), r, band === 2 ? KP.chitinD : OP.rockD); }
+  // landmarks: warp gates among the clusters
+  if (k === 12) warpGate(-9.0, 492, 1.4, 3.0);
+  if (k === 16) warpGate(9.3, 655, 1.6, 3.2);
+  if (k === 19) warpGate(-8.6, 778, 1.2, 2.6);
+  // tumblers: crystals, husks
+  const nt = [LOWQ ? 2 : 3, 2, LOWQ ? 2 : 3, 2][band];
+  for (let i = 0; i < nt; i++) {
+    const type = band === 2 ? (rand() < 0.7 ? D_HUSK : D_CRYSTAL) : band === 1 ? (rand() < 0.5 ? D_HUSK : D_CRYSTAL) : D_CRYSTAL, s = rr(0.4, 0.75);
+    const d = rr(d0 + 2, d1 - 2), x = side() * rr(xin(d) + 1.5 * s + 0.3, 11);
+    addDrift(ch, type, x, rr(1.0, 3.0), d, rr(0.2, 0.7), s, rr(0.1, 0.3));
+  }
+  // the deep layer: crystals and husks drifting far below, the swarm's gates turning, dark rock in the dust
+  const nd = [LOWQ ? 3 : 6, LOWQ ? 3 : 6, LOWQ ? 4 : 8, LOWQ ? 2 : 5][band];
+  for (let i = 0; i < nd; i++) {
+    const r = rand(), d = rr(d0, d1), y = -rr(2.5, 14), x = side() * rr(5.3 - y * 0.12, 17);
+    const type = band === 0 ? (r < 0.65 ? D_CRYSTAL : D_ROCK) : band === 1 ? (r < 0.35 ? D_GATE : r < 0.7 ? D_HUSK : D_CRYSTAL) : band === 2 ? (r < 0.55 ? D_HUSK : r < 0.8 ? D_ROCK : D_CRYSTAL) : (r < 0.6 ? D_CRYSTAL : D_SHARD);
+    const s = type === D_GATE ? rr(0.7, 1.2) : type === D_ROCK ? rr(0.6, 1.5) : rr(0.6, 1.3);
+    addDrift(ch, type, x, y, d, type === D_GATE ? rr(0.2, 0.5) : rr(0.12, 0.5), s, type === D_GATE ? 0 : rr(0.3, 0.9));
+  }
   styleReset();
 }
+
 const galaxyKey = (d, o) => ({ d, sun: 0xe8f0ff, sunI: 2.3, sky: 0x243048, gnd: 0x2a4a5a, hemiI: 1.1, fog: 0x000000, near: 52, far: 130,
   cLit: 0x7a7a7e, cShade: 0x383a40, shadow: 0x000000, shA: 0, shK: 1, cloud: 0, pSpace: 0x030410, pStar: 1.0, ...o });
 const GALAXY_TOD_SRC = [
@@ -7973,9 +8382,97 @@ const COSMOS_LAYOUT = [
 ];
 const CO_LANE = { d0: -Infinity, d1: 1234, x: 5 };
 const CO_ARENA = { d0: 1234, d1: Infinity, x: 7.5 };
+// ---- void props ---------------------------------------------------------------------------------
+// an obelisk of the old ones, broken: a black shaft, its cap, the faint light along its edges, a shard fallen
+// from it
+function obelisk(x, d, y, h, rot) {
+  frame(x, d, rot);
+  box(-0.34, -0.34, 0.34, 0.34, y, y + h, KP.stone, KP.black);
+  cone(0, 0, 0.48, y + h, y + h + 0.4, 4, KP.stone, Math.PI / 4);
+  for (const [px, pd] of [[-0.34, -0.34], [0.34, -0.34], [-0.34, 0.34], [0.34, 0.34]]) box(px - 0.025, pd - 0.025, px + 0.025, pd + 0.025, y, y + h, KP.edge, KP.edge);
+  box(-0.36, -0.36, 0.36, 0.36, y + h * 0.4, y + h * 0.4 + 0.05, KP.edge, KP.edge);
+  box(0.6, -0.9, 1.1, 0.3, y - 0.1, y + 0.18, KP.stone, KP.black);
+  frameId();
+}
+// a fractal construct (the Menger sponge's first step), set at an angle, the light at its heart showing
+// through its tunnels
+function menger(x, d, y, s, rot) {
+  frame(x, d, rot);
+  const q = s / 3, g = 0.02 * s;
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let kk = -1; kk <= 1; kk++) {
+    if ((i === 0) + (j === 0) + (kk === 0) >= 2) continue;
+    box(i * q - q / 2 + g, kk * q - q / 2 + g, i * q + q / 2 - g, kk * q + q / 2 - g, y + j * q - q / 2 + g, y + j * q + q / 2 - g, (i + j + kk) & 1 ? KP.stone : KP.black, (i + j + kk) & 1 ? KP.stone : OP.hullD);
+  }
+  box(-q * 0.3, -q * 0.3, q * 0.3, q * 0.3, y - q * 0.3, y + q * 0.3, KP.core, KP.core);
+  for (const [px, pd] of [[-1.5, -1.5], [1.5, -1.5], [-1.5, 1.5], [1.5, 1.5]]) box(px * q - 0.03, pd * q - 0.03, px * q + 0.03, pd * q + 0.03, y + 1.5 * q, y + 1.5 * q + 0.04, KP.edge, KP.edge);
+  frameId();
+}
+// a fragment of a ring-world passing by: a broad ribbon of land and sea on a hull, rim walls along both
+// edges, following a vast circle (centre cx, cd; radius R at the edge toward the play area, R − W at the far
+// one), drawn for
+// the part of it in [a, b) from dA to dB, broken off at the ends
+function ringworld(cx, cd, R, W, y, a, b, dA, dB, seed) {
+  const s = Math.sign(-cx);          // the side of the circle facing the play area
+  const A = Math.max(a, dA), B = Math.min(b, dB);
+  if (B <= A) return;
+  const xAt = (dd, r) => cx + s * Math.sqrt(Math.max(r * r - (dd - cd) * (dd - cd), 0));
+  for (let dd = A; dd < B - 1e-3; dd += 1.5) {
+    const e = Math.min(dd + 1.5, B);
+    const i0 = xAt(dd, R), i1 = xAt(e, R), o0 = xAt(dd, R - W), o1 = xAt(e, R - W);
+    const brokeA = dd < dA + 3 ? hash2(Math.round(dd), seed) * 1.6 : 0, brokeB = e > dB - 3 ? hash2(Math.round(e), seed + 1) * 1.6 : 0;
+    // the hull slab
+    PX[0] = i0; PD[0] = dd; PX[1] = i1; PD[1] = e; PX[2] = o1; PD[2] = e; PX[3] = o0; PD[3] = dd;
+    if (s < 0) { PX[1] = o0; PD[1] = dd; PX[3] = i1; PD[3] = e; }
+    prism(4, y - 0.35 - brokeA - brokeB, y, OP.hullD, OP.hull);
+    // the land on it: seas and continents in strips across, cloud here and there (flat, just above)
+    for (let q = 0; q < 5; q++) {
+      const t0 = 0.1 + q * 0.16, t1 = t0 + 0.16;
+      const h = fbm(dd * 0.07 + seed, q * 0.45 + seed * 3.1), cl = vnoise(dd * 0.16 - seed, q * 0.7 + 5.3);
+      const c = cl > 0.72 ? KP.snow : h < 0.5 ? KP.sea : h < 0.62 ? KP.land : h < 0.7 ? KP.amber : OP.rockL;
+      const ax = lerp(i0, o0, t0), bx = lerp(i1, o1, t0), cx2 = lerp(i1, o1, t1), dx = lerp(i0, o0, t1);
+      if (s > 0) flat4(dx, dd, ax, dd, bx, e, cx2, e, y + 0.01, c, 0.85 + 0.3 * h);      // (corners CCW from above)
+      else flat4(ax, dd, dx, dd, cx2, e, bx, e, y + 0.01, c, 0.85 + 0.3 * h);
+    }
+    // the rim walls
+    for (const [t0, t1] of [[0, 0.1], [0.9, 1.0]]) {
+      PX[0] = lerp(i0, o0, t0); PD[0] = dd; PX[1] = lerp(i1, o1, t0); PD[1] = e; PX[2] = lerp(i1, o1, t1); PD[2] = e; PX[3] = lerp(i0, o0, t1); PD[3] = dd;
+      if (s < 0) { const tx = PX[1], td = PD[1]; PX[1] = PX[3]; PD[1] = PD[3]; PX[3] = tx; PD[3] = td; }
+      prism(4, y, y + 0.45, OP.hullD, KP.stone);
+    }
+    if (Math.abs(dd % 6) < 0.75 && !LOWQ) box(Math.min(i0, o0) - 0.06, dd - 0.06, Math.min(i0, o0) + 0.06, dd + 0.06, y + 0.45, y + 0.55, KP.edge, KP.edge);
+  }
+}
+
+// ---- cosmos chunks ------------------------------------------------------------------------------
 function genCosmos(w, ch, k, d0) {
+  const d1 = d0 + CHUNK, dm = d0 + 20;
   styleReset();
-  genSpaceDrift(w, ch, k, d0);
+  const band = dm < 420 ? 0 : dm < 800 ? 1 : dm < 1240 ? 2 : 3;
+  const xin = (d) => (d > CO_ARENA.d0 - 3 ? CO_ARENA.x : CO_LANE.x) + 0.4;
+  const side = () => (rand() < 0.5 ? -1 : 1);
+  // the void: almost nothing — an obelisk now and then; the web: fractal constructs; warped space: the
+  // ring-world fragments; the horizon: nothing near, debris falling in far below
+  if (band === 0 && (k === 3 || k === 7 || k === 10)) { const d = rr(d0 + 5, d1 - 5); obelisk(side() * rr(7, 9), d, rr(0.6, 1.1), rr(1.6, 2.4), rr(0, TAU)); }
+  if (band === 1) { const s = rr(1.2, 1.8), d = rr(d0 + 4, d1 - 4); menger(side() * rr(xin(d) + s + 0.8, 9.5), d, rr(1.4, 2.4), s, rr(0, TAU)); }
+  if (band === 2) {
+    ringworld(-427.1, 1010, 420, 4.6, 1.1, d0, d1, 930, 1085, 11);
+    ringworld(442.3, 1165, 435, 4.2, 1.5, d0, d1, 1115, 1215, 23);
+  }
+  if (band === 2 && rand() < 0.5) { const d = rr(d0, d1), r = rr(0.2, 0.5); asteroid(side() * rr(xin(d) + r * 1.3, 8.5), d, rr(1, 3), r, KP.stone); }
+  // tumblers: monoliths in the void, fractals in the web, shards in warped space, debris at the horizon
+  const nt = [1, LOWQ ? 1 : 2, LOWQ ? 1 : 2, 2][band];
+  for (let i = 0; i < nt; i++) {
+    const type = band === 0 ? D_MONO : band === 1 ? D_FRACTAL : band === 2 ? (rand() < 0.5 ? D_SHARD : D_MONO) : (rand() < 0.5 ? D_SHARD : D_ROCK), s = rr(0.45, 0.8);
+    const d = rr(d0 + 2, d1 - 2), x = side() * rr(xin(d) + 1.6 * s + 0.3, 11);
+    addDrift(ch, type, x, rr(1.0, 3.0), d, rr(0.15, 0.6), s, rr(0.1, 0.3));
+  }
+  // the deep layer
+  const nd = [LOWQ ? 1 : 2, LOWQ ? 3 : 5, LOWQ ? 3 : 5, LOWQ ? 3 : 6][band];
+  for (let i = 0; i < nd; i++) {
+    const r = rand(), d = rr(d0, d1), y = -rr(2.5, 14), x = side() * rr(5.3 - y * 0.12, 17);
+    const type = band === 0 ? D_MONO : band === 1 ? (r < 0.6 ? D_FRACTAL : D_MONO) : band === 2 ? (r < 0.4 ? D_SHARD : r < 0.7 ? D_MONO : D_FRACTAL) : (r < 0.6 ? D_SHARD : D_ROCK);
+    addDrift(ch, type, x, y, d, rr(0.1, band === 3 ? 0.9 : 0.4), rr(0.7, 1.4), rr(0.3, 0.9));
+  }
   styleReset();
 }
 const cosmosKey = (d, o) => ({ d, sun: 0xe0e8ff, sunI: 2.2, sky: 0x1a2038, gnd: 0x202a4a, hemiI: 1.0, fog: 0x000000, near: 52, far: 130,
@@ -7987,20 +8484,11 @@ const COSMOS_TOD_SRC = [
   cosmosKey(760, { pStar: 0.5, pClus: 0.6, pL1: 0.75, pL2: 0.45, pHot: 0xd8e4ff, pGas2: 0x6a8ad8, pNeb: 0x3a2a8a, pGas: 0x3a5ab8, pSpace: 0x020106 }),
   cosmosKey(850, { sky: 0x1a2a40, pStar: 0.7, pClus: 0.7, pL1: 0.55, pL2: 0.4, pDustI: 0.7, pSpark: 1.0, pHot: 0xd8e4ff, pGas2: 0x9ab4ff, pNeb: 0x3a2a8a, pGas: 0x2a9ac0, pSpace: 0x010208 }),
   cosmosKey(1180, { sky: 0x1a2a40, pStar: 0.7, pClus: 0.6, pL1: 0.5, pL2: 0.35, pDustI: 0.6, pSpark: 1.0, pHot: 0xd8e4ff, pGas2: 0x9ab4ff, pNeb: 0x3a2a8a, pGas: 0x2a9ac0, pSpace: 0x010208,
-    pGlowI: 0.0, pCx: 0, pCz: -70, pCr: 1.0, pTilt: 1.36 }),
+    pGlowI: 0.0, pCx: 0, pCz: -70, pCr: 1.0, pTilt: 1.47 }),
   cosmosKey(1275, { sun: 0xd8ecff, sunI: 2.4, sky: 0x283a60, gnd: 0x3a3070, hemiI: 1.15, pStar: 0.8, pClus: 0.4, pL1: 0.35, pL2: 0.2, pDustI: 0.15, pSpark: 0.0, pHot: 0xa8dcff, pGas2: 0x5a36c0, pNeb: 0x3a2a8a, pGas: 0x2a9ac0, pSpace: 0x000000,
-    pGlowI: 1.0, pCx: 0, pCz: -14, pCr: 2.6, pTilt: 1.36 }),
+    pGlowI: 1.0, pCx: 0, pCz: -14, pCr: 3.0, pTilt: 1.47 }),
 ];
 const COSMOS_CLOUD = { void: 0, web: 0, warp: 0, horizon: 0 };
-// PLACEHOLDER drift layer (temporary)
-function genSpaceDrift(w, ch, k, d0) {
-  const solar = S.id === 'solar', n = LOWQ ? 3 : 7, belt = solar && d0 + 20 > 320 && d0 + 20 < 700;
-  for (let i = 0; i < (belt ? n * 2 : n); i++) {
-    const d = rr(d0, d0 + CHUNK), y = rand() < 0.35 ? rr(0.8, 2.8) : -rr(2.5, 14), x = (rand() < 0.5 ? -1 : 1) * rr(5.4 - Math.min(0, y) * 0.12, 16);
-    const r = rand(), type = solar ? (r < 0.8 ? D_ROCK : D_SAT) : r < 0.5 ? D_SHARD : r < 0.75 ? D_WRECK : D_ROCK;
-    addDrift(ch, type, x, y, d, rr(0.12, 0.6), type === D_ROCK ? rr(0.4, belt ? 1.8 : 1.2) : rr(0.6, 1.1), rr(0.2, 0.8));
-  }
-}
 
 // =============================================================================
 // stage table

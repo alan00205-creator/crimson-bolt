@@ -263,17 +263,20 @@ function skiffBurst(e, dt, g, speed) {
 // once two parts are gone or after 18 s; the exposed reactor spins a twin spiral, and at half HP
 // a third arm and rings. Retreats after 40 s. Sets g.midbossDone on death and on retreat.
 const MORTAR_R = 1.3;                 // blast radius (+ the jet's hit radius)
-const SHELL_A = [2.2, 0.8, 0.25, 1], SHELL_B = [2.6, 1.2, 0.4, 1];
+const SHELL_A = [2.2, 0.8, 0.25, 1], SHELL_B = [2.6, 1.2, 0.4, 1], SHELL_C = [1.5, 0.45, 0.12, 0.85];
 const RET_A = [2.4, 0.3, 0.12, 0.2], RET_B = [2.6, 0.45, 0.15, 1];
-const RET_C = [1.4, 0.2, 0.08, 0.1], RET_D = [2.4, 0.5, 0.15, 0.55];
+// the glow filling the reticle stays under the bloom threshold: a bloomed disc would hide the jet
+const RET_C = [1.4, 0.2, 0.08, 0.1], RET_D = [1.2, 0.25, 0.08, 0.35];
 const SHOCK_C = [2.4, 1.2, 0.5, 1];
 function mortar(g, tail) {
   const v = g.view, p = g.player;
   const m = g.muzzlePos(tail.obj), mx = m.x, mz = m.z;
   const tz = clamp(p.z, v.zTop + 4, v.zBottom - 2), tx = clamp(p.x, -v.hw(tz) + 0.8, v.hw(tz) - 0.8);
-  const fuse = 1.25;
-  // the shell arcs over (it swells as it climbs toward the camera) onto a closing red reticle
-  g.fx.p.emit(mx, 0.4, mz, (tx - mx) / fuse, 0, (tz - mz) / fuse, fuse, 0.45, 1.25, SHELL_A, SHELL_B, F.GLOW, 0, NO_DRAG);
+  const fuse = 1.25, half = fuse * 0.5, vx = (tx - mx) / fuse, vz = (tz - mz) / fuse;
+  // the shell arcs over onto a closing red reticle: it swells as it climbs toward the camera, then
+  // shrinks and cools as it drops, so it lands small and its bloom never swallows the jet
+  g.fx.p.emit(mx, 0.4, mz, vx, 0, vz, half, 0.45, 1.2, SHELL_A, SHELL_B, F.GLOW, 0, NO_DRAG);
+  g.later(half, () => g.fx.p.emit(mx + vx * half, 0.4, mz + vz * half, vx, 0, vz, half, 1.2, 0.5, SHELL_B, SHELL_C, F.GLOW, 0, NO_DRAG));
   g.fx.p.emit(tx, 0.05, tz, 0, 0, 0, fuse, 6.4, MORTAR_R / 0.39, RET_A, RET_B, F.RING, 0, FLAT);
   g.fx.p.emit(tx, 0.05, tz, 0, 0, 0, fuse, 0.6, 1.6, RET_C, RET_D, F.GLOW, 0, FLAT);
   g.fx.muzzle(mx, mz, 2.6, 1.3, 0.4, 1.1);

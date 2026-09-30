@@ -33,9 +33,10 @@
 //   and C lydian contain the whole line; under a theme whose key lacks one of those notes (the
 //   D-minor themes' B-flat, stages 4-5 and their bosses) the chain snaps to that theme's own
 //   scale instead (see compileSong: song.snap).
-// * 'stageStart' … 'stageStart5' are locked to their stage theme's 16th grid and key (the game
-//   fires each together with music('stage' … 'stage5')).
-// * Stage and boss themes are battle music: 158-176 BPM, relentless kit (four-on-the-floor,
+// * 'stageStart' … 'stageStart5' are locked to their stage theme's 16th grid and key: the game
+//   fires each together with music('stage' … 'stage5'), and the theme starts on the fanfare's
+//   clock even when music() runs a few render quanta later (see Engine.music).
+// * Stage and boss themes are battle music: 158-174 BPM, relentless kit (four-on-the-floor,
 //   double kick, militant snare drags and 32nd rolls, tom fills, crashes on phrase starts),
 //   pumping 16th / octave bass, double-tracked distorted power-chord guitars (baked stereo),
 //   baked brass "power hits", a noise riser into every loop point.
@@ -1664,7 +1665,7 @@ const SFX = {
   // the chain's pitch (0, 2, 4 … 12) is snapped up to E G A B C D E: a rising line that sits
   // in E minor (boss) instead of a whole-tone run (and in B phrygian, A minor and C lydian:
   // stage 2, boss 2, stage 3); a theme whose key lacks one of those notes brings its own
-  // scale (song.snap: D minor → E G A Bb C D E, F# minor → E F# G# B C# D E, …)
+  // scale (song.snap: D minor → E G A Bb C D E, F# minor → E F# G# A B C# D E, …)
   medal:      { gap: 0.035, max: 4, pri: 5, lv: 5.5, verb: 1, bake: [1, 0.9], snap: [0, 3, 5, 7, 8, 10] },
   oneup:      { gap: 0.5,   max: 1, pri: 9, lv: 0, verb: 1 },
   death:      { gap: 0.5,   max: 1, pri: 10, lv: 2, verb: 1 },
@@ -2265,7 +2266,7 @@ const SONGDEF = {
         chords: 'Eb Bb F Gm Eb Bb Cm D', lead: ORBIT_CHORUS7 + ' f#6:4 d6:4 a5:4 f#5:4', pad: 0.7,
         bass: 'oct16*7 build', drums: 'bC*7 fS', crash: [0, 4], gtr: 'half*7 push',
         stab: 'hB none hA none hB none hA hA', arp: 'arpO*8',
-        p2: { dbl: 'brass-12', arp: 'bellSky*8' },
+        p2: { dbl: 'brass-12', pad: 0, arp: 'bellSky*8' },
       },
       C: {
         chords: 'Cm Cm Gm Gm Ab Ab D D', leadV: 'brass', padV: 'choir', pad: 1,
@@ -2273,10 +2274,10 @@ const SONGDEF = {
               'ab5:8 c6:4 eb6:4 | eb6:6 c6:2 ab5:4 c6:4 | f#5:4 a5:4 d6:4 f#6:4 | f#6:4 e6:2 d6:2 c6:2 bb5:2 a5:2 f#5:2',
         bass: 'halves*4 pump*3 build', drums: 'bH*4 orA orB*2 fD', crash: [0, 4], rise: 2,
         gtr: 'hold*4 ch16*2 hold*2', arp: 'bellSlow*4 arpO*4',
-        p2: { harm: 1 },
+        p2: { dbl: 'bell+12' },
       },
       D: {
-        chords: 'Eb Bb F Gm Eb Bb Cm D', harm: 1, pad: 0.7,
+        chords: 'Eb Bb F Gm Eb Bb Cm D', harm: 1,
         lead: ORBIT_CHORUS7 + ' a5:2 d6:2 f#6:2 d6:2 a5:2 c6:2 d6:2 f#6:2',
         bass: 'oct16*6 p16 build', drums: 'bD*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
         gtr: 'half*6 ch16 hold', stab: 'hB none hA none hB none hD none', arp: 'arpC*8',
@@ -2309,12 +2310,12 @@ const SONGDEF = {
         p2: { harm: 1, drums: 'bD*7 fX', stab: 'hA sM hA hB hA sM hA hB' },
       },
       B: {
-        chords: 'Fm Fm Cm Cm Db Eb G G', dbl: 'brass-12', pad: 0.6,
+        chords: 'Fm Fm Cm Cm Db Eb G G', dbl: 'bell+12',
         lead: 'ab5:8 c6:4 f6:4 | eb6:6 db6:2 c6:4 ab5:4 | g5:8 c6:4 eb6:4 | d6:6 c6:2 g5:8 |' +
               'f5:4 ab5:4 db6:6 c6:2 | bb5:4 eb6:4 g6:6 f6:2 | f6:4 d6:2 b5:2 g5:4 b5:4 | d6:2 eb6:2 d6:2 c6:2 b5:2 c6:2 d6:2 f6:2',
         bass: 'pump*6 build*2', drums: 'bG*3 bD bG*3 fS', crash: [0, 4],
-        gtr: 'half*6 ch16 hold', stab: 'hB*8', arp: 'arpC*8',
-        p2: { harm: 1, dbl: null },
+        gtr: 'half*6 ch16 hold', stab: 'hB*8', arp: 'bellA*8',
+        p2: { harm: 1, dbl: null, arp: 'arpC*8' },
       },
       C: {
         chords: 'Ab Eb Bb Cm Ab Eb Fm G', leadV: 'brass', padV: 'choir', pad: 1,
@@ -2322,7 +2323,7 @@ const SONGDEF = {
               'c6:12 bb5:4 | g5:8 bb5:4 eb6:4 | ab5:4 c6:4 f6:4 eb6:4 | d6:4 b5:4 g5:2 b5:2 d6:2 f6:2',
         bass: 'halves*4 pump*3 build', drums: 'bH*4 milB*3 fR', crash: [0, 4],
         gtr: 'hold*4 half*3 hold', stab: 'hA none*3 hA none hA hB', arp: 'bellSlow*4 arpM*4',
-        p2: { dbl: 'bell+12', harm: 1 },
+        p2: { dbl: 'bell+12' },
       },
       A2: {
         chords: 'Cm Bb Ab G Cm Bb Db G', leadV: 'dlead', dbl: 'bell+12',
@@ -2378,7 +2379,7 @@ const SONGDEF = {
               'g5:8 b5:4 d6:4 | d6:6 b5:2 g5:4 b5:4 | e#5:4 g#5:4 c#6:4 e#6:4 | e#6:4 d6:2 c#6:2 b5:2 a5:2 g#5:2 e#5:2',
         bass: 'halves*4 pump*3 build', drums: 'moonH*3 fT milB*3 fD', crash: [0, 4], rise: 2,
         gtr: 'brk*4 ch16*2 hold*2', stab: 'hC none hC none none*4', arp: 'bellSlow*4 bellA*4',
-        p2: { harm: 1 },
+        p2: { dbl: 'bell+12' },
       },
       D: {
         chords: 'D E F#m F#m D E C# C#', lead: LUNAR_CHORUS, harm: 1,

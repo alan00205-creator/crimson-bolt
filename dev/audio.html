@@ -255,6 +255,11 @@ async function runAuto() {
   let pass = 0;
   for (const [name, sec] of jobs) {
     const r = await __renderForTest(name, sec);
+    // music tracks feed the CPU line: best of three renders (one 8 s render is ±20 % noise)
+    if (MUSIC_TRACKS.includes(name)) {
+      for (let k = 0; k < 2; k++) r.msPerSec = Math.min(r.msPerSec, (await __renderForTest(name, sec)).msPerSec);
+      r.durationMs = r.msPerSec * sec;
+    }
     const ok = r.rms > 0 && !r.nan && r.peak <= 1.0;
     if (ok) pass++;
     rows.push(r);
@@ -268,8 +273,8 @@ async function runAuto() {
   }
   $('summary').textContent = `${pass} / ${jobs.length} passed (rms > 0, no NaN, final peak ≤ 1.0).`;
   $('summary').style.color = pass === jobs.length ? 'var(--ok)' : 'var(--bad)';
-  // music CPU next to the budget (the heavier of the stage-1 theme and the boss theme). Single
-  // 8 s renders are noisy (±20 %): re-run, or use the section check's whole-cycle numbers.
+  // music CPU next to the budget (the heavier of the stage-1 theme and the boss theme): the first
+  // 8 s only, best of three; the section check's whole-cycle numbers are the steadier measure.
   const ms = Object.fromEntries(rows.filter((r) => r.kind === 'music' && MUSIC_TRACKS.includes(r.name)).map((r) => [r.name, r.msPerSec]));
   const budget = Math.max(...BUDGET_TRACKS.map((t) => ms[t] || 0));
   const cpu = MUSIC_TRACKS.filter((t) => ms[t] !== undefined).map((t) => {

@@ -18,7 +18,7 @@
 //     atlas-mapped) plus one translucent mesh with its drop shadows. Five chunk slots
 //     are recycled; content is generated deterministically from the chunk index, so
 //     reset(d) and recycling always rebuild exactly the same terrain.
-//   • A feature at stage position d is drawn at z = distance − d (see CONTRACT.md).
+//   • A feature at stage position d is drawn at z = distance − d.
 //   • Water is ONE static plane with a ShaderMaterial. Its shape comes from a ring-buffer
 //     DataTexture ("mask", 128×512 texels = 80×320 units) that each chunk writes when it
 //     is built: terrain height (shore foam, shallows), wake foam and "calm water". The waves
@@ -29,7 +29,7 @@
 //     faster than the ground; soft billowed cumulus, self-shadowed toward the sun. Radar
 //     dishes and wind-turbine rotors are instanced spinners. Both run on an unbounded clock.
 //   • Time of day (sun/hemi colours, fog, water and cloud tint) is keyed on distance.
-//     The sun's DIRECTION never changes (core fakes aircraft shadows with a fixed offset);
+//     The sun's DIRECTION never changes (game.js fakes aircraft shadows with a fixed offset);
 //     the water glint uses its own "glint direction" so the sun path is on screen.
 //   • update() creates no objects: per-frame scalars go into Vector uniforms / typed arrays.
 //   • The chunk ahead of the view is built in three slices (ground / props / water mask)
@@ -37,13 +37,13 @@
 //   • Every prop taller than 0.25 is self-checked against the clear zones and the height
 //     limit while it is emitted; world.info().violations must stay 0 (dev/world.html shows it).
 //
-// Rules this module guarantees (see CONTRACT.md):
+// Rules this module guarantees (the game's stage scripts rely on them):
 //   • nothing solid above y = −1.8;  • lanes x∈LANES_X±1 and cross roads (d≡20 mod 40,
 //     width 3) are clear of anything taller than 0.25 in land biomes (coastal from d≥330,
 //     canyon from d≥260 up to 1240, where the canyon terrain is also kept flat: h = 0);
 //   • the mid-boss path is clear the same way (coastal |x| < 4.6, d 570–780, see CRAWLER;
 //     canyon |x| < 5.5, d 560–780) and so is the canyon's lakebed boss arena (|x| < 9, d ≥ 1240);
-//   • ocean islands keep their land at |x| ≥ 8.2 (contract: > 7; core sails gunboats at ±7),
+//   • ocean islands keep their land at |x| ≥ 8.2 (contract: > 7; stage 1 sails gunboats at ±7),
 //     decorative ships keep their hulls at |x| ≥ 8.4;
 //   • ≤ 5 generated textures (atlas 512², noise 256², waves 256², mask 128×512, clouds 256²);
 //     the sky stage's cloud deck reuses the noise texture.
@@ -81,7 +81,7 @@ const NOISE_SPAN = 256;                     // world period of the detail-noise 
 const TIME_WRAP = 1000;                     // shader time wraps (all scroll speeds are k/1000)
 const CAP_HIGH = 96000, CAP_LOW = 60000;    // vertices per chunk
 const SH_CAP = 30000;                        // shadow vertices per chunk
-// mid-boss corridor: core's crawler (6×5) spawns at MIDBOSS_AT(590)+~40, sways x = ±3.2 (hull to
+// mid-boss corridor: stage 1's crawler (6×5) spawns at MIDBOSS_AT(590)+~40, sways x = ±3.2 (hull to
 // |x| 6.2) and can fight until ground d ≈ 755, then retreats to ≈ 775. Lanes cover |x| ≥ 4.5,
 // so clearing |x| < 4.6 over [570, 780] keeps its whole path free of anything tall.
 const CRAWLER = { d0: 570, d1: 780, x: 4.6 };
@@ -206,7 +206,7 @@ function forestF(x, d) { return fbm(x * 0.075 + 11.3, d * 0.045 - 3.7); }
 function crossDist(d) { const m = ((d % CHUNK) + CHUNK) % CHUNK; return Math.abs(m - 20); }
 
 // islands in the open ocean. Land always stays at |x| ≥ ISL_X: the contract allows islands only
-// at |x| > 7, and core sails gunboats (1.6 wide) along x = ±7, so keep a margin beyond 7.8.
+// at |x| > 7, and stage 1 sails gunboats (1.6 wide) along x = ±7, so keep a margin beyond 7.8.
 // Shapes are ellipses (sx across, sd along the flight direction) with a wobbly outline; land
 // reaches at most ~1.22·R·s from the centre (q < 0.98 at the widest wobble).
 const ISL = [];
@@ -717,7 +717,7 @@ function shadowHull(n, y) {
     shadowPush(HX[H[base + i + 1]], HD[H[base + i + 1]], y);
   }
 }
-const SUNX = 0.467, SUND = 0.333; // ground offset per unit height (matches core's aircraft shadows)
+const SUNX = 0.467, SUND = 0.333; // ground offset per unit height (matches game.js's aircraft shadows)
 // shadow of a local-frame rect prism of height h standing at rel. height base
 function shadowBox(x0, d0, x1, d1, h, base = 0) {
   if (h < 0.05) return;
@@ -1690,7 +1690,7 @@ export class World {
     this.root.add(this.water);
   }
 
-  // The sky stage's "ground": a sunlit cloud sea at GROUND_Y (so core's aircraft shadows lie on
+  // The sky stage's "ground": a sunlit cloud sea at GROUND_Y (so game.js's aircraft shadows lie on
   // it), one opaque plane like the water. Hidden on the other stages; three's compile() walks
   // hidden objects too, so main.js's precompile still builds both LOW/HIGH programs for it.
   _initDeck() {
@@ -1736,7 +1736,7 @@ export class World {
     this.clouds = new THREE.InstancedMesh(geo, this.cloudMat, CLOUD_MAX);
     this.clouds.name = 'world-clouds';
     this.clouds.frustumCulled = false;
-    this.clouds.renderOrder = 1;      // after core's aircraft shadows (0), before fx/bullets (2..10)
+    this.clouds.renderOrder = 1;      // after game.js's aircraft shadows (0), before fx/bullets (2..10)
     this.cloudShadows = new THREE.InstancedMesh(geo, this.cloudShadowMat, CLOUD_MAX);
     this.cloudShadows.name = 'world-cloud-shadows';
     this.cloudShadows.frustumCulled = false;
@@ -1779,7 +1779,7 @@ export class World {
     this.puffs = new THREE.InstancedMesh(this.puffGeo, this.puffMat, PUFF_MAX);
     this.puffShadows = new THREE.InstancedMesh(this.puffShGeo, this.puffShadowMat, PUFF_MAX);
     this.puffs.name = 'world-cloud-towers'; this.puffShadows.name = 'world-cloud-tower-shadows';
-    this.puffs.renderOrder = 0.5;          // over core's aircraft shadows (0), under the low clouds (1)
+    this.puffs.renderOrder = 0.5;          // over game.js's aircraft shadows (0), under the low clouds (1)
     this.puffShadows.renderOrder = -2;
     for (const m of [this.puffs, this.puffShadows]) {
       m.frustumCulled = false; m.count = 0; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -2391,7 +2391,7 @@ function zebraAcrossLane(lx, c) {
 // =============================================================================
 function genOcean(w, ch, k, d0) {
   for (let i = 0; i < ISL.length; i++) if (ISL[i].k === k) islandProps(ch, ISL[i]);
-  // shipping on both flanks; every hull stays at |x| ≥ 8.4, clear of core's gunboat lanes
+  // shipping on both flanks; every hull stays at |x| ≥ 8.4, clear of stage 1's gunboat lanes
   const nShip = rand() < 0.6 ? 1 : 2;
   for (let s = 0; s < nShip; s++) {
     const side = rand() < 0.5 ? -1 : 1, d = d0 + rr(8, 32), r = rand();
@@ -5035,7 +5035,7 @@ function fortLot(ch, kind, side, a, b) {
 }
 
 // endless dry lakebed 1240+: the boss arena — flat mud-cracked clay and salt, the treads of
-// something enormous, and very sparse props out beyond |x| 9.6
+// something enormous, and very sparse props outside the arena (|x| ≥ 9)
 const crackX = (i, j, cs) => (i + (hash2(i, j + 7777) - 0.5) * 0.7) * cs;
 const crackD = (i, j, cs) => (j + (hash2(i + 913, j) - 0.5) * 0.7) * cs;
 function crackEdge(ax, ad, bx, bd, w, c, lay) {

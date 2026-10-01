@@ -3364,7 +3364,14 @@ Object.assign(Engine.prototype, {
   music(name, when) {
     const now = when !== undefined ? when : this.ctx.currentTime;
     const song = name ? getSong(name) : null;
-    if (song && this.cur && this.cur.name === name && !this.cur.done) {
+    // a stage fanfare for this song was fired a moment ago (see below)
+    const fan = when === undefined && this.fanSong === name && now >= this.fanT && now - this.fanT < 0.25;
+    // The same song again carries on — unless that fanfare announced a new run of it while the
+    // old run's theme is still playing off its clock (RESTART on stage 1, from the pause menu or
+    // a record screen): then the theme starts over on the fanfare's grid, with a quick fade of
+    // the old one so it doesn't trample the first hits.
+    const restart = fan && song && this.cur && Math.abs(this.cur.t0 - (this.fanT + MUSIC_LEAD)) > 0.002;
+    if (song && this.cur && this.cur.name === name && !this.cur.done && !restart) {
       if (this.cur.frozen) this.thaw(now);      // same song requested while paused: carry on
       return;
     }
@@ -3372,7 +3379,7 @@ Object.assign(Engine.prototype, {
       if (this.cur.frozen) {                    // paused song: drop it outright
         for (let i = 0; i < this.tracks.length; i++) if (this.tracks[i] === this.cur) this.tracks[i] = null;
         this.cur.kill();
-      } else this.cur.fadeOut(now, 0.6);
+      } else this.cur.fadeOut(now, restart && this.cur.name === name ? 0.2 : 0.6);
       this.cur = null;
     }
     if (!song) return;
@@ -3389,7 +3396,7 @@ Object.assign(Engine.prototype, {
     // so before the bake lands). Should the gap exceed MUSIC_LEAD, the theme joins that grid
     // a few 16ths in, so its beats still fall on the fanfare's hits.
     let at = now + MUSIC_LEAD, skip = 0;
-    if (when === undefined && this.fanSong === name && now >= this.fanT && now - this.fanT < 0.25) {
+    if (fan) {
       const t0 = this.fanT + MUSIC_LEAD;
       if (t0 >= now + 0.002) at = t0;
       else { skip = Math.ceil((now + 0.002 - t0) / song.sps); at = t0 + skip * song.sps; }
@@ -3838,7 +3845,8 @@ export const audio = {
 
   // 'title' | 'stage' | 'boss' | 'stage2' … 'stage8' | 'boss2' … 'boss8' | 'clear' | 'gameover'
   // | null. Crossfades ~0.6 s. An unknown name stops the music.
-  // Requesting the track that is already playing does nothing (a finished jingle restarts).
+  // Requesting the track that is already playing does nothing (a finished jingle restarts, and
+  // so does a stage theme whose fanfare was fired just before: a new run of that stage).
   music(track) {
     try {
       wantTrack = track && getSong(track) ? track : null;

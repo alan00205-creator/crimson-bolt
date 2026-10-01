@@ -553,14 +553,18 @@ const AE_RAIL = 0.65;                          // the rail fires this long
 const AE_DUMP = [0.2, 0.34];                   // the banks' dumps: the first this long after the rail, the second after it
 const AE_TELL = 0.45;                          // amber charge glow before the hub's and the reactor's big-orb fans
 const AE_TRIO_TELL = 0.32;                     // the reactor orb flares this long before each aimed needle trio
+const AE_REACH = 20;                           // the station's furthest reach up-screen of the jet's lowest row (a tall
+                                               // phone: 17 from the jet's row, vs 15.2 on a desktop view; see aegisAI)
 function aegisAI() {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, v = g.view;
     if (!s.init) {
       s.init = true; s.mode = 'enter'; s.fixedYaw = true; s.yaw = Math.PI; e.invuln = true; e.armored = true;
       s.open = 0; s.a = 0; s.b = 0; s.c = 0; s.sway = 0; s.pt = 0; s.ph = 0; s.spin = 0; s.spinV = 0.9; s.gk = 0; s.gun = 'stow'; s.gunT = 0;
-      // station: the ring's far side (e.z − 6) stays below the boss bar
-      s.z0 = v.zTop - 17; s.baseZ = Math.max(v.zTop + 11.5, zAtRow(v, BAR_ROW, 0.3) + 6.3); e.x = 0; e.z = s.z0;
+      // station: the ring's far side (e.z − 6) stays below the boss bar, and the hub stands no further than
+      // AE_REACH up-screen of the jet's lowest row. On a desktop view the bar sets it (≈ 18.2 up); on a phone
+      // held upright the plane is a quarter deeper and the bar alone stood it ~3.7 further off than that
+      s.z0 = v.zTop - 17; s.baseZ = Math.max(v.zTop + 11.5, zAtRow(v, BAR_ROW, 0.3) + 6.3, (v.zPlayerMax ?? v.zBottom - 1.3) - AE_REACH); e.x = 0; e.z = s.z0;
       s.tur = [0, 1, 2].map((i) => g.partByKey(e, 'turret' + i));
       s.gen = [0, 1, 2].map((i) => g.partByKey(e, 'gen' + i));
       s.can = g.partByKey(e, 'cannon'); s.capL = g.partByKey(e, 'capL'); s.capR = g.partByKey(e, 'capR');

@@ -32,7 +32,7 @@ export const ENEMY = {
   s4_drone: { hp: 5, score: 350, radius: 0.75, air: true, explode: 0.9, debris: 6, medal: 0.2, prewarm: 18 },
   // the laser satellite's circle reaches well out along its collector wings (shots used to pass through the
   // glowing blades); the frigate's covers its bow and stern engine block broadside-on
-  s4_laser: { hp: 88, score: 2500, radius: 1.9, air: true, explode: 1.7, debris: 12, medal: 1, prewarm: 4 },
+  s4_laser: { hp: 88, score: 2500, radius: 1.9, air: true, explode: 1.7, debris: 12, medal: 1, prewarm: 5 },
   s4_frigate: { hp: 170, score: 5000, radius: 2.0, air: true, explode: 2.4, debris: 20, medal: 2, prewarm: 3 },
   s4_mine: { hp: 10, score: 250, radius: 0.7, air: true, explode: 0.8, debris: 5, noHpSeg: true, prewarm: 16 },
   // mid-boss: three heads on necks, then the core (armoured under its lid until two heads are gone or
@@ -1014,8 +1014,8 @@ const TIMELINE = makeTimeline((at) => {
   at(424, (g) => W4.mines(g, [[-6.5, 0], [-2, 0.3], [3, 0.6], [6, 1.0], [-4, 1.5], [1, 1.9], [5, 2.4], [-1.5, 2.9]], 2.6));
   at(446, (g) => { W4.jink(g, [-6, -3, 0, 3, 6], 0.35); g.later(2.6, () => W4.mines(g, [[-5.5, 0], [5.5, 0.5]], 2.6)); });
   at(468, (g) => { W4.laser(g, -1, -4.5, 0.22, 2); g.later(1.5, () => W4.frigate(g, 1, 0.3, ['P'])); });
-  at(494, (g) => { W4.loop(g, 1, 6, 0.3); g.later(1.2, () => W4.loop(g, -1, 6, 0.3)); g.later(2.2, () => W4.laser(g, 1, 3.5, 0.18, 1)); });
-  at(516, (g) => { W.carrier(g, 0, ['P']); g.later(1.0, () => W4.ring(g, 0, 6, 0.22, -1)); g.later(2.2, () => W4.laser(g, 1, 4.8, 0.24, 2)); });
+  at(494, (g) => { W4.loop(g, 1, 6, 0.3); g.later(1.2, () => W4.loop(g, -1, 6, 0.3)); g.later(2.2, () => W4.laser(g, 1, 1.6, 0.18, 2)); });
+  at(516, (g) => { W.carrier(g, 0, ['P']); g.later(1.0, () => W4.ring(g, 0, 6, 0.22, -1)); g.later(2.2, () => W4.laser(g, -1, -4.8, 0.24, 2)); });
   at(532, (g) => { W4.frigate(g, 1, 0.18, null); g.later(2.2, () => W4.frigate(g, -1, 0.32, ['B'])); g.later(3.6, () => W4.jink(g, [-4, 4], 0.3, 2, 0.24)); });
   at(556, (g) => { W4.ring(g, 0, 6, 0.26); g.later(1.4, () => W4.mines(g, [[-4, 0], [4, 0.5]])); });
   at(572, (g) => { W4.laser(g, 1, 5, 0.2, 1); W4.laser(g, -1, -5, 0.2, 1); });
@@ -1025,8 +1025,8 @@ const TIMELINE = makeTimeline((at) => {
   at(666, (g) => { W4.laser(g, -1, -5, 0.2, 3); W4.laser(g, 1, 5, 0.28, 3); g.later(2.4, () => W4.ring(g, 0, 6, 0.3, 1)); });
   at(692, (g) => { W4.mines(g, [[-5, 0], [-1.5, 0.4], [2, 0.8], [5.5, 1.2]]); g.later(1.8, () => W4.ring(g, 0, 6, 0.24, -1)); g.later(2.6, () => W4.frigate(g, -1, 0.34, null)); });
   at(714, (g) => { W4.frigate(g, 1, 0.22, ['B'], 6); g.later(3, () => escort(g, -1, 2, 1.0)); });
-  at(744, (g) => { W4.jink(g, [-6, -2, 2, 6, 0], 0.3, 3, 0.18); g.later(2.0, () => W4.loop(g, -1, 5)); });
-  at(762, (g) => { W4.laser(g, -1, -3.5, 0.18, 2); g.later(1.2, () => W4.laser(g, 1, 3.5, 0.24, 2)); g.later(2.6, () => W4.laser(g, -1, -6, 0.3, 1)); });
+  at(744, (g) => { W4.jink(g, [-6, -2, 2, 6, 0], 0.3, 3, 0.18); g.later(0.6, () => W4.laser(g, -1, -1.2, 0.32, 1)); g.later(2.0, () => W4.loop(g, -1, 5)); });
+  at(762, (g) => { W4.laser(g, -1, -3.5, 0.18, 2); g.later(1.2, () => W4.laser(g, 1, 3.5, 0.24, 2)); g.later(4.6, () => W4.laser(g, -1, -6, 0.3, 1)); });
   at(786, (g) => W.carrier(g, 2, ['P']));
   // STATION APPROACH ───────────────────────────────────
   at(806, (g) => { W4.ring(g, -3.5, 6, 0.24, 1); W4.ring(g, 3.5, 6, 0.24, -1); g.later(2.4, () => W4.loop(g, 1, 5)); });

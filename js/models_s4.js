@@ -937,10 +937,17 @@ function createAegis() {
   /** 0..1: the rails' coils glow as it charges */
   cannon.userData.setCharge = (v) => { charge = Math.max(0, Math.min(1, v)); };
   pivot.add(cannon);
-  // ---- capacitor banks behind the core
+  // ---- capacitor banks behind the core (setCharge(0..1): the coil rings glow as a bank charges to dump)
   const capKeep = { keep: (x, y, z) => 0.55 - y, crumple: 0.1, seed: 59, dir: [0, 1, 0], shards: 8, shardSize: 0.2, band: 0.3 };
-  const mkCap = (side) => destructiblePart({ key: 'ext:s4:aegis.cap', build: buildAegisCap, name: side < 0 ? 'capL' : 'capR', radius: 0.62,
-    muzzles: [new THREE.Vector3(0, 1.45, 0)], wreck: capKeep, sag: [0.1, -0.1, 0.12 * side], pos: [AE_CAP[0] * side, AE_CAP[1], AE_CAP[2]], mat: mat() });
+  const mkCap = (side) => {
+    const m = mat();
+    const cap = destructiblePart({ key: 'ext:s4:aegis.cap', build: buildAegisCap, name: side < 0 ? 'capL' : 'capR', radius: 0.62,
+      muzzles: [new THREE.Vector3(0, 1.45, 0)], wreck: capKeep, sag: [0.1, -0.1, 0.12 * side], pos: [AE_CAP[0] * side, AE_CAP[1], AE_CAP[2]], mat: m });
+    cap.userData.charge = 0;
+    cap.userData.setCharge = (v) => { cap.userData.charge = Math.max(0, Math.min(1, v)); };
+    cap.userData.capMat = m;
+    return cap;
+  };
   const capL = mkCap(-1), capR = mkCap(1);
   pivot.add(capL, capR);
   // ---- core: reactor orb under two dome shutters
@@ -967,6 +974,9 @@ function createAegis() {
     hingeR.rotation.z = -e * 118 * DEG; hingeL.rotation.z = e * 118 * DEG;
   };
   core.userData.setOpen(0);
+  /** 0..1: the reactor orb flares (and swells) before it fires an aimed volley */
+  let coreCharge = 0;
+  core.userData.setCharge = (v) => { coreCharge = Math.max(0, Math.min(1, v)); };
   pivot.add(core);
   // ---- shield dome
   const domeMat = additiveMat();
@@ -998,6 +1008,7 @@ function createAegis() {
   /** pooled instances come back posed: whole, ring at 0, railgun stowed, shield off, every gun facing forward */
   ud.reset = () => {
     ud.setBreak(0); ud.setSpin(0); ud.setShield(0); beam.m.userData.set(0); charge = 0; pulse = 0;
+    coreCharge = 0; capL.userData.charge = 0; capR.userData.charge = 0;
     cannon.rotation.set(0, Math.PI, 0);
     for (const p of turret) p.rotation.y = 0;
   };
@@ -1006,7 +1017,15 @@ function createAegis() {
     const p = (0.8 + Math.sin(t * 2.6) * 0.2) * (1 - brk * 0.6);
     for (let i = 0; i < allMats.length; i++) allMats[i].uEmitScale.value = p;
     cannonMat.uEmitScale.value = p + charge * (1.6 + Math.sin(t * 44) * 0.4);
-    orbMat.uEmitScale.value = core.userData.destroyed ? 0.7 : (0.32 + openT * 0.45) * (1 + Math.sin(t * 8) * 0.12);
+    // a charging bank: its coils and crown burn brighter and turn amber (the colour of the big orbs it dumps)
+    const cl = capL.userData.destroyed ? 0 : capL.userData.charge, cr = capR.userData.destroyed ? 0 : capR.userData.charge;
+    capL.userData.capMat.uEmitScale.value = p + cl * (3.0 + Math.sin(t * 38) * 0.6);
+    capL.userData.capMat.uEmitTint.value.setRGB(1 + cl * 1.4, 1, 1 - cl * 0.75);
+    capR.userData.capMat.uEmitScale.value = p + cr * (3.0 + Math.sin(t * 38 + 1.3) * 0.6);
+    capR.userData.capMat.uEmitTint.value.setRGB(1 + cr * 1.4, 1, 1 - cr * 0.75);
+    const cc = core.userData.destroyed ? 0 : coreCharge;
+    orbMat.uEmitScale.value = core.userData.destroyed ? 0.7 : (0.32 + openT * 0.45) * (1 + Math.sin(t * 8) * 0.12) + cc * (1.5 + Math.sin(t * 42) * 0.3);
+    orb.scale.setScalar(1 + cc * 0.22);
     orb.rotation.y += dt * (0.5 + openT * 2.6);
     pulse = Math.max(0, pulse - dt * 2.5);
     if (dome.visible) {

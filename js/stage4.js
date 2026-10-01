@@ -106,6 +106,12 @@ function greenFlash(g, x, z, s = 1) {
   p.emit(x, 0.3, z, 0, 0, 0, 0.14, 0.6 * s, 2.2 * s, GRN_A, GRN_B, F.GLOW, 0, OPT_FLAT);
   p.emit(x, 0.3, z, 0, 0, 0, 0.2, 0.5 * s, 2.6 * s, GRN_A, GRN_B, F.FLARE, 0, OPT_FLAT);
 }
+/** the tell before a volley of big orbs: an amber glow at the muzzle that swells over `life` s and is
+ *  brightest as the volley leaves (one particle: it is emitted once, when the gun starts to charge) */
+const AMB_A = [0.5, 0.26, 0.06, 0.35], AMB_B = [2.8, 1.6, 0.5, 1];
+function chargeFlare(g, x, z, life, s = 1) {
+  g.fx.p.emit(x, 0.35, z, 0, 0, 0, life, 0.5 * s, 2.0 * s, AMB_A, AMB_B, F.GLOW, 0, OPT_FLAT);
+}
 /** re-entry fire streaming off something falling toward the planet (y: its height, it trails up) */
 function reentry(g, x, y, z, s) {
   OPT_FIRE.vrot = rnd(-2, 2);
@@ -543,6 +549,10 @@ const AE_TURRET_HALF = [0, 0, Math.PI];        // which ring half carries turret
 const AE_GEN_HALF = [0, Math.PI, Math.PI];
 const AE_GUN_Z = 1.3;                          // railgun pivot: model z −1.3 → world e.z + 1.3 (yaw π)
 const AE_GEN_GAP = [0, 1.45, 1.8, 2.2];        // shield-generator pulse interval by generators left (÷ diff.fr)
+const AE_RAIL = 0.65;                          // the rail fires this long
+const AE_DUMP = [0.2, 0.34];                   // the banks' dumps: the first this long after the rail, the second after it
+const AE_TELL = 0.45;                          // amber charge glow before the hub's and the reactor's big-orb fans
+const AE_TRIO_TELL = 0.32;                     // the reactor orb flares this long before each aimed needle trio
 function aegisAI() {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, v = g.view;
@@ -631,9 +641,13 @@ function aegisAI() {
         g.audio.play('lock', { vol: 0.5, pitch: -6 }); g.shake.add(0.2);
       }
     }
-    if (!g.canFire(e)) {
+    if (!g.canFire(e)) {                       // (the jet is down: every charge drains, nothing is held over)
       if (cu) { cu.setBeam(0); cu.setCharge(0); }
       if (s.gun === 'lock' || s.gun === 'fire') { s.gun = 'cool'; s.gunT = 0; }
+      s.dumpL = s.dumpR = false;
+      if (s.capL) s.capL.obj.userData.setCharge(0);
+      if (s.capR) s.capR.obj.userData.setCharge(0);
+      if (core) core.obj.userData.setCharge(0);
       return;
     }
     if (can && s.gun !== 'deploy' && s.gun !== 'stow') {
@@ -658,6 +672,11 @@ function aegisAI() {
           g.audio.play('explodeL', { vol: 0.8 }); g.audio.play('missile', { vol: 0.9, pitch: -8 });
           g.shake.add(0.45); g.ui.flash(0.12);
           const m = g.muzzlePos(co); greenFlash(g, m.x, m.z, 2.2);
+          // the banks will dump once the rail is spent (even if the railgun is shot away meanwhile): an
+          // amber glow swells on each bank's crown until it does
+          s.dumpL = !!cL; s.dumpR = !!cR; s.dumpT = AE_DUMP[0];
+          if (cL) { const b = g.muzzlePos(cL.obj); chargeFlare(g, b.x, b.z, AE_RAIL + AE_DUMP[0], 0.9); }
+          if (cR) { const b = g.muzzlePos(cR.obj); chargeFlare(g, b.x, b.z, AE_RAIL + AE_DUMP[0] + (cL ? AE_DUMP[1] : 0), 0.9); }
         }
       } else if (s.gun === 'fire') {             // the rail: big orbs down the lane, needles along its edges
         cu.setCharge(Math.max(0, 1 - s.gunT / 0.6));
@@ -674,7 +693,7 @@ function aegisAI() {
           s.nst += 0.09;
           g.shoot(rx + px * 0.95, rz + pz * 0.95, ang, 13, g.BK.NEEDLE); g.shoot(rx - px * 0.95, rz - pz * 0.95, ang, 13, g.BK.NEEDLE);
         }
-        if (s.gunT > 0.65) { s.gun = 'cool'; s.gunT = 0; s.dumpL = !!cL; s.dumpR = !!cR; s.dumpT = 0.2; }
+        if (s.gunT > AE_RAIL) { s.gun = 'cool'; s.gunT = 0; }
       } else if (s.gun === 'cool') {
         cu.setBeam(0); cu.setCharge(0);
         if (s.gunT > 2.1 / (fr * (s.mode === 'p3' ? 0.5 : 1))) { s.gun = 'track'; s.gunT = 0; }
@@ -692,13 +711,21 @@ function aegisAI() {
       }
     }
     // after each rail the banks dump what charge they have left: an aimed fan of big orbs from each in turn
-    // (left first), on the jet that has just stepped out of the lane
-    if ((s.dumpL || s.dumpR) && (s.dumpT -= dt) <= 0) {
-      s.dumpT = 0.34;
+    // (left first), on the jet that has just stepped out of the lane. The tell: a bank's coils light up and
+    // turn amber with the lock, burn at full through the rail and hold it until the bank dumps (and the amber
+    // glow on its crown, from the moment the rail fires).
+    if (cL || cR) {
+      const ch = can && s.gun === 'lock' ? 0.2 + 0.8 * Math.min(1, s.gunT / (1.0 + (2 - ((cL ? 1 : 0) + (cR ? 1 : 0))) * 0.35)) : 0;
+      if (cL) cL.obj.userData.setCharge(s.dumpL ? 1 : ch);
+      if (cR) cR.obj.userData.setCharge(s.dumpR ? 1 : ch);
+    }
+    if ((s.dumpL || s.dumpR) && s.gun !== 'fire' && (s.dumpT -= dt) <= 0) {
+      s.dumpT = AE_DUMP[1];
       const b = s.dumpL ? cL : cR;
       if (s.dumpL) s.dumpL = false; else s.dumpR = false;
       if (b) {
         const m = g.muzzlePos(b.obj), mx = m.x, mz = m.z;
+        b.obj.userData.setCharge(0);
         g.fan(mx, mz, g.aim(mx, mz), 5, 0.72, 5.8, g.BK.BIG);
         greenFlash(g, mx, mz, 0.9); g.audio.play('explodeS', { vol: 0.4, pitch: 4, pan: clamp(mx / 10, -1, 1) });
       }
@@ -738,20 +765,26 @@ function aegisAI() {
       }
     }
     if (s.mode === 'p1') {
-      // hub: aimed big fans now and then
+      // hub: aimed big fans now and then, each after an amber glow swells at the hub's bow
       s.hfT = (s.hfT ?? 3.2) - dt;
-      if (s.hfT <= 0) { s.hfT = 3.6 / fr; const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, g.aim(m.x, m.z), hard ? 7 : 5, hard ? 1.0 : 0.8, 6.2, g.BK.BIG); }
+      if (s.hfT <= AE_TELL && !s.hfTold) { s.hfTold = true; const m = g.muzzlePos(e.mesh); chargeFlare(g, m.x, m.z, Math.max(0.05, s.hfT), 1.25); }
+      if (s.hfT <= 0) {
+        s.hfT = 3.6 / fr; s.hfTold = false;
+        const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, g.aim(m.x, m.z), hard ? 7 : 5, hard ? 1.0 : 0.8, 6.2, g.BK.BIG);
+      }
       return;
     }
     if (s.mode !== 'p3' || !core || s.open < 0.85) return;
     // open reactor, in 9 s cycles: a three-arm spiral that reverses every 1.4 s, woven rings (each a half
-    // step off the last) with an aimed needle trio between each two, then a breather with two aimed big fans
+    // step off the last) with an aimed needle trio between each two (the orb flares and swells before each),
+    // then a breather with two aimed big fans, each after a lock click and an amber glow over the reactor
     // (the second on where the jet has gone); below 40 % homing mines join in
     const cm = g.muzzlePos(core.obj), cx = cm.x, cz = cm.z;
     s.cyc += dt;
     const cyc = s.cyc % 9, seg = cyc < 4.2 ? 0 : cyc < 7.6 ? 1 : 2;
     const rage = core.hp < core.maxHp * 0.4;
-    if (seg !== s.seg) { s.seg = seg; s.ndT = 0.45 / fr; s.fans = 0; s.fanT = 0; }
+    if (seg !== s.seg) { s.seg = seg; s.ndT = 0.45 / fr; s.fans = 0; s.fanT = AE_TELL; s.fanTold = false; }
+    let cc = 0;
     s.ct = (s.ct || 0) - dt;
     if (seg === 0) {
       if (s.ct <= 0) {
@@ -768,10 +801,16 @@ function aegisAI() {
         g.ring(cx, cz, n, 4.1, s.c * (TAU / n) + s.cyc * 0.05);
       }
       if ((s.ndT -= dt) <= 0) { s.ndT = (rage ? 0.8 : 0.95) / fr; g.fan(cx, cz, g.aim(cx, cz), 3, 0.2, 8.2, g.BK.NEEDLE); }
-    } else if (s.fans < 2 && (s.fanT -= dt) <= 0) {
-      s.fans++; s.fanT = 0.55;
-      g.fan(cx, cz, g.aim(cx, cz), hard ? 7 : 5, hard ? 0.95 : 0.75, 6.6, g.BK.BIG); g.audio.play('lock', { vol: 0.4 });
+      else if (s.ndT < AE_TRIO_TELL) cc = 1 - s.ndT / AE_TRIO_TELL;
+    } else if (s.fans < 2) {
+      if (!s.fanTold) { s.fanTold = true; chargeFlare(g, cx, cz, s.fanT, 1.1); g.audio.play('lock', { vol: 0.4 }); }
+      cc = 1 - Math.max(0, s.fanT) / 0.55;
+      if ((s.fanT -= dt) <= 0) {
+        s.fans++; s.fanT = 0.55; s.fanTold = false;
+        g.fan(cx, cz, g.aim(cx, cz), hard ? 7 : 5, hard ? 0.95 : 0.75, 6.6, g.BK.BIG);
+      }
     }
+    core.obj.userData.setCharge(cc);
     if (rage) {
       s.mnT = (s.mnT ?? 1.5) - dt;
       if (s.mnT <= 0) {
@@ -810,7 +849,11 @@ function shieldBreak(e, g) {
 // wreck falls away toward the planet, shrinking, burning up in re-entry fire.
 function aegisDeath(e, dt, g) {
   const s = e.s, ud = e.mesh.userData;
-  if (!s.dieT) { const cu = s.can && s.can.obj.userData; if (cu) { cu.setBeam(0); cu.setCharge(0); } if (ud.setShield) ud.setShield(0); }
+  if (!s.dieT) {
+    const cu = s.can && s.can.obj.userData; if (cu) { cu.setBeam(0); cu.setCharge(0); }
+    for (const pt of [s.capL, s.capR, s.core]) if (pt && pt.obj.userData.setCharge) pt.obj.userData.setCharge(0);
+    if (ud.setShield) ud.setShield(0);
+  }
   s.dieT = (s.dieT || 0) + dt;
   const t = s.dieT, y = s.y || 0;
   s.spinV += (1.6 - s.spinV) * Math.min(1, dt * 0.7);

@@ -1,4 +1,4 @@
-// stage3.js — STAGE 3 "SKY CITADEL" (天空要塞), the final stage: above a cloud sea, air units only.
+// stage3.js — STAGE 3 "SKY CITADEL" (天空要塞): above a cloud sea, air units only.
 // World 'skies' (world.js): stratosphere 0–420 · storm band 420–800 · golden high altitude 800–1240 ·
 // near-space dusk 1240+ (boss arena). Enemy types introduced here (models in models_s3.js):
 //   interceptor  swept-wing jets diving across in pairs, 2-round aimed needle bursts

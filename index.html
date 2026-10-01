@@ -93,7 +93,9 @@ kbd, .side kbd { display: inline-block; min-width: 22px; padding: 2px 6px; margi
 #btn-pause i { display: flex; gap: 5px; }
 #btn-pause i::before, #btn-pause i::after { content: ""; width: 4px; height: 14px; background: var(--ink); border-radius: 1px; }
 #bossbar { position: absolute; left: 14px; right: 14px; top: calc(76px + var(--safe-t)); }
-#bossbar .name { display: flex; justify-content: space-between; font: 600 11px var(--f-display); letter-spacing: 0.28em; color: #ffb3c6; margin-bottom: 4px; }
+/* boss name + subtitle: the weapon names' dark outline keeps the pink legible on bright arenas (HELIOS's corona, NEMESIS's core) */
+#bossbar .name { display: flex; justify-content: space-between; font: 600 11px var(--f-display); letter-spacing: 0.28em; color: #ffb3c6; margin-bottom: 4px;
+  text-shadow: 0 1px 0 #000, 0 0 3px #000, 0 0 8px rgba(0,0,0,0.8); }
 #bossbar .track { height: 7px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,120,170,0.5); overflow: hidden; }
 #bossbar .fill { height: 100%; width: 100%; transform-origin: left; background: linear-gradient(90deg, #ff2e7a, #ff9a3c); box-shadow: 0 0 10px #ff2e7a; transition: transform 0.12s linear; }
 .hud-bottom { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: flex-end; justify-content: space-between;

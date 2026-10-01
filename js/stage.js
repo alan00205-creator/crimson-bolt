@@ -1,6 +1,6 @@
 // stage.js — stage 1 (COASTAL FRONT) plus the shared toolkit every stage builds on: the base enemy
 // table, spawn helpers, the generic AI behaviours, the timeline builder and the mid-boss / boss
-// hand-offs. stage2.js / stage3.js import from here; stages.js assembles the three stages.
+// hand-offs. stage2.js … stage8.js import from here; stages.js assembles the eight stages.
 // Timeline events fire on world distance (ground units travelled), so ground units line up
 // with the terrain world.js builds for each biome.
 import { LANES_X, CROSS_ROAD_PERIOD } from './world.js';

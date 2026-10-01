@@ -57,8 +57,10 @@ export const ENEMY = {
   },
   // boss: parts in hit-test order. The eyes, the star (core) and the heart start sealed (not targets) and count in the HP
   // bar from the start. The star is not the unit's core: destroying it starts the last phase; the heart is. hull: a
-  // box just up-screen of the centre (behind the star, never in front of a part), so shots through the sealed cage
-  // spark off the machine.
+  // band just up-screen of the centre (behind the star: the star's and the heart's circles are always reached first),
+  // so shots into the machine spark off it. This narrow box is worn while an eye is open (the eyes ride over the top of
+  // the halo, where a wider band would hide them); otherwise the unit wears a wider one (OMEGA_PLATE / OMEGA_HALO*,
+  // below, set each frame by omegaHull).
   omega: {
     hp: 1, score: 0, radius: 5.5, air: true, explode: 4, debris: 40, boss: true, model: 'omega', prewarm: 1,
     parts: [
@@ -70,6 +72,13 @@ export const ENEMY = {
     hull: { hw: 1.1, z0: -2.5, z1: -1.2 },
   },
 };
+// OMEGA's other hulls (same unit, only the box differs). The top pylons' hit reach starts ≈ 1.85 from the centre line
+// (3.71 − 0.98 − the widest shot), so while one stands the band is as wide as the platform; once both are gone (the
+// bottom pylons sit below the band and are always reached first) it spans the halo — folded in phase 1, unfolded later.
+// The band is deeper than the narrow one so a fast shot can't step over it on a slow frame.
+const OMEGA_PLATE = { ...ENEMY.omega, hull: { hw: 2.0, z0: -3.2, z1: -1.2 } };
+const OMEGA_HALO_F = { ...ENEMY.omega, hull: { hw: 3.6, z0: -3.2, z1: -1.2 } };
+const OMEGA_HALO = { ...ENEMY.omega, hull: { hw: 4.4, z0: -3.2, z1: -1.2 } };
 
 const MIDBOSS_AT = 590;
 const BOSS_AT = 1275;
@@ -629,6 +638,15 @@ const RED_A = [2.6, 0.4, 0.5, 1], RED_B = [0.7, 0.05, 0.1, 0];              // t
 const HZ_A = [2.2, 0.5, 0.6, 0.9], HZ_B = [1.6, 0.3, 0.4, 0.6];             // horizon motes
 const HZR_A = [0.12, 0.01, 0.03, 0.2], HZR_B = [0.4, 0.05, 0.1, 0.35];      // … and its circle (faint)
 const IN_A = [1.2, 1.5, 2.4, 0.9], IN_B = [0.2, 0.3, 0.8, 0];               // light falling into the hole
+/** the hull box follows what is left standing: narrow while the eyes are up (phase 2, or any eye still open), the
+ *  platform while a top pylon stands, else the halo (see ENEMY.omega) */
+function omegaHull(e, s) {
+  let d = ENEMY.omega;
+  if (s.mode !== 'p2' && !live(s.eye[0]) && !live(s.eye[1]) && !live(s.eye[2])) {
+    d = live(s.py[0]) || live(s.py[1]) ? OMEGA_PLATE : s.unf > 0.5 ? OMEGA_HALO : OMEGA_HALO_F;
+  }
+  if (e.def !== d) e.def = d;
+}
 /** the yaw a part must turn to (in the unit's yawed frame) to face the jet */
 function partAim(g, e, pt) { return wrapA(Math.atan2(-(g.player.x - pt.x), -(g.player.z - pt.z)) - e.yaw); }
 /** space falling in on (x, z): streaks from a ring of radius r0..r1 toward it */
@@ -718,6 +736,7 @@ function omegaAI() {
       g.fx.p.emit(e.x, 0.6, e.z - 0.8, 0, 0, 0, 0.5, 3, 20, WH_A, ST_B, F.FLARE, 0, NO_DRAG);
       g.ui.flash(0.8); g.shake.add(0.9); g.audio.play('explodeL'); g.haptic([60, 40, 90]);
     }
+    omegaHull(e, s);
     if (s.mode === 'fall') {                   // the lights go crimson, the singularity comes out of the cinder
       const k = s.ph / OM_FALL;
       s.end = Math.min(1, k * 1.4);

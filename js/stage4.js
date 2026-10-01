@@ -30,9 +30,11 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 // Enemy definitions (see the field list at the top of stage.js).
 export const ENEMY = {
   s4_drone: { hp: 5, score: 350, radius: 0.75, air: true, explode: 0.9, debris: 6, medal: 0.2, prewarm: 16 },
-  s4_laser: { hp: 76, score: 2500, radius: 1.3, air: true, explode: 1.7, debris: 12, medal: 1, prewarm: 4 },
-  s4_frigate: { hp: 170, score: 5000, radius: 1.8, air: true, explode: 2.4, debris: 20, medal: 2, prewarm: 3 },
-  s4_mine: { hp: 3, score: 250, radius: 0.7, air: true, explode: 0.8, debris: 5, noHpSeg: true, prewarm: 16 },
+  // the laser satellite's circle reaches well out along its collector wings (shots used to pass through the
+  // glowing blades); the frigate's covers its bow and stern engine block broadside-on
+  s4_laser: { hp: 88, score: 2500, radius: 1.9, air: true, explode: 1.7, debris: 12, medal: 1, prewarm: 4 },
+  s4_frigate: { hp: 170, score: 5000, radius: 2.0, air: true, explode: 2.4, debris: 20, medal: 2, prewarm: 3 },
+  s4_mine: { hp: 10, score: 250, radius: 0.7, air: true, explode: 0.8, debris: 5, noHpSeg: true, prewarm: 16 },
   // mid-boss: three heads on necks, then the core (armoured under its lid until two heads are gone or
   // 16 s have passed). The body is armour and never a target (bodyTarget: false), so shots, locks and
   // missiles go for the heads and the core; hp is only a backstop. keepOff holds the jet 8 below the
@@ -116,22 +118,25 @@ function reentry(g, x, y, z, s) {
 // drones
 // --------------------------------------------------------------------------------
 // Ring: n drones in a ring that spins as it descends into the upper screen, then bursts apart — each
-// drone burns straight out along its spoke; every other one fires an aimed orb as the ring breaks.
+// drone burns straight out along its spoke. The ring ripples a round of aimed orbs round its rim as it
+// settles (one drone after another), and every drone fires again as the ring breaks.
 function ringAI(cx, n, k, zf = 0.28, dir = 1, R = 2.2) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (s.z0 === undefined) {
       s.z0 = v.zTop - 3; s.cz = v.zTop + (v.zBottom - v.zTop) * zf; s.a0 = (k / n) * TAU; s.fixedYaw = true; s.yaw = Math.PI;
+      s.st = 1.15 + (k / n) * 0.6;
       if (ud.setThrust) ud.setThrust(0.3);
     }
     if (!s.burst) {
       const u = ease(e.t / 2.3), a = s.a0 + e.t * 1.6 * dir, r = R * (0.55 + 0.45 * u);
       e.x = cx + Math.cos(a) * r;
       e.z = s.z0 + (s.cz - s.z0) * u + Math.sin(a) * r * 0.85;
+      if (s.st > 0 && e.t > s.st) { s.st = 0; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 6.6); }
       if (e.t > 3.1) {
         s.burst = true; s.bt = 0; s.dx = Math.cos(a); s.dz = Math.sin(a) * 0.85;
         if (ud.setThrust) ud.setThrust(1);
-        if (k % 2 === 0 && g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.0);
+        if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.0);
       }
     } else {
       s.bt += dt;
@@ -141,7 +146,7 @@ function ringAI(cx, n, k, zf = 0.28, dir = 1, R = 2.2) {
     }
   };
 }
-// Jinker: RCS hops. It burns in from the top to a hold point, stops dead, fires an aimed orb, and
+// Jinker: RCS hops. It burns in from the top to a hold point, stops dead, fires an aimed 3-way, and
 // hops again toward the jet's column (a little lower each time); after `hops` holds it burns away.
 function jinkAI(x0, hops = 3, zf = 0.2) {
   return (e, dt, g) => {
@@ -158,7 +163,10 @@ function jinkAI(x0, hops = 3, zf = 0.2) {
       if (u < 0.3 && Math.random() < 0.6) ionPuff(g, e.x, e.z - 0.8, s.sx - s.fx > 0 ? 0.4 : -0.4, -1, 0.3);
       if (u >= 1) { s.mode = 'hold'; s.mt = 0; s.fired = false; if (ud.setThrust) ud.setThrust(0.12); }
     } else if (s.mode === 'hold') {
-      if (!s.fired && s.mt > 0.3 / g.diff.fr) { s.fired = true; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.6); }
+      if (!s.fired && s.mt > 0.16 / g.diff.fr) {
+        s.fired = true;
+        if (g.canFire(e)) g.fan(e.x, e.z, g.aim(e.x, e.z), 3, 0.34, 7.2);
+      }
       if (s.mt > 0.75) {
         s.hop++; s.sx = e.x; s.sz = e.z; s.mt = 0;
         if (s.hop >= hops) { s.mode = 'out'; s.dx = e.x > 0 ? 1 : -1; }
@@ -175,7 +183,8 @@ function jinkAI(x0, hops = 3, zf = 0.2) {
   };
 }
 // Loop: drop in along one side, swing round a loop through the lower-middle screen and climb out over the
-// top toward the other side (side = +1: in on the left, round clockwise). An aimed orb at the bottom.
+// top toward the other side (side = +1: in on the left, round clockwise). An aimed 3-way at the bottom
+// and a single orb as it climbs the far side.
 function loopAI(side, zf = 0.3, R = 4.4) {
   const w = 1.7, sp = w * R;                     // loop angular speed (rad/s), path speed
   return (e, dt, g) => {
@@ -190,7 +199,10 @@ function loopAI(side, zf = 0.3, R = 4.4) {
       if (th < 1.5 * Math.PI) {
         const a = (side > 0 ? Math.PI : 0) - side * th;
         e.x = s.cx + Math.cos(a) * R; e.z = s.cz + Math.sin(a) * R;
-        if (!s.fired && th > Math.PI * 0.45) { s.fired = true; if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.4); }
+        if ((s.fired | 0) < (th > Math.PI * 1.1 ? 2 : th > Math.PI * 0.45 ? 1 : 0)) {
+          s.fired = (s.fired | 0) + 1;
+          if (g.canFire(e)) { if (s.fired === 1) g.fan(e.x, e.z, g.aim(e.x, e.z), 3, 0.3, 7.0); else g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.4); }
+        }
       } else {                                   // off the top of the loop: on along the tangent, climbing away
         const k = e.t - s.t1 - (1.5 * Math.PI) / w;
         e.x -= side * sp * dt; e.z -= (1 + k * 9) * dt;
@@ -221,11 +233,12 @@ function laserAI(side, x1, zf = 0.2, cycles = 2) {
       e.x = s.x0 + (s.x1 - s.x0) * k; e.z = s.z1 - 1.5 * (1 - k);
       if (s.mt < 1.8 && Math.random() < 0.5) ionPuff(g, e.x + side * 0.7, e.z, side, 0, 0.4);
       g.aimTurret(e, T, dt, 2.0);
-      if (s.mt > 2.4) { s.mode = 'aim'; s.mt = 0; }
-    } else if (s.mode === 'aim') {             // track the jet, the beam faint and growing
+      if (s.mt > 2.0) { s.mode = 'aim'; s.mt = 0; }   // (the last 0.5 % of the glide is not worth waiting for)
+    } else if (s.mode === 'aim') {             // track the jet, the beam faint and growing (shorter on the first
+      const aimT = s.n ? 1.0 : 0.65;           // pulse: the satellite is under fire from the moment it drifts in)
       g.aimTurret(e, T, dt, 1.5);
-      ud.setCharge(0.22 + 0.33 * Math.min(1, s.mt / 1.0));
-      if (s.mt > 1.0) { s.mode = 'lock'; s.mt = 0; g.audio.play('lock', { vol: 0.35, pitch: 2 }); }
+      ud.setCharge(0.22 + 0.33 * Math.min(1, s.mt / aimT));
+      if (s.mt > aimT) { s.mode = 'lock'; s.mt = 0; g.audio.play('lock', { vol: 0.35, pitch: 2 }); }
     } else if (s.mode === 'lock') {            // the telegraph: the line is fixed now
       ud.setCharge(0.6 + 0.4 * Math.min(1, s.mt / 0.6));
       if (s.mt > 0.7) {
@@ -258,8 +271,9 @@ function laserAI(side, x1, zf = 0.2, cycles = 2) {
 // --------------------------------------------------------------------------------
 // Crosses the upper screen broadside-on (dir = +1: left → right, starboard to the jet). With `hold` it
 // brakes to hold station near the centre for that long, then burns on. Every few seconds its three
-// sponsons ripple three rows of orbs straight down (a lattice to slip through or go round), and the bow
-// sponson fires an aimed needle pair in between.
+// sponsons ripple three rows of orbs, all on one heading swung toward the jet's side of the screen when
+// the volley starts (a slanted lattice to slip through or go round), and the bow sponson fires an aimed
+// 3-needle fan in between.
 function frigateAI(dir, zf = 0.22, hold = 0) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
@@ -279,17 +293,17 @@ function frigateAI(dir, zf = 0.22, hold = 0) {
     if (ud.setThrust) ud.setThrust(s.ph === 'hold' ? 0.25 : 0.9);
     if (Math.random() < 0.5) ionPuff(g, e.x - dir * 2.7, e.z + rnd(-0.35, 0.35), -dir, 0, 0.45);
     const on = Math.abs(e.x) < 7.5;
-    if (on && fireTimerS(s, 'bt', dt, g, 2.9, 1.2) && g.canFire(e)) { s.rows = 3; s.rt = 0; }
+    if (on && fireTimerS(s, 'bt', dt, g, 2.9, 1.2) && g.canFire(e)) { s.rows = 3; s.rt = 0; s.la = clamp(g.aim(e.x, e.z), -0.45, 0.45); }
     if (s.rows > 0) {
       s.rt -= dt;
       if (s.rt <= 0) {
         s.rt = 0.3; s.rows--;
-        for (let k = 0; k < 3; k++) { const m = g.muzzlePos(e.mesh, s.port + k); g.shoot(m.x, m.z, 0, 5.6); }
+        for (let k = 0; k < 3; k++) { const m = g.muzzlePos(e.mesh, s.port + k); g.shoot(m.x, m.z, s.la, 5.6); }
       }
     }
     if (on && fireTimerS(s, 'nt', dt, g, 2.9, 2.6) && g.canFire(e)) {
-      const m = g.muzzlePos(e.mesh, s.port + (dir > 0 ? 0 : 2)), mx = m.x, mz = m.z, a = g.aim(mx, mz);
-      g.shoot(mx, mz, a - 0.05, 9, g.BK.NEEDLE); g.shoot(mx, mz, a + 0.05, 9, g.BK.NEEDLE);
+      const m = g.muzzlePos(e.mesh, s.port + (dir > 0 ? 0 : 2)), mx = m.x, mz = m.z;
+      g.fan(mx, mz, g.aim(mx, mz), 3, 0.24, 9, g.BK.NEEDLE);
     }
     if (e.hp < e.maxHp * 0.5 && Math.random() < 0.3) g.fx.smokePuff(e.x + rnd(-2, 2), 0.2, e.z + rnd(-0.4, 0.4), 0.5, 0.9);
   };
@@ -305,9 +319,11 @@ function fireTimerS(s, key, dt, g, interval, first) {
 // --------------------------------------------------------------------------------
 // mine pod
 // --------------------------------------------------------------------------------
-// Drifts down (vz) with a slow sideways drift; arms when the jet comes within ~5.5 or when it sinks past
-// armZ of the screen: 0.75 s of red blinking, then it bursts into a ring of orbs (no score — shoot it
-// first). Too close to the jet, the burst holds its fire (shoot() never fires point-blank).
+// Drifts down (vz) with a slow sideways drift; arms when the jet comes within ~5.5, when it sinks past
+// armZ of the screen, or MINE_FUSE s after it appears (a field left alone goes off): 0.75 s of red
+// blinking, then it bursts into a ring of orbs (no score — shoot it first; the armoured pod takes a
+// moment). Too close to the jet, the burst holds its fire (shoot() never fires point-blank).
+const MINE_FUSE = 1.4;
 function mineAI(x0, vz = 2.3, drift = 0, armZ = 0.58) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData, p = g.player;
@@ -315,7 +331,7 @@ function mineAI(x0, vz = 2.3, drift = 0, armZ = 0.58) {
     if (s.arm < 0) {
       e.z += vz * dt; e.x += drift * dt;
       const dx = p.x - e.x, dz = p.z - e.z;
-      if ((p.alive && dx * dx + dz * dz < 30) || e.z > v.zTop + (v.zBottom - v.zTop) * armZ) { s.arm = 0; g.audio.play('lock', { vol: 0.25, pitch: 9 }); }
+      if ((p.alive && dx * dx + dz * dz < 30) || e.t > MINE_FUSE || e.z > v.zTop + (v.zBottom - v.zTop) * armZ) { s.arm = 0; g.audio.play('lock', { vol: 0.25, pitch: 9 }); }
     } else {
       s.arm += dt;
       e.z += vz * 0.35 * dt;

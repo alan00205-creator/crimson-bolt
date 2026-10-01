@@ -11,7 +11,7 @@
 //
 //   sfx voice ─► voice gain (vol, density) ─► [pan] ─► sfxVol ───────────┐
 //             └► voice verb gain ─► sfxVerb ─┐                           │
-//   music track ─► track out (crossfade) ◄─ echo (dotted 8th)           ├─► master ─► compressor
+//   music track ─► track out (crossfade) ◄─ echo (dotted 8th) ─► duck ──┼─► master ─► compressor
 //               └► track verb (crossfade) ─► musicVerbVol ─► reverb ─────┘   ─► trim ─► soft clip ─► mute ─► out
 //
 // * Limiter: DynamicsCompressor (glue, -8 dB, 6:1) + trim that cancels its automatic make-up
@@ -26,7 +26,9 @@
 //   ~10 dB under the music, pickups at music level, explosions +2.5…+8 dB (a dB up on the
 //   first calibration, for the denser battle themes), bomb/death/boss kill as loud as the
 //   limiter allows. Checked on a phone-speaker proxy too (explosions
-//   carry a mid-band punch layer; the kick a "knock").
+//   carry a mid-band punch layer; the kick a "knock"). explodeM / explodeL also dip the music's
+//   dry bus for an instant (-1 / -1.5 dB for 0.12 / 0.16 s, see duckMusic; overlapping dips merge
+//   into one, so a chain of blasts never pumps).
 // * 'laser' and 'plasma' are sustained voices: the game calls play('laser') every frame, and
 //   every call within 0.09 s keeps the same voice alive (no new nodes), so it is one steady beam.
 // * 'medal' snaps opts.pitch up to E G A B C D E, so the chain (pitch = step × 2) climbs a
@@ -334,7 +336,10 @@ class Engine extends Synth {
     this.musicVerbVol = g(0);
     this.sfxVol = g(0);
     this.sfxVerb = g(0);
-    this.musicVol.connect(this.master);
+    this.mduck = g(1);                                 // momentary dip under big explosions (duckMusic)
+    this.duckLv = 1; this.duckEnd = -1;
+    this.musicVol.connect(this.mduck);
+    this.mduck.connect(this.master);
     this.musicVerbVol.connect(this.verb);
     this.sfxVol.connect(this.master);
     this.sfxVerb.connect(this.verb);
@@ -1214,6 +1219,25 @@ const SFXFN = {
     v *= 0.8;
     const d = boom(E, b, t, 1.5, r, v);
     boom(E, b, t + 0.13, 0.5, r * 0.8, v * 0.55);
+    // over the battle themes: a 2–5 kHz crack and sizzle (the band their guitars and cymbals fill,
+    // where the boom alone barely shows: the cosmic themes above all) and a deeper second thump
+    const n = E.noise(t, t + 0.25, 1);
+    const bp = E.filt('bandpass', 3200 * r, 0.8, t);
+    const g = E.gain(0);
+    pluck(g.gain, t, 0.6 * v, 0.04, 0.002);
+    n.connect(bp); bp.connect(g); g.connect(b.out);
+    const c = E.noise(t + 0.01, t + 0.45, 1, E.crackleBuf);
+    const bc = E.filt('bandpass', 3800 * r, 0.7, t);
+    const gc = E.gain(0);
+    gc.gain.setValueAtTime(0, t);
+    gc.gain.linearRampToValueAtTime(0.35 * v, t + 0.03);
+    gc.gain.setTargetAtTime(0, t + 0.04, 0.09);
+    c.connect(bc); bc.connect(gc); gc.connect(b.out);
+    const o = E.osc('sine', 64 * r, t, t + 0.8);
+    o.frequency.exponentialRampToValueAtTime(38, t + 0.3);
+    const go = E.gain(0);
+    pluck(go.gain, t + 0.01, 0.2 * v, 0.16, 0.006);
+    o.connect(go); go.connect(b.out);
     return d;
   },
   bomb(E, b, t, p, v) {
@@ -1707,7 +1731,8 @@ const SHIELD_PINGS = [2349.3, 3322.4, 4186, 5587.7], PING_PAN = [0, 0.35, -0.35,
 //          lv: mix level in dB, verb: reverb send (0..1), hold: sustained voice kept alive by
 //          repeated calls (seconds after the last call), streak: [heat, k] attenuation of
 //          sustained streams (see playSfx), bake: [variants, seconds] pre-rendered
-//          at startup (frequent sounds; played back with ±jit semitones of random pitch) }
+//          at startup (frequent sounds; played back with ±jit semitones of random pitch),
+//          duck: [music gain, seconds] a momentary dip of the music bus under it (duckMusic) }
 const SFX = {
   shot:       { gap: 0.045, max: 3, pri: 1, lv: 10, bake: [2, 0.09], jit: 0.6 },
   laser:      { gap: 0.045, max: 1, pri: 2, lv: -14, hold: 0.09 },
@@ -1715,8 +1740,8 @@ const SFX = {
   hit:        { gap: 0.045, max: 4, pri: 1, lv: 10.5, bake: [2, 0.1], jit: 1, streak: [3, 0.1] },
   hitArmor:   { gap: 0.08,  max: 2, pri: 2, lv: 11, bake: [1, 0.3], jit: 0.75, streak: [2, 0.2] },
   explodeS:   { gap: 0.025, max: 6, pri: 3, lv: 0.5, verb: 1, bake: [2, 1.1], jit: 1.5 },
-  explodeM:   { gap: 0.04,  max: 5, pri: 4, lv: 2, verb: 1, bake: [1, 2.2], jit: 1.25 },
-  explodeL:   { gap: 0.07,  max: 3, pri: 6, lv: 3, verb: 1, bake: [1, 3.4], jit: 1 },
+  explodeM:   { gap: 0.04,  max: 5, pri: 4, lv: 2, verb: 1, bake: [1, 2.2], jit: 1.25, duck: [0.89, 0.12] },
+  explodeL:   { gap: 0.07,  max: 3, pri: 6, lv: 3, verb: 1, bake: [1, 3.4], jit: 1, duck: [0.84, 0.16] },
   bomb:       { gap: 0.3,   max: 2, pri: 9, lv: 3, verb: 1 },
   item:       { gap: 0.04,  max: 3, pri: 5, lv: 9, bake: [1, 0.5] },
   powerup:    { gap: 0.15,  max: 2, pri: 7, lv: 6.5 },
@@ -3589,7 +3614,23 @@ Object.assign(Engine.prototype, {
       this.hsrc = null; this.henv = null;
     }
     slot.name = name; slot.pri = def.pri; slot.start = now; slot.end = now + dur; slot.g = g; slot.v = vg; slot.p = pn;
+    if (def.duck) this.duckMusic(now, Math.pow(def.duck[0], vol), def.duck[1]);   // a quieter call dips less (dB × vol)
     return true;
+  },
+
+  // The music's dry bus dips to `lv` (a gain factor) for `hold` seconds under a big explosion, so the
+  // blast's attack and body carry over the dense battle themes: down in ~10 ms, back in ~0.2 s, both
+  // exponential approaches (no clicks). Overlapping dips merge — the deeper level, the later end —
+  // instead of restarting, so a chain of blasts holds one steady dip rather than pumping.
+  duckMusic(now, lv, hold) {
+    const live = now < this.duckEnd + 0.05;          // still down, or only just released
+    if (live && this.duckLv < lv) lv = this.duckLv;
+    const end = live && this.duckEnd > now + hold ? this.duckEnd : now + hold;
+    const p = this.mduck.gain;
+    p.cancelScheduledValues(now);
+    p.setTargetAtTime(lv, now, 0.004);
+    p.setTargetAtTime(1, end, 0.06);
+    this.duckLv = lv; this.duckEnd = end;
   },
 
   // keep a sustained voice alive for another `hold` seconds (no allocation)

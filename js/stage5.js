@@ -632,6 +632,7 @@ function seleniteDeath(e, dt, g) {
   const s = e.s, ud = e.mesh.userData;
   if (!s.dieT) {
     s.dieT = 0;
+    s.y0 = Math.min(0, s.y || 0);                       // killed mid-burrow/emerge: sink on from where it is
     const cm = g.muzzlePos(s.core.obj), cx = cm.x, cz = cm.z;
     for (let i = 0; i < 22; i++) { const b = rnd(0, TAU), sp = rnd(5, 13); g.fx.p.emit(cx, 0.5, cz, Math.cos(b) * sp, rnd(0, 3), Math.sin(b) * sp, rnd(0.4, 0.8), rnd(0.5, 0.8), 0.1, SHARD_B, MOON_B, F.SHARD, 0, SHARD_OPT); }
     g.fx.p.emit(cx, 0.5, cz, 0, 0, 0, 0.3, 2, 8, MOON_A, MOON_B, F.GLOW, 0, NO_DRAG);
@@ -640,7 +641,7 @@ function seleniteDeath(e, dt, g) {
   s.dieT += dt;
   const t = s.dieT;
   if (ud.setRumble) ud.setRumble(1);
-  s.y = -2.0 * smooth((t - 0.5) / 1.6);
+  s.y = Math.min(s.y0, s.y0 + (-2.0 - s.y0) * smooth((t - 0.5) / 1.6));
   s.boomT = (s.boomT || 0) - dt;
   if (s.boomT <= 0 && t < 1.9) {
     s.boomT = 0.11;

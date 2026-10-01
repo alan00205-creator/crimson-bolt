@@ -30,8 +30,8 @@
 // * 'laser' and 'plasma' are sustained voices: the game calls play('laser') every frame, and
 //   every call within 0.09 s keeps the same voice alive (no new nodes), so it is one steady beam.
 // * 'medal' snaps opts.pitch up to E G A B C D E, so the chain (pitch = step × 2) climbs a
-//   line that sits in the music's keys instead of a whole-tone run. E minor, B phrygian, A minor
-//   and C lydian contain the whole line; under a theme whose key lacks one of those notes (the
+//   line that sits in the music's keys instead of a whole-tone run. E minor, B phrygian and A
+//   minor contain the whole line; under a theme whose key lacks one of those notes (the
 //   D-minor themes' B-flat, stages 4-8 and their bosses) the chain snaps to that theme's own
 //   scale instead (see compileSong: song.snap; a section that modulates brings its own).
 // * 'stageStart' … 'stageStart8' are locked to their stage theme's 16th grid and key: the game
@@ -1662,11 +1662,12 @@ const FANFARE2 = {
   song: 'stage2', lead: iReed, toms: true, v: 0.55, pad: [47, 54, 59, 62], gtr: 47,
   seq: [0, 71, 66, 1, 1, 71, 66, 1, 2, 71, 66, 1, 4, 74, 69, 2, 6, 72, 67, 2, 8, 71, 66, 8],
 };
-// Stage 3 (C lydian, lead and brass): G G G C → G5, an octave-and-a-fifth leap, then a bell
-// sparkle up C E F# B (the lydian fourth) over a Cmaj7 pad.
+// Stage 3 (E minor, lead and brass): B B B E → B5, the theme's leap up (a fourth, then the
+// fifth), then a bell sparkle up B E F# B (the open fifth and the ninth: the flying colour)
+// over an E minor pad.
 const FANFARE3 = {
-  song: 'stage3', lead: iLead, toms: false, v: 0.55, pad: [48, 55, 64, 71], bells: [84, 88, 90, 95], gtr: 48,
-  seq: [0, 67, 64, 1, 1, 67, 64, 1, 2, 67, 64, 1, 4, 72, 67, 3, 8, 79, 76, 8],
+  song: 'stage3', lead: iLead, toms: false, v: 0.55, pad: [52, 59, 64, 67], bells: [83, 88, 90, 95], gtr: 40,
+  seq: [0, 71, 67, 1, 1, 71, 67, 1, 2, 71, 67, 1, 4, 76, 71, 3, 8, 83, 79, 8],
 };
 // Stage 4 (G minor, orbit): the theme's rising call as a fanfare — G B-flat D climbing in 16ths
 // to G5, then a fifth up to D6 — and a bell sparkle up G B-flat D G (the starfield) over Gm.
@@ -1720,8 +1721,8 @@ const SFX = {
   item:       { gap: 0.04,  max: 3, pri: 5, lv: 9, bake: [1, 0.5] },
   powerup:    { gap: 0.15,  max: 2, pri: 7, lv: 6.5 },
   // the chain's pitch (0, 2, 4 … 12) is snapped up to E G A B C D E: a rising line that sits
-  // in E minor (boss) instead of a whole-tone run (and in B phrygian, A minor and C lydian:
-  // stage 2, boss 2, stage 3); a theme whose key lacks one of those notes brings its own
+  // in E minor (boss, stage 3) instead of a whole-tone run (and in B phrygian and A minor:
+  // stage 2, boss 2); a theme whose key lacks one of those notes brings its own
   // scale (song.snap: D minor → E G A Bb C D E, F# minor → E F# G# A B C# D E, …)
   medal:      { gap: 0.035, max: 4, pri: 5, lv: 5.5, verb: 1, bake: [1, 0.9], snap: [0, 3, 5, 7, 8, 10] },
   oneup:      { gap: 0.5,   max: 1, pri: 9, lv: 0, verb: 1 },
@@ -2002,7 +2003,6 @@ const GTR = {
 
 // Modes for `scale` (offsets from the tonic).
 const PHRYGIAN = [0, 1, 3, 5, 7, 8, 10];
-const LYDIAN = [0, 2, 4, 6, 7, 9, 11];
 const DORIAN = [0, 2, 3, 5, 7, 9, 10];
 
 // Stage 1: the chorus (soaring answer to the A-section motif), used by sections B and D.
@@ -2022,12 +2022,13 @@ const DESERT_A =
 const DESERT_CHORUS =
   'b4:2 d5:2 g5:8 a5:2 b5:2 | a5:4 f#5:4 d5:6 e5:2 | g5:4 f#5:2 e5:2 b5:8 | a5:4 g5:2 e5:2 c5:4 e5:4 |' +
   'b4:2 d5:2 g5:8 a5:2 b5:2 | c6:4 a5:2 f#5:2 d5:4 f#5:4 | g5:4 e5:2 g5:2 c6:4 b5:2 a5:2 | ' + HIJAZ;
-// Stage 3: the verse's first half (a leap up and a glide down, twice) and the syncopated chorus.
+// Stage 3: the verse's first half (a leap up and a glide down, twice) and the syncopated chorus's
+// first seven bars (its eighth: the leading tone held into the bridge, a run into the loop).
 const SKY_A =
-  'g4:2 c5:2 g5:8 f#5:2 e5:2 | f#5:4 a5:4 d5:8 | e5:2 g5:2 b5:8 a5:2 g5:2 | a5:4 g5:4 e5:8 |';
+  'b4:2 e5:2 b5:8 a5:2 g5:2 | a5:4 c6:4 g5:8 | f#5:2 a5:2 d6:8 c6:2 b5:2 | a5:4 b5:4 f#5:8 |';
 const SKY_CHORUS7 =
-  'd5:2 g5:4 a5:2 b5:6 d6:2 | d6:4 c6:2 a5:2 f#5:6 a5:2 | g5:4 f#5:2 e5:2 b5:6 g5:2 | a5:6 g5:2 e5:8 |' +
-  'd5:2 g5:4 a5:2 b5:6 d6:2 | e6:4 d6:2 a5:2 f#6:6 e6:2 | e6:4 d6:2 c6:2 b5:4 c6:2 d6:2 |';
+  'e5:2 g5:4 a5:2 c6:6 e6:2 | d6:4 b5:2 a5:2 g5:6 b5:2 | a5:4 d6:2 e6:2 f#6:6 e6:2 | e6:6 d6:2 b5:8 |' +
+  'e5:2 g5:4 a5:2 c6:6 e6:2 | g6:4 f#6:2 d6:2 b5:6 d6:2 | e6:4 c6:2 a5:2 c6:4 d6:2 e6:2 |';
 // Boss 3: the main theme (a repeated-note call climbing Dm → Bb → Gm) and its two endings.
 const FINAL_A =
   'd5:2 d5:2 a5:4 g5:2 f5:2 e5:2 f5:2 | d5:4 a4:4 d5:4 f5:4 |' +
@@ -2301,49 +2302,50 @@ const SONGDEF = {
     },
   },
 
-  // SKY CITADEL — sky rock. C lydian (the raised 4th, F#, is the flying colour; the chorus
-  // leans to G major), 164 BPM; 16th octave bass under four-on-the-floor with offbeat open
-  // hats, bell arpeggios, the pulse lead doubled up high by bells over palm-mute chugs, a
-  // ringing guitar wall in the chorus, a brass-and-choir bridge above the clouds. 4-bar
-  // intro, 40-bar loop: A1 A2 B(chorus) C(bridge) D(chorus').
+  // SKY CITADEL — sky rock. E minor (the ninth, F#, is the flying colour; the bright VI-VII
+  // climb C D into the tonic, the harmonic-minor B major leading home), 164 BPM; 16th octave
+  // bass under four-on-the-floor with offbeat open hats, bell arpeggios, the pulse lead
+  // doubled up high by bells over palm-mute chugs, a syncopated chorus climbing C G D Em over a
+  // ringing guitar wall, a brass-and-choir bridge above the clouds. 4-bar intro, 40-bar loop:
+  // A1 A2 B(chorus) C(bridge) D(chorus').
   stage3: {
-    bpm: 164, key: 0, minor: false, scale: LYDIAN, delay: 0.75, intro: ['I'], loop: ['A1', 'A2', 'B', 'C', 'D'],
+    bpm: 164, key: 4, minor: true, delay: 0.75, intro: ['I'], loop: ['A1', 'A2', 'B', 'C', 'D'],
     S: {
       I: {
-        chords: 'C D C D', lead: 'r:48 d5:2 e5:2 f#5:2 g5:2 a5:4 b5:4',
+        chords: 'Em Em C B', lead: 'r:48 f#5:2 g5:2 a5:2 b5:2 d#6:4 b5:4',
         bass: 'hold octP oct16 build', drums: 'skyI*2 skyIS fR', crash: [0], rise: 2,
         gtr: 'none ch8*2 hold', arp: 'bellSky*4',
       },
       A1: {
-        chords: 'C D Em C Am D G D',
-        lead: SKY_A + 'e5:2 a5:2 e6:8 d6:2 c6:2 | d6:4 a5:4 f#5:8 | g5:3 a5:1 b5:2 a5:2 g5:4 d5:4 | e5:4 f#5:4 a5:8',
+        chords: 'Em C D Bm Em C Am B',
+        lead: SKY_A + 'e5:2 g5:2 e6:8 d6:2 c6:2 | c6:4 g5:4 e5:8 | c6:3 b5:1 a5:2 g5:2 a5:4 c6:4 | b5:4 a5:4 f#5:4 d#5:4',
         bass: 'oct16*8', drums: 'skyA*3 skyB skyA*3 fS', crash: [0],
         gtr: 'ch8*3 syn ch8*3 push', stab: 'hA none*3 hA none*3', arp: 'arpB*8',
         p2: { dbl: 'bell+12', drums: 'skyB*3 bB skyB*3 fS', gtr: 'gal*3 syn gal*3 push', arp: 'bellA*8' },
       },
       A2: {
-        chords: 'C D Em C Am D Em D',
-        lead: SKY_A + 'e5:2 a5:2 e6:8 d6:2 c6:2 | d6:4 e6:4 f#6:8 | e6:4 d6:2 b5:2 g5:4 b5:4 | a5:8 r:2 d5:2 e5:2 f#5:2',
+        chords: 'Em C D Bm Em C B Em',
+        lead: SKY_A + 'g5:2 b5:2 g6:8 f#6:2 e6:2 | e6:4 c6:4 g5:8 | f#5:3 a5:1 b5:2 a5:2 f#5:4 d#5:4 | e5:8 r:2 b4:2 c5:2 d5:2',
         bass: 'oct16*7 build', drums: 'skyA*3 skyB skyA*3 fT', crash: [0],
         gtr: 'ch8*3 syn ch8*3 hold', arp: 'arpB*8',
         p2: { dbl: 'bell+12', drums: 'skyB*3 bB skyB*3 fT', gtr: 'gal*3 syn gal*3 hold', arp: 'arpC*8' },
       },
       B: {
-        chords: 'G D Em C G D C D', lead: SKY_CHORUS7 + ' d6:12 r:4', dbl: 'bell+12',
+        chords: 'C G D Em C G Am B', lead: SKY_CHORUS7 + ' d#6:12 r:4', dbl: 'bell+12',
         bass: 'pump*7 build', drums: 'skyB*7 fS', crash: [0, 4], gtr: 'half*7 push',
         stab: 'hB none hA none hB none hA none', arp: 'bellA*8',
         p2: { harm: 1 },
       },
       C: {
-        chords: 'Em C D Bm Em C D D', leadV: 'brass', padV: 'choir',
+        chords: 'Em C D Bm Em C D B', leadV: 'brass', padV: 'choir',
         lead: 'e5:8 g5:4 b5:4 | c6:4 b5:4 f#5:8 | a5:8 d6:4 a5:4 | b5:12 f#5:4 |' +
-              'g5:8 b5:4 e6:4 | e6:4 d6:4 c6:4 f#5:4 | a5:8 f#5:4 a5:4 | d6:2 c6:2 a5:2 g5:2 f#5:2 e5:2 d5:2 e5:2',
+              'g5:8 b5:4 e6:4 | e6:4 d6:4 c6:4 f#5:4 | a5:8 f#5:4 a5:4 | b5:2 a5:2 f#5:2 a5:2 b5:2 a5:2 f#5:2 d#5:2',
         bass: 'halves*4 pump*2 build*2', drums: 'bH*4 bA*3 fR', crash: [0, 4],
         gtr: 'hold*4 ch16*2 half hold', arp: 'bellSlow*4 arpB*4', pad: 1,
         p2: { harm: 1 },
       },
       D: {
-        chords: 'G D Em C G D C D', lead: SKY_CHORUS7 + ' d6:2 e6:2 f#6:2 d6:2 a5:2 b5:2 c6:2 d6:2', harm: 1,
+        chords: 'C G D Em C G Am B', lead: SKY_CHORUS7 + ' f#5:2 b5:2 d#6:2 f#6:2 e6:2 d#6:2 c6:2 d#6:2', harm: 1,
         bass: 'pump*6 p16 build', drums: 'bC*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
         gtr: 'half*6 ch16 hold', stab: 'hB none hA none hB none hD none', arp: 'arpC*8',
         p2: { dbl: 'bell+12' },

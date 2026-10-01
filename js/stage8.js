@@ -35,10 +35,11 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 // Enemy definitions (see the field list at the top of stage.js).
 export const ENEMY = {
   s8_wraith: { hp: 9, score: 600, radius: 0.85, air: true, explode: 1.0, debris: 6, medal: 0.35, prewarm: 12 },
-  s8_watcher: { hp: 90, score: 3000, radius: 1.3, air: true, explode: 1.9, debris: 12, medal: 2, prewarm: 4 },
+  // the warped space sends four or three while the last ones still hover (d 862, 1134): 5 alive at loop 2
+  s8_watcher: { hp: 90, score: 3000, radius: 1.3, air: true, explode: 1.9, debris: 12, medal: 2, prewarm: 6 },
   // a fractal construct splits when it dies (its AI plays the split, see fractalAI): three sizes, one model; the
   // splits are the answer to a kill, so none of them fires revenge shots
-  s8_fractal: { hp: 60, score: 2000, radius: 1.35, air: true, explode: 1.8, debris: 10, medal: 1, noRevenge: true, prewarm: 4 },
+  s8_fractal: { hp: 60, score: 2000, radius: 1.35, air: true, explode: 1.8, debris: 10, medal: 1, noRevenge: true, prewarm: 5 },
   s8_frag: { hp: 7, score: 400, radius: 0.75, air: true, explode: 1.1, debris: 5, medal: 0.3, noRevenge: true, model: 's8_fractal', prewarm: 9 },
   s8_shard: { hp: 1.5, score: 100, radius: 0.45, air: true, explode: 0.6, debris: 3, medal: 0.12, noRevenge: true, noHpSeg: true, model: 's8_fractal', prewarm: 18 },
   // a mine that is shot pops (no revenge: it would fire from where the implosion would have been)
@@ -655,26 +656,44 @@ const IN_A = [1.2, 1.5, 2.4, 0.9], IN_B = [0.2, 0.3, 0.8, 0];               // l
 // the centre) and no lane is left beside one. Run from the AI, before collide(); a shot already touching a target is
 // left to it.
 const OM_ARMOUR = 0.97;   // × the node ring's radius: the tips of the halo's spikes
+// How near a shot's line must pass a part to go on, × the part's reach (its radius + the shot's): where the armour
+// goes on beyond the part (OM_PAST further along the line) a little over the reach — a stream that just grazes the
+// star or the heart gets there, a near miss is stopped beyond it; where it doesn't (a part on the rim) a hair inside
+// the reach, so a fast shot can't step past the part's very edge and out through the machine
+const OM_LINE_IN = 1.1, OM_LINE_RIM = 0.95, OM_PAST = 1.6;
+const AR = { cx: 0, cz: 0, R2: 0, w: 0, halo: null };   // the armour this frame (omegaArmour → onCourse)
 function omegaArmour(g, e) {
   const ps = g.ps, halo = e.mesh.userData.halo;
   if (!halo || !ps.n) return;
   const a = g.muzzlePos(halo, 0), ax = a.x, az = a.z, b = g.muzzlePos(halo, 6);   // two opposite nodes: centre, radius
   const cx = (ax + b.x) * 0.5, cz = (az + b.z) * 0.5, R = Math.hypot(ax - b.x, az - b.z) * 0.5 * OM_ARMOUR, R2 = R * R;
+  AR.cx = cx; AR.cz = cz; AR.R2 = R2; AR.w = halo.userData.rate || 0; AR.halo = halo;
   let i = 0;
   while (i < ps.n) {
     const x = ps.x[i], z = ps.z[i], dx = x - cx, dz = z - cz;
     if (dx * dx + dz * dz < R2 && !onCourse(g, e, i, x, z) && shotHit(g, i, g.hullTarget) !== 'keep') { g.removeShot(i); continue; }
     i++;
   }
+  AR.halo = null;
 }
-/** player shot i (at x, z) touches a target, or its line runs on into a live part of e (a hair inside the part's
- *  reach, so a fast shot can't step past its very edge and on through the machine) */
+/** player shot i (at x, z) touches a target, or its line runs on into a live part of e — the part led by its motion
+ *  until the shot gets there (the machine's drift; an eye also rides round with the halo, turning at AR.w rad/s), so a
+ *  stream an eye is turning into goes on and one it is turning out of is stopped */
 function onCourse(g, e, i, x, z) {
   const ps = g.ps, T = g.targets, vx = ps.vx[i], vz = ps.vz[i], sp = Math.sqrt(vx * vx + vz * vz) || 1, ux = vx / sp, uz = vz / sp;
   for (let k = 0; k < g.nTargets; k++) {
-    const t = T[k], px = t.x - x, pz = t.z - z, rr = t.r + ps.r[i];
+    const t = T[k], rr = t.r + ps.r[i];
+    let px = t.x - x, pz = t.z - z;
     if (px * px + pz * pz < rr * rr) return true;
-    if (t.e === e && t.part && px * ux + pz * uz > 0 && Math.abs(px * uz - pz * ux) < 0.95 * rr) return true;
+    if (t.e !== e || !t.part) continue;
+    let mx = e.vx, mz = e.vz;
+    if (t.part.obj.parent === AR.halo) { mx += AR.w * (t.z - AR.cz); mz -= AR.w * (t.x - AR.cx); }
+    let along = px * ux + pz * uz;
+    px += mx * (along / sp); pz += mz * (along / sp);
+    along = px * ux + pz * uz;
+    if (along <= 0) continue;
+    const qx = x + ux * (along + OM_PAST) - AR.cx, qz = z + uz * (along + OM_PAST) - AR.cz;     // past the part
+    if (Math.abs(px * uz - pz * ux) < (qx * qx + qz * qz < AR.R2 ? OM_LINE_IN : OM_LINE_RIM) * rr) return true;
   }
   return false;
 }

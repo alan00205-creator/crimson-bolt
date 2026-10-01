@@ -953,8 +953,9 @@ function createOmega() {
   let end = 0, unfold = 0, collapse = 0, haloSpin = 0.25, ringSpin = 1.1;
   /** 0..1: the halo widens (phase 2: its eyes wake) */
   ud.setUnfold = (v) => { unfold = Math.max(0, Math.min(1, v)); };
-  /** the halo's and the ring's turning rates (rad/s) */
-  ud.setSpin = (h, r) => { haloSpin = h; ringSpin = r; };
+  /** the halo's and the ring's turning rates (rad/s); halo.userData.rate reads back the halo's (stage8.js's armour
+   *  leads an eye along its turn) */
+  ud.setSpin = (h, r) => { haloSpin = h; ringSpin = r; halo.userData.rate = h * (1 + collapse * 6); };
   /** 0..1: every light turns from starlight to crimson */
   ud.setEnd = (v) => {
     end = Math.max(0, Math.min(1, v));
@@ -976,7 +977,8 @@ function createOmega() {
   ud.update = (dt, t) => {
     const k = 1 - collapse;
     const cc = collapse * collapse * (3 - 2 * collapse);
-    halo.rotation.y += dt * haloSpin * (1 + collapse * 6);
+    halo.userData.rate = haloSpin * (1 + collapse * 6);
+    halo.rotation.y += dt * halo.userData.rate;
     halo.scale.setScalar((0.8 + 0.2 * unfold) * (1 - 0.9 * cc));
     ringA.rotation.y += dt * ringSpin * (1 + collapse * 6);
     gimbal.rotation.set(1.05 + Math.sin(t * 0.4) * 0.15, t * 0.3, 0);

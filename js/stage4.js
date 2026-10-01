@@ -73,13 +73,16 @@ const BOSS_AT = 1275;
 
 // The top HUD is fixed CSS px (index.html: score strip ≈ 58 px, boss bar down to ≈ 102 px), so on short
 // phones a row picked relative to zTop can sit under it. zAtRow gives the world z at height y that
-// projects to CSS pixel row py (screen centre column): hover rows are kept at or below it.
+// projects to CSS pixel row py (screen centre column): hover rows are kept at or below it. It works from the
+// camera's rest pose (view.C, the view direction view.v, the fixed fov) instead of unprojecting through the
+// camera: during a screen shake the camera stands up to ~0.9 off view.C and screenToPlane's ray (a point
+// ~2 in front of the shaken camera, less view.C) swings by several units.
 const HUD_ROW = 80;    // clear of the score strip
 const BAR_ROW = 118;   // 16 px under the boss bar
-const rowQ = { x: 0, z: 0 };
 function zAtRow(v, py, y = 0) {
-  const q = v.screenToPlane(v.w / 2, py, rowQ);
-  return v.C.z + (q.z - v.C.z) * (1 - y / v.C.y);
+  const f = v.v, k = (1 - (2 * py) / v.h) * Math.tan(v.camera.fov * Math.PI / 360);
+  const dy = f.y - f.z * k, dz = f.z + f.y * k;             // the ray: forward + up·k (up = (0, −f.z, f.y))
+  return v.C.z + dz * (-v.C.y / dy) * (1 - y / v.C.y);
 }
 const live = (pt) => (pt && !pt.dead ? pt : null);
 
@@ -319,19 +322,26 @@ function fireTimerS(s, key, dt, g, interval, first) {
 // --------------------------------------------------------------------------------
 // mine pod
 // --------------------------------------------------------------------------------
-// Drifts down (vz) with a slow sideways drift; arms when the jet comes within ~5.5, when it sinks past
-// armZ of the screen, or MINE_FUSE s after it appears (a field left alone goes off): 0.75 s of red
-// blinking, then it bursts into a ring of orbs (no score — shoot it first; the armoured pod takes a
-// moment). Too close to the jet, the burst holds its fire (shoot() never fires point-blank).
-const MINE_FUSE = 1.4;
+// Drifts down (vz) with a slow sideways drift. Once clear of the score strip (so on a phone the ring never
+// comes out of the score) it arms when the jet comes within ~5.5 or MINE_FUSE s later (a field left
+// alone goes off), and anywhere past armZ of the screen: 0.75 s of red blinking, then it bursts into a
+// ring of orbs (no score — shoot it first; the armoured pod takes a moment). Too close to the jet, the
+// burst holds its fire (shoot() never fires point-blank).
+const MINE_FUSE = 0.6;
 function mineAI(x0, vz = 2.3, drift = 0, armZ = 0.58) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData, p = g.player;
-    if (s.arm === undefined) { s.arm = -1; e.x = x0; e.z = v.zTop - 1.5; s.fixedYaw = true; s.yaw = 0; if (ud.setArm) ud.setArm(0); }
+    if (s.arm === undefined) {
+      s.arm = -1; s.ft = 0; s.zs = zAtRow(v, HUD_ROW); e.x = x0; e.z = v.zTop - 1.5; s.fixedYaw = true; s.yaw = 0;
+      if (ud.setArm) ud.setArm(0);
+    }
     if (s.arm < 0) {
       e.z += vz * dt; e.x += drift * dt;
-      const dx = p.x - e.x, dz = p.z - e.z;
-      if ((p.alive && dx * dx + dz * dz < 30) || e.t > MINE_FUSE || e.z > v.zTop + (v.zBottom - v.zTop) * armZ) { s.arm = 0; g.audio.play('lock', { vol: 0.25, pitch: 9 }); }
+      const clear = e.z > s.zs, dx = p.x - e.x, dz = p.z - e.z;
+      if (clear) s.ft += dt;
+      if ((clear && ((p.alive && dx * dx + dz * dz < 30) || s.ft > MINE_FUSE)) || e.z > v.zTop + (v.zBottom - v.zTop) * armZ) {
+        s.arm = 0; g.audio.play('lock', { vol: 0.25, pitch: 9 });
+      }
     } else {
       s.arm += dt;
       e.z += vz * 0.35 * dt;

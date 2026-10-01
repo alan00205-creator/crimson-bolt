@@ -2612,7 +2612,8 @@ const SONGDEF = {
   // voyage call in the same rhythm; the chorus breaks out into a straight four-on-the-floor under
   // a ringing guitar wall and bells in 3s; the bridge is the asteroid belt (tumbling floor toms,
   // brass calling over an A-lydian chord) building back to the chorus, where the hemiola returns
-  // with double kick. 4-bar intro, 40-bar loop: A1 A2 B(chorus) C(the belt) D(chorus').
+  // with double kick and the bass popping in 3s. 4-bar intro, 40-bar loop: A1 A2 B(chorus)
+  // C(the belt) D(chorus').
   stage6: {
     bpm: 170, key: 1, minor: true, scale: DORIAN, delay: 0.75, intro: ['I'], loop: ['A1', 'A2', 'B', 'C', 'D'],
     S: {
@@ -2654,7 +2655,7 @@ const SONGDEF = {
       D: {
         chords: 'E B F# C#m A E F# G#', harm: 1,
         lead: SOLAR_CHORUS7 + ' g#5:2 b#5:2 d#6:2 g#6:2 f#6:2 d#6:2 b#5:4',
-        bass: 'oct16*6 p16 build', drums: 'solD*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
+        bass: 'pump3*6 p16 build', drums: 'solD*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
         gtr: 'half*6 ch16 hold', stab: 'hB none hA none hB none hD none', arp: 'arpC*8',
         p2: { arp: 'bellS3*6 arpC*2' },
       },
@@ -2862,7 +2863,7 @@ const SONGDEF = {
       D: {
         chords: 'Gb Db Ab Ebm Gb Db F F', harm: 1,
         lead: COSMOS_CHORUS7 + ' a5:2 c6:2 f6:2 a5:2 c6:2 f6:2 a6:4',
-        bass: 'oct16*6 p16 build', drums: 'cosH*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
+        bass: 'fifths*6 p16 build', drums: 'cosH*6 fR fD', crash: [0, 2, 4, 6], rise: 2,
         gtr: 'half*6 ch16 hold', stab: 'hB none hA none hB none hD none', arp: 'arpQ*8',
         p2: { arp: 'bellQ*6 arpQ*2' },
       },

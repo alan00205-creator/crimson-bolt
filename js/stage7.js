@@ -38,7 +38,7 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 // Enemy definitions (see the field list at the top of stage.js).
 export const ENEMY = {
   // swarm drones come by the dozen (flocks, streams, broods): no revenge shots, no distance HP growth
-  s7_swarmer: { hp: 3, score: 250, radius: 0.7, air: true, explode: 0.8, debris: 4, medal: 0.15, noRevenge: true, noHpSeg: true, prewarm: 32 },
+  s7_swarmer: { hp: 3, score: 250, radius: 0.7, air: true, explode: 0.8, debris: 4, medal: 0.15, noRevenge: true, noHpSeg: true, prewarm: 36 },
   s7_stinger: { hp: 30, score: 1100, radius: 0.95, air: true, explode: 1.3, debris: 9, medal: 0.5, prewarm: 6 },
   s7_crystal: { hp: 150, score: 5000, radius: 1.6, air: true, explode: 2.3, debris: 16, medal: 2, prewarm: 4 },
   s7_gate: { hp: 110, score: 6000, radius: 1.9, air: true, explode: 2.4, debris: 18, medal: 2, noRevenge: true, prewarm: 3 },
@@ -191,13 +191,14 @@ function flockAI(cx, zf, k, n, dir = 1, hold = 2.0, R = 2.0) {
     if (s.mode === undefined) {
       s.mode = 'swirl'; s.z0 = v.zTop - 3; s.cz = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + R);
       s.a0 = (k / n) * TAU; s.brk = hold + k * 0.22; s.ph = rnd(0, TAU); s.dx = 0; s.dz = 1; s.dt = 0; s.spat = false; s.rg = 0;
+      s.zs = zAtRow(v, HUD_ROW);                       // spits only once clear of the score strip
       if (ud.setRage) ud.setRage(0);
     }
     if (s.mode === 'swirl') {
       const u = ease(e.t / 2.0), ccx = cx + dir * Math.sin(e.t * 0.55) * 2.2 * u, ccz = s.z0 + (s.cz - s.z0) * u;
       const a = s.a0 + e.t * 2.1 * dir, r = R * (0.6 + 0.4 * u) * (0.85 + 0.15 * Math.sin(e.t * 3.3 + s.ph));
       e.x = ccx + Math.cos(a) * r; e.z = ccz + Math.sin(a) * r * 0.75;
-      if (!s.spat && e.t > 0.3 + (k % 3) * 0.08 && g.canFire(e)) { s.spat = true; s.rg = 0.8; g.shoot(e.x, e.z, g.aim(e.x, e.z), 6.4); }
+      if (!s.spat && e.z > s.zs && e.t > 0.3 + (k % 3) * 0.08 && g.canFire(e)) { s.spat = true; s.rg = 0.8; g.shoot(e.x, e.z, g.aim(e.x, e.z), 6.4); }
       if (s.rg > 0) { s.rg = Math.max(0, s.rg - dt * 3); if (ud.setRage) ud.setRage(s.rg); }
       if (e.t > s.brk) {
         s.mode = 'dive';

@@ -12,7 +12,7 @@
 //               and when full they discharge — needle lines along every spine and a fan from the crown.
 //               Kill them fast (they carry the items)
 //   s7_gate     warp gates: open in the upper screen and pour broods of swarmers through the portal (the
-//               nodes fire aimed orbs as it pulses) until they warp out again — or are destroyed
+//               nodes fire aimed big orbs as it pulses) until they warp out again — or are destroyed
 //   leviathan   mid-boss space leviathan: spore fountains from its mantle glands (orbs flung up that arc over
 //               and rain down in a curtain), a snaking breath from its maw, then its heart: breathing rings
 //               that fly out, stop and fall back through it
@@ -323,7 +323,7 @@ function stingAI(x0, strikes = 3, zf = 0.24) {
 // over time, and from every hit it takes (60 % of its hull in damage fills them) — and blaze brighter as they
 // fill; at 85 % it rings a warning, full it discharges: three needles down the line of every spine (a starburst of
 // needle lines) and an aimed fan of big orbs from the crown, then the spines are dark again. From the moment it
-// noses into view the crown fires an aimed needle pair every 2.2 s.
+// noses into view the crown fires an aimed needle trio every 2.2 s.
 function crystalAI(x0, zf = 0.22, stay = 10) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
@@ -359,7 +359,7 @@ function crystalAI(x0, zf = 0.22, stay = 10) {
     }
     if (e.t > 1.7 && e.t < 3 + stay && fireTimerS(s, 'nt', dt, g, 2.2, 0.15) && g.canFire(e)) {
       const m = g.muzzlePos(e.mesh, 6), mx = m.x, mz = m.z, a = g.aim(mx, mz);
-      g.shoot(mx, mz, a - 0.06, 8.6, g.BK.NEEDLE); g.shoot(mx, mz, a + 0.06, 8.6, g.BK.NEEDLE);
+      g.shoot(mx, mz, a - 0.13, 8.4, g.BK.NEEDLE); g.shoot(mx, mz, a, 8.8, g.BK.NEEDLE); g.shoot(mx, mz, a + 0.13, 8.4, g.BK.NEEDLE);
     }
     if (e.hp < e.maxHp * 0.5 && Math.random() < 0.2) shatter(g, e.x + rnd(-1, 1), e.z + rnd(-1, 1), 1, 0.5);
   };
@@ -370,7 +370,7 @@ function crystalAI(x0, zf = 0.22, stay = 10) {
 // --------------------------------------------------------------------------------
 // Tears open at (x0, zf of the height) — a violet flash, the ring swelling out of nothing (armoured while it
 // forms) — and drifts down slowly. Every pulse (1.9 s) the portal flares and flings a brood of three drones out
-// of it (each brood leaves in a new direction round the dial) and the four nodes fire an aimed orb each. After
+// of it (each brood leaves in a new direction round the dial) and the four nodes fire an aimed big orb each. After
 // `life` s the portal shuts and the gate warps out (no score: shoot it before).
 function gateAI(x0, zf = 0.26, life = 9) {
   return (e, dt, g) => {
@@ -401,7 +401,7 @@ function gateAI(x0, zf = 0.26, life = 9) {
         if (g.canFire(e)) brood(g, e, e.x, e.z, a0, 3, 0.35, 0.18);
         g.fx.p.emit(e.x, 0.3, e.z, 0, 0, 0, 0.3, 1.0, 3.2, WARP_A, WARP_B, F.GLOW, 0, NO_DRAG);
         if (g.canFire(e)) {
-          for (let k = 0; k < 4; k++) { const m = g.muzzlePos(e.mesh, k); g.shoot(m.x, m.z, g.aim(m.x, m.z), 6.4); }
+          for (let k = 0; k < 4; k++) { const m = g.muzzlePos(e.mesh, k); g.shoot(m.x, m.z, g.aim(m.x, m.z), 6.0, g.BK.BIG); }
         }
       }
       if (s.mt > life) { s.mode = 'close'; s.mt = 0; e.invuln = true; g.audio.play('lock', { vol: 0.3, pitch: -9 }); }
@@ -599,7 +599,7 @@ function spawnLeviathan(g) {
 // It tears in through a warp rift at the top of the screen (a violet ring, the ship swelling out of it).
 // p1: the bio-cannons on its mandible arms fire curving pincers at the jet (two pairs each, staggered); the brood
 //     bays open in turn (the iris shrinks back and the mouth blazes: the tell) and fling out three drones each;
-//     the prow drops a swaying curtain of big orbs → p2 once the cannons and bays are gone (or after 44 s): the crystal
+//     the prow drops a swaying double curtain of big orbs → p2 once the cannons and bays are gone (or after 44 s): the crystal
 //     spires grow out of their sockets — the side spires fire double rings (an inner ring and a faster outer ring
 //     half a step round: a lattice, at times laid on the jet) and refract needle lines that converge on the jet,
 //     the lance spire tracks the jet, locks (its beam flares: the telegraph; a lattice comes with it) and fires
@@ -707,7 +707,7 @@ function nemesisAI() {
       const t = live(s.sp[i]);
       if (!t) continue;
       t.fireT -= dt * late;
-      if (t.fireT <= 0) { t.fireT = (2.5 + i * 0.3) / fr; t.burst = 2; t.bt = 0; }
+      if (t.fireT <= 0) { t.fireT = (2.2 + i * 0.3) / fr; t.burst = 2; t.bt = 0; }
       if (t.burst > 0) {
         t.bt -= dt;
         if (t.bt <= 0) {
@@ -738,18 +738,26 @@ function nemesisAI() {
     }
     bayDoors(s, dt);
     if (s.mode === 'p1') {
-      // the prow: a curtain of big orbs straight down the screen, swept slowly to and fro — not aimed (the
-      // cannons' pincers keep the jet moving; a fan that tracked it too would corner it)
+      // the prow: a curtain of big orbs straight down the screen, swept slowly to and fro, and a second row 0.4 s
+      // behind it half a step round (a lattice to thread) — not aimed (the cannons' pincers keep the jet moving; a
+      // fan that tracked it too would corner it)
       s.pfT = (s.pfT ?? 3.4) - dt;
-      if (s.pfT <= 0) { s.pfT = 4.4 / fr; const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, Math.sin(s.pt * 0.9) * 0.3, 6, 1.25, 5.6, g.BK.BIG); }
+      if (s.pfT <= 0) {
+        s.pfT = 3.8 / fr; s.pfQ = 0.4; s.pfA = Math.sin(s.pt * 0.9) * 0.3;
+        const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, s.pfA, 7, 1.38, 5.6, g.BK.BIG);
+      }
+      if (s.pfQ > 0) {
+        s.pfQ -= dt;
+        if (s.pfQ <= 0) { const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, s.pfA, 6, 1.15, 5.2, g.BK.BIG); }
+      }
       return;
     }
     const spMul = s.mode === 'p2' ? 1 : 0.6;
     // p1 guns still standing (the 44 s timeout) slow the spires down: their fire is already on top of it
     const held = 1 + 0.1 * outer;
     // side spires, in turn: a double ring — an inner ring and a faster outer ring half a step round (a lattice);
-    // two volleys in four (one from each spire) the inner ring is laid on the jet, so a lattice line runs down its
-    // column. With every ring the spire's facets refract a burst at the jet: three needle lines from across its
+    // two volleys in four (one from each spire) the inner ring is laid on the jet, and is of big orbs, so a lattice line
+    // runs down its column. With every ring the spire's facets refract a burst at the jet: three needle lines from across its
     // face, converging where the jet is. When the lance locks, the next ring comes at once: a lattice to thread
     // on the way out of the lane
     if ((pL || pR) && s.grow >= 1) {
@@ -759,7 +767,7 @@ function nemesisAI() {
         const pt = (s.bk ? pL : pR) || pL || pR, m = g.muzzlePos(pt.obj), mx = m.x, mz = m.z, n = hard ? 14 : 12;
         const a = g.aim(mx, mz), ca = Math.cos(a), sa = Math.sin(a);
         s.b = s.vq & 2 ? a : s.b + 0.37;
-        g.ring(mx, mz, n, 3.9, s.b); g.ring(mx, mz, n, 5.3, s.b + Math.PI / n);
+        g.ring(mx, mz, n, 3.9, s.b, s.vq & 2 ? g.BK.BIG : g.BK.ORB); g.ring(mx, mz, n, 5.3, s.b + Math.PI / n);
         for (let q = -1; q <= 1; q++) {
           const fx = mx + ca * q * 1.3, fz = mz - sa * q * 1.3, fa = g.aim(fx, fz);
           g.shoot(fx, fz, fa, 8.0, g.BK.NEEDLE); g.shoot(fx, fz, fa, 6.9, g.BK.NEEDLE);
@@ -817,7 +825,7 @@ function nemesisAI() {
         for (let q = 0; q < n; q++) breathe(g, g.shoot(cx, cz, (s.c + q) * (TAU / n), 5.0), 0.42);
         g.fx.p.emit(cx, 0.4, cz, 0, 0, 0, 0.3, 1.2, 4.6, VEN_A, VEN_B, F.RING, 0, OPT_FLAT);
       }
-    } else if (!s.fanned) { s.fanned = true; g.fan(cx, cz, g.aim(cx, cz), hard ? 7 : 5, hard ? 1.0 : 0.8, 6.6, g.BK.BIG); g.audio.play('lock', { vol: 0.4 }); }
+    } else if (!s.fanned) { s.fanned = true; g.fan(cx, cz, g.aim(cx, cz), hard ? 9 : 7, hard ? 1.25 : 1.05, 6.6, g.BK.BIG); g.audio.play('lock', { vol: 0.4 }); }
     if (cyc < 8.6) s.fanned = false;
     if (rage) {
       s.rgT = (s.rgT ?? 1.5) - dt;

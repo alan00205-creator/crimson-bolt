@@ -4,12 +4,12 @@
 // spacetime grid 800–1240 · a black hole's event horizon 1240+ (the boss arena: the hole at the top of the screen).
 // Nothing below the play area but light and the dark: every unit here flies. The Architects' last machines (models
 // in models_s8.js):
-//   s8_wraith   void wraiths: they condense out of nothing (the shimmer is the tell), fire an aimed needle pair, then
+//   s8_wraith   void wraiths: they condense out of nothing (the shimmer is the tell), fire an aimed needle trio, then
 //               fold into a sliver of light and blink somewhere else (a shimmer marks where) — a few hops, then back
 //               into the void. Packs of them ambush the jet from all round
 //   s8_watcher  cosmic sentinels: a great eye in a gyroscope; the ring spins up and its four emitters blaze (the
-//               tell), then spray three waves outward as it turns (a rotating lattice), and the eye fires a needle
-//               line at the jet
+//               tell), then spray three waves outward as it turns (a rotating lattice, big orbs in the middle one),
+//               and the eye fires a needle line at the jet
 //   s8_fractal  fractal constructs: a Sierpinski tetrahedron that fires spinning three-armed fans from its corners
 //               and, destroyed, splits into three smaller constructs (s8_frag, one aimed shot each), which split
 //               again into splinters (s8_shard) that tumble away
@@ -23,6 +23,7 @@
 import { STAGE_META } from './defs.js';
 import { F } from './fx.js';
 import { W, makeTimeline, midbossEvent, bossDefeated, faceYaw } from './stage.js';
+import { shotHit } from './weapons.js';          // OMEGA's armour hands its hits to the shot's own handler (omegaArmour)
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -58,9 +59,10 @@ export const ENEMY = {
   // boss: parts in hit-test order. The eyes, the star (core) and the heart start sealed (not targets) and count in the HP
   // bar from the start. The star is not the unit's core: destroying it starts the last phase; the heart is. hull: a
   // band just up-screen of the centre (behind the star: the star's and the heart's circles are always reached first),
-  // so shots into the machine spark off it. This narrow box is worn while an eye is open (the eyes ride over the top of
-  // the halo, where a wider band would hide them); otherwise the unit wears a wider one (OMEGA_PLATE / OMEGA_HALO*,
-  // below, set each frame by omegaHull).
+  // so shots into the machine spark off it — as wide as the platform: the top pylons' hit reach starts ≈ 1.85 from the
+  // centre line (3.71 − 0.98 − the widest shot). The band is worn in phase 3 while a top pylon stands; while the pylons
+  // or the eyes are up the unit wears none (OMEGA_OPEN), once both top pylons are gone a wider one (OMEGA_HALO*, below;
+  // set each frame by omegaHull).
   omega: {
     hp: 1, score: 0, radius: 5.5, air: true, explode: 4, debris: 40, boss: true, model: 'omega', prewarm: 1,
     parts: [
@@ -69,14 +71,15 @@ export const ENEMY = {
       { key: 'core', hp: 1250, score: 150000, medals: 6, big: 3.4 },
       { key: 'heart', hp: 1150, core: true, score: 500000 },
     ],
-    hull: { hw: 1.1, z0: -2.5, z1: -1.2 },
+    hull: { hw: 2.0, z0: -3.2, z1: -1.2 },
   },
 };
-// OMEGA's other hulls (same unit, only the box differs). The top pylons' hit reach starts ≈ 1.85 from the centre line
-// (3.71 − 0.98 − the widest shot), so while one stands the band is as wide as the platform; once both are gone (the
-// bottom pylons sit below the band and are always reached first) it spans the halo — folded in phase 1, unfolded later.
-// The band is deeper than the narrow one so a fast shot can't step over it on a slow frame.
-const OMEGA_PLATE = { ...ENEMY.omega, hull: { hw: 2.0, z0: -3.2, z1: -1.2 } };
+// OMEGA's other hulls (same unit, only the box differs). In phases 1–2 (and while an eye outlives phase 2) the parts sit
+// round the halo's rim — the top pylons behind it, the eyes riding round it — where any box either hides one of them or
+// leaves lanes beside it, so the unit wears none and omegaArmour (below) stops the shots instead. Once both top pylons
+// are gone (the bottom pylons sit below the band and are always reached first) the band spans the halo — folded, or
+// unfolded. The band is deep so a fast shot can't step over it on a slow frame.
+const OMEGA_OPEN = { ...ENEMY.omega, hull: { hw: 0, z0: 0, z1: 0 } };   // an empty box: omegaArmour does the work
 const OMEGA_HALO_F = { ...ENEMY.omega, hull: { hw: 3.6, z0: -3.2, z1: -1.2 } };
 const OMEGA_HALO = { ...ENEMY.omega, hull: { hw: 4.4, z0: -3.2, z1: -1.2 } };
 
@@ -153,7 +156,7 @@ function starBurst(g, x, z, n, sp = 1) {
 // void wraith
 // --------------------------------------------------------------------------------
 // Condenses at (x0, zf of the height) — invulnerable while it forms (the shimmer, 0.55 s) — turns to face the jet,
-// drifts toward its column and fires an aimed needle pair; then `hops` times: it folds into a sliver (0.22 s, a
+// drifts toward its column and fires an aimed needle trio; then `hops` times: it folds into a sliver (0.22 s, a
 // shimmer where it will come out), blinks there and unfolds, and fires again. Then it folds back into the void.
 // Blinks always land well clear of the jet and in the upper half of the screen.
 const WR_FORM = 0.55, WR_FOLD = 0.22;
@@ -186,7 +189,7 @@ function wraithAI(x0, zf = 0.24, hops = 2, glide = 0.9) {
         s.fired = true;
         if (g.canFire(e)) {
           const m = g.muzzlePos(e.mesh), mx = m.x, mz = m.z, a = g.aim(mx, mz);
-          g.shoot(mx, mz, a - 0.11, 8.4, g.BK.NEEDLE); g.shoot(mx, mz, a + 0.11, 8.4, g.BK.NEEDLE);
+          g.shoot(mx, mz, a - 0.13, 8.4, g.BK.NEEDLE); g.shoot(mx, mz, a, 8.8, g.BK.NEEDLE); g.shoot(mx, mz, a + 0.13, 8.4, g.BK.NEEDLE);
           g.fx.p.emit(mx, 0.3, mz, 0, 0, 0, 0.12, 0.5, 1.1, GH_A, GH_B, F.FLARE, 0, NO_DRAG);
         }
       }
@@ -224,9 +227,9 @@ function wraithAI(x0, zf = 0.24, hops = 2, glide = 0.9) {
 // cosmic sentinel (watcher)
 // --------------------------------------------------------------------------------
 // Glides down into the upper screen, holds for `stay` s with a slow sway, then climbs away. Its cycle: the ring
-// spins up and the emitters blaze (0.55 s: the tell), then three waves 0.16 s apart — each emitter throws a pair
-// outward along its arm, and the ring is still turning, so the waves wind into a lattice — and the eye fires a
-// line of three needles at the jet.
+// spins up and the emitters blaze (0.55 s: the tell), then three waves 0.16 s apart (the middle one of big orbs) —
+// each emitter throws a pair outward along its arm, and the ring is still turning, so the waves wind into a lattice —
+// and the eye fires a line of three needles at the jet.
 function watcherAI(x0, zf = 0.24, stay = 8) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
@@ -257,7 +260,8 @@ function watcherAI(x0, zf = 0.24, stay = 8) {
         if (g.canFire(e) && ud.ring) {
           for (let k = 0; k < 4; k++) {
             const m = g.muzzlePos(ud.ring, k), mx = m.x, mz = m.z, a = Math.atan2(mx - e.x, mz - e.z);
-            g.shoot(mx, mz, a - 0.1, 5.4); g.shoot(mx, mz, a + 0.1, 5.4);
+            const kind = s.q === 2 ? g.BK.BIG : g.BK.ORB;       // the middle wave of big orbs
+            g.shoot(mx, mz, a - 0.1, 5.4, kind); g.shoot(mx, mz, a + 0.1, 5.4, kind);
           }
         }
       }
@@ -266,7 +270,7 @@ function watcherAI(x0, zf = 0.24, stay = 8) {
           const m = g.muzzlePos(e.mesh), mx = m.x, mz = m.z, a = g.aim(mx, mz);
           for (let q = 0; q < 3; q++) g.shoot(mx, mz, a, 7.8 + q * 1.1, g.BK.NEEDLE);
         }
-        s.st = 'idle'; s.ct = 2.4 / g.diff.fr;
+        s.st = 'idle'; s.ct = 2.2 / g.diff.fr;
       }
     }
   };
@@ -305,8 +309,9 @@ function fractalSplit(e, g) {
   g.killEnemy(e);
 }
 // The whole construct: glides down into the upper screen, holds (a slow drift) for `stay` s, then climbs away. Every
-// 2.2 s its cores blaze (0.45 s: the tell) and each lower corner throws a three-orb fan straight out from the centre
-// (it is turning, so every volley points a new way) while the top fires an aimed needle pair.
+// 2.2 s its cores blaze (0.45 s: the tell) and each lower corner throws a three-orb fan (a big one in the middle)
+// straight out from the centre (it is turning, so every volley points a new way) while the top fires an aimed needle
+// pair.
 function fractalAI(x0, zf = 0.24, stay = 10) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
@@ -334,7 +339,8 @@ function fractalAI(x0, zf = 0.24, stay = 10) {
       if (g.canFire(e)) {
         for (let k = 0; k < 3; k++) {
           const m = g.muzzlePos(e.mesh, k), mx = m.x, mz = m.z;
-          g.fan(mx, mz, Math.atan2(mx - e.x, mz - e.z), 3, 0.32, 5.2);
+          const a = Math.atan2(mx - e.x, mz - e.z);
+          g.shoot(mx, mz, a - 0.16, 5.2); g.shoot(mx, mz, a, 5.0, g.BK.BIG); g.shoot(mx, mz, a + 0.16, 5.2);
         }
         const m = g.muzzlePos(e.mesh, 3), mx = m.x, mz = m.z, a = g.aim(mx, mz);
         g.shoot(mx, mz, a - 0.05, 8.2, g.BK.NEEDLE); g.shoot(mx, mz, a + 0.05, 8.2, g.BK.NEEDLE);
@@ -648,14 +654,41 @@ const RED_A = [2.6, 0.4, 0.5, 1], RED_B = [0.7, 0.05, 0.1, 0];              // t
 const HZ_A = [2.2, 0.5, 0.6, 0.9], HZ_B = [1.6, 0.3, 0.4, 0.6];             // horizon motes
 const HZR_A = [0.12, 0.01, 0.03, 0.2], HZR_B = [0.4, 0.05, 0.1, 0.35];      // … and its circle (faint)
 const IN_A = [1.2, 1.5, 2.4, 0.9], IN_B = [0.2, 0.3, 0.8, 0];               // light falling into the hole
-/** the hull box follows what is left standing: narrow while the eyes are up (phase 2, or any eye still open), the
- *  platform while a top pylon stands, else the halo (see ENEMY.omega) */
+/** the pylons or the eyes are up: the machine's armour is omegaArmour's disc, not a box */
+const omegaArmoured = (s) => s.mode === 'p1' || s.mode === 'p2' || !!(live(s.eye[0]) || live(s.eye[1]) || live(s.eye[2]));
+/** the hull box follows what is left standing: none while armoured, the platform while a top pylon stands, else the
+ *  halo (see ENEMY.omega) */
 function omegaHull(e, s) {
-  let d = ENEMY.omega;
-  if (s.mode !== 'p2' && !live(s.eye[0]) && !live(s.eye[1]) && !live(s.eye[2])) {
-    d = live(s.py[0]) || live(s.py[1]) ? OMEGA_PLATE : s.unf > 0.5 ? OMEGA_HALO : OMEGA_HALO_F;
-  }
+  const d = omegaArmoured(s) ? OMEGA_OPEN : live(s.py[0]) || live(s.py[1]) ? ENEMY.omega : s.unf > 0.5 ? OMEGA_HALO : OMEGA_HALO_F;
   if (e.def !== d) e.def = d;
+}
+// OMEGA's armour while the pylons or the eyes are up: the disc out to the halo's rim (its node ring) stops the jet's
+// shots — the shot's own armour handler, sparks, as on any hull — except a shot whose line runs on into a live part: it
+// meets the part on the way, so every part stays reachable through the machine (straight up or at a slant) and no lane
+// is left beside one. Run from the AI, before collide(); a shot already touching a target is left to it.
+const OM_ARMOUR = 0.97;   // × the node ring's radius: the tips of the halo's spikes
+function omegaArmour(g, e) {
+  const ps = g.ps, halo = e.mesh.userData.halo;
+  if (!halo || !ps.n) return;
+  const a = g.muzzlePos(halo, 0), ax = a.x, az = a.z, b = g.muzzlePos(halo, 6);   // two opposite nodes: centre, radius
+  const cx = (ax + b.x) * 0.5, cz = (az + b.z) * 0.5, R = Math.hypot(ax - b.x, az - b.z) * 0.5 * OM_ARMOUR, R2 = R * R;
+  let i = 0;
+  while (i < ps.n) {
+    const x = ps.x[i], z = ps.z[i], dx = x - cx, dz = z - cz;
+    if (dx * dx + dz * dz < R2 && !onCourse(g, e, i, x, z) && shotHit(g, i, g.hullTarget) !== 'keep') { g.removeShot(i); continue; }
+    i++;
+  }
+}
+/** player shot i (at x, z) touches a target, or its line runs on into a live part of e (well inside the part's reach,
+ *  so a fast shot can't step past the part's edge) */
+function onCourse(g, e, i, x, z) {
+  const ps = g.ps, T = g.targets, vx = ps.vx[i], vz = ps.vz[i], sp = Math.sqrt(vx * vx + vz * vz) || 1, ux = vx / sp, uz = vz / sp;
+  for (let k = 0; k < g.nTargets; k++) {
+    const t = T[k], px = t.x - x, pz = t.z - z, rr = t.r + ps.r[i];
+    if (px * px + pz * pz < rr * rr) return true;
+    if (t.e === e && t.part && px * ux + pz * uz > 0 && Math.abs(px * uz - pz * ux) < 0.8 * rr) return true;
+  }
+  return false;
 }
 /** OMEGA's singularity mines: a pair thrown from the star (cx, cz) out to the jet's flanks — 3.2 above it and 4.8 from
  *  it (beyond canFire's reach, or the ring would fizzle), inside the screen (one the edge pushes in toward the jet
@@ -762,6 +795,7 @@ function omegaAI() {
       g.ui.flash(0.8); g.shake.add(0.9); g.audio.play('explodeL'); g.haptic([60, 40, 90]);
     }
     omegaHull(e, s);
+    if (e.def === OMEGA_OPEN) omegaArmour(g, e);
     if (s.mode === 'fall') {                   // the lights go crimson, the singularity comes out of the cinder
       const k = s.ph / OM_FALL;
       s.end = Math.min(1, k * 1.4);
@@ -790,15 +824,18 @@ function omegaAI() {
     const halo = ud.halo, hy = halo ? halo.rotation.y : 0;
     if (!g.canFire(e)) {
       for (let k = 0; k < 3; k++) { const pt = s.eye[k], es = s.es[k]; if (pt) { pt.obj.userData.setBeam(0); pt.obj.userData.setCharge(0); } if (es.st !== 'idle') { es.st = 'idle'; es.t = 1.5; } }
+      if (s.cfQ !== undefined) { s.cfQ = undefined; s.cfT = 1.5; }          // a flare cut short is told again
+      if (s.rfW > 0) { s.rfW = 0; s.rfT = 1.5; }
       return;
     }
     const fr = g.diff.fr, hard = g.diff.level >= 2;
     const late = s.mode === 'p1' ? 1 : s.mode === 'p2' ? 0.7 : 0.5;         // leftover guns slow down
-    // pylons, in turn: the crystal flares (0.35 s), then a 3-round needle burst at the jet
+    // pylons, in turn: the crystal flares (0.35 s), then a 3-round needle burst at the jet — in phase 1 the first and
+    // last rounds are trios (the aimed line and one either side), later single lines
     if (nPy) {
       s.pyT = (s.pyT ?? 1.4) - dt * late;
       if (s.pyT <= 0 && !s.pyF) {
-        s.pyT = 1.05 / fr;
+        s.pyT = 0.9 / fr;
         for (let q = 0; q < 4 && !s.pyF; q++) { s.pyk = (s.pyk + 1) % 4; if (live(s.py[s.pyk])) { s.pyF = s.py[s.pyk]; s.pyFt = 0.35; s.pyQ = 0; } }
         if (s.pyF) { const m = g.muzzlePos(s.pyF.obj); g.fx.p.emit(m.x, 0.5, m.z, 0, 0, 0, 0.4, 0.4, 2.2, ST_A, ST_B, F.FLARE, 0, NO_DRAG); }
       }
@@ -806,30 +843,48 @@ function omegaAI() {
         s.pyFt -= dt;
         if (s.pyF.dead) s.pyF = null;
         else if (s.pyFt <= 0) {
-          s.pyFt = 0.09; s.pyQ++;
+          s.pyFt = 0.1; s.pyQ++;
           const m = g.muzzlePos(s.pyF.obj), mx = m.x, mz = m.z;
           if (s.pyQ === 1) s.pyAng = g.aim(mx, mz);
           g.shoot(mx, mz, s.pyAng, 9.2, g.BK.NEEDLE);
+          if (s.mode === 'p1' && s.pyQ !== 2) { g.shoot(mx, mz, s.pyAng - 0.21, 8.6, g.BK.NEEDLE); g.shoot(mx, mz, s.pyAng + 0.21, 8.6, g.BK.NEEDLE); }
           if (s.pyQ >= 3) s.pyF = null;
         }
       }
     }
     if (s.mode === 'p1') {
-      // the orrery: all four crystals throw four orbs out round the machine, curling in toward it and away again
+      // the orrery: all four crystals throw five orbs out round the machine, curling in toward it and away again
       s.orT = (s.orT ?? 3.2) - dt;
       if (s.orT <= 0) {
-        s.orT = 4.6 / fr; s.b += 0.5;
+        s.orT = 4.0 / fr; s.b += 0.5;
         for (let q = 0; q < 4; q++) {
           const pt = live(s.py[q]);
           if (!pt) continue;
           const m = g.muzzlePos(pt.obj), mx = m.x, mz = m.z, rad = Math.atan2(mx - e.x, mz - e.z);
-          for (let j = 0; j < 4; j++) curve(g, g.shoot(mx, mz, rad + Math.PI / 2 + (j - 1.5) * 0.28, 4.0 + j * 0.35), -2.2);
+          for (let j = 0; j < 5; j++) curve(g, g.shoot(mx, mz, rad + Math.PI / 2 + (j - 2) * 0.25, 4.0 + j * 0.3), -2.2);
         }
         g.audio.play('lock', { vol: 0.35, pitch: 2 });
       }
       // light leaking from the cage: a ring of big orbs
       s.rgT = (s.rgT ?? 5.0) - dt;
-      if (s.rgT <= 0) { s.rgT = 6.4 / fr; s.a += 0.17; g.ring(e.x, e.z - 0.8, hard ? 20 : 18, 3.4, s.a, g.BK.BIG); }
+      if (s.rgT <= 0) { s.rgT = 6.6 / fr; s.a += 0.17; g.ring(e.x, e.z - 0.8, hard ? 22 : 20, 3.4, s.a, g.BK.BIG); }
+      // the star flares in its cage (0.6 s: the tell, a swelling glare at the centre) and spits two fans of big orbs
+      // at the jet through the petals, the second slower and half a step round: a staggered wall to slip through twice
+      s.cfT = (s.cfT ?? 3.0) - dt;
+      if (s.cfT <= 0 && s.cfQ === undefined) {
+        s.cfQ = 0; s.cfW = 0.6;
+        g.fx.p.emit(e.x, 1.0, e.z - 0.8, 0, 0, 0, 0.6, 0.6, 4.2, WH_A, ST_B, F.FLARE, 0, NO_DRAG);
+        g.audio.play('lock', { vol: 0.45, pitch: -6 });
+      }
+      if (s.cfQ !== undefined) {
+        s.cfW -= dt;
+        if (s.cfW <= 0) {
+          const cz = e.z - 0.8, a = g.aim(e.x, cz);
+          if (s.cfQ === 0) { s.cfA = a; g.fan(e.x, cz, a, 7, 1.1, 5.2, g.BK.BIG); s.cfQ = 1; s.cfW = 0.28; g.audio.play('hitArmor', { vol: 0.45, pitch: -4 }); }
+          else { g.fan(e.x, cz, s.cfA, 6, 1.1 * 5 / 6, 4.5, g.BK.BIG); s.cfQ = undefined; s.cfT = 7.0 / fr; }
+          g.fx.p.emit(e.x, 0.6, cz, 0, 0, 0, 0.25, 1.2, 3.5, ST_A, ST_B, F.RING, 0, OPT_FLAT);
+        }
+      }
       return;
     }
     // the eyes: track (a faint beam), lock (the beam flares: the telegraph), a needle stream down the locked line
@@ -854,20 +909,37 @@ function omegaAI() {
         if (es.mt > 0.75) { es.st = 'fire'; es.mt = 0; es.ft = 0; u.setBeam(0); g.audio.play('missile', { vol: 0.6, pitch: -4 }); g.shake.add(0.12); }
       } else {
         o.rotation.y = es.ry - hy;
-        u.setCharge(Math.max(0, 1 - es.mt / 0.5));
+        u.setCharge(Math.max(s.mode === 'p2' ? 0.65 : 0, 1 - es.mt / 0.5));   // phase 2: the lens stays lit (a fan to come)
         es.ft -= dt;
-        while (es.ft <= 0 && es.mt < 0.55) { es.ft += 0.05; const m = g.muzzlePos(o); g.shoot(m.x, m.z, es.ang, 13, g.BK.NEEDLE); }
-        if (es.mt > 0.6) { es.st = 'idle'; es.t = (3.6 + k * 0.4) / fr; }
+        while (es.ft <= 0 && es.mt < 0.55) {
+          es.ft += 0.05; es.fq = (es.fq || 0) + 1;
+          const m = g.muzzlePos(o), mx = m.x, mz = m.z;
+          g.shoot(mx, mz, es.ang, 13, g.BK.NEEDLE);
+          // in phase 2 the lens splits off a needle either side every other round: a trident down the lane
+          if (s.mode === 'p2' && es.fq & 1) { g.shoot(mx, mz, es.ang - 0.26, 10, g.BK.NEEDLE); g.shoot(mx, mz, es.ang + 0.26, 10, g.BK.NEEDLE); }
+        }
+        if (es.mt > 0.6) {
+          es.st = 'idle'; es.t = (2.7 + k * 0.35) / fr;
+          // phase 2: as the stream ends the lit lens weeps four big orbs after the jet, the gap in the middle on it
+          // (it holds still for this one; the streams are what keep it moving)
+          if (s.mode === 'p2') {
+            const m = g.muzzlePos(o), mx = m.x, mz = m.z;
+            g.fan(mx, mz, g.aim(mx, mz), 4, 0.78, 5.0, g.BK.BIG);
+            g.fx.p.emit(mx, 0.5, mz, 0, 0, 0, 0.2, 0.6, 2.4, ST_A, ST_B, F.FLARE, 0, NO_DRAG);
+          }
+        }
       }
     }
     if (s.mode === 'p2') {
-      // the halo's clockwork: half its nodes in turn shed an orb out along the way it turns (a slow galaxy)
+      // the halo's clockwork: half its nodes in turn shed an orb out along the way it turns (a galaxy); every sixth
+      // volley the orbs are big ones
       s.ckT = (s.ckT ?? 1.0) - dt;
       if (s.ckT <= 0 && halo) {
-        s.ckT = 0.55 / fr; s.ck = (s.ck || 0) ^ 1;
-        for (let k = s.ck; k < 12; k += 2) {
+        s.ckT = 0.46 / fr; s.ck = (s.ck || 0) + 1;
+        const kind = s.ck % 6 === 0 ? g.BK.BIG : g.BK.ORB;
+        for (let k = s.ck & 1; k < 12; k += 2) {
           const m = g.muzzlePos(halo, k), mx = m.x, mz = m.z, rad = Math.atan2(mx - e.x, mz - (e.z - 0.8));
-          g.shoot(mx, mz, rad - 0.85, 3.8);
+          g.shoot(mx, mz, rad - 0.85, 3.8, kind);
         }
       }
       return;
@@ -935,9 +1007,13 @@ function omegaAI() {
         for (let k = 0; k < 6; k++) curve(g, g.shoot(cx0, cz0, s.a + (k * TAU) / 6, 4.0), (k & 1 ? 1.4 : -1.4));
       }
     }
-    if (rage) {                                  // the end: aimed big-orb fans between everything
-      s.rfT = (s.rfT ?? 2) - dt;
-      if (s.rfT <= 0) { s.rfT = 3.0 / fr; g.fan(cx0, cz0, g.aim(cx0, cz0), 5, 0.8, 5.6, g.BK.BIG); }
+    // between everything: the heart flares crimson (0.45 s: the tell) and throws an aimed fan of big orbs — wider and
+    // more often once it rages
+    s.rfT = (s.rfT ?? 2) - dt;
+    if (s.rfT <= 0 && !(s.rfW > 0)) { s.rfW = 0.45; g.fx.p.emit(cx0, 1.0, cz0, 0, 0, 0, 0.45, 0.6, 3.6, RED_A, RED_B, F.FLARE, 0, NO_DRAG); }
+    if (s.rfW > 0) {
+      s.rfW -= dt;
+      if (s.rfW <= 0) { s.rfT = (rage ? 2.8 : 5.0) / fr; g.fan(cx0, cz0, g.aim(cx0, cz0), rage ? 7 : 5, rage ? 1.05 : 0.8, 5.6, g.BK.BIG); g.audio.play('hitArmor', { vol: 0.45, pitch: -9 }); }
     }
   };
 }

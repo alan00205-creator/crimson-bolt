@@ -1987,7 +1987,7 @@ void main() {
 #ifndef LOW
     float cr = textureGrad(uNoise, uv * 16.0 + m2.gb * 0.3, gx * 16.0, gy * 16.0).r;   // fine grain for the lights
 #else
-    float cr = m.r;
+    float cr = textureGrad(uNoise, uv * 16.0, gx * 16.0, gy * 16.0).r;   // (LOW keeps the grain, unwarped: the base octave lit whole blobs)
 #endif
     float city = smoothstep(0.71, 0.8, cr) * smoothstep(0.45, 0.62, m2.b) * land * (1.0 - cloud * 0.9) * (1.0 - day) * uLook.w;
     pc += uCity * city * 1.3;

@@ -79,13 +79,16 @@ const BOSS_AT = 1275;
 
 // The top HUD is fixed CSS px (index.html: score strip ≈ 58 px, boss bar down to ≈ 102 px), so on short
 // phones a row picked relative to zTop can sit under it. zAtRow gives the world z at height y that
-// projects to CSS pixel row py (screen centre column): hover rows are kept at or below it.
+// projects to CSS pixel row py (screen centre column): hover rows are kept at or below it. It works from the
+// camera's rest pose (view.C, the view direction view.v, the fixed fov) instead of unprojecting through the
+// camera: during a screen shake the camera stands up to ~0.9 off view.C and screenToPlane's ray (a point
+// ~2 in front of the shaken camera, less view.C) swings by several units.
 const HUD_ROW = 80;    // clear of the score strip
 const BAR_ROW = 118;   // 16 px under the boss bar
-const rowQ = { x: 0, z: 0 };
 function zAtRow(v, py, y = 0) {
-  const q = v.screenToPlane(v.w / 2, py, rowQ);
-  return v.C.z + (q.z - v.C.z) * (1 - y / v.C.y);
+  const f = v.v, k = (1 - (2 * py) / v.h) * Math.tan(v.camera.fov * Math.PI / 360);
+  const dy = f.y - f.z * k, dz = f.z + f.y * k;             // the ray: forward + up·k (up = (0, −f.z, f.y))
+  return v.C.z + dz * (-v.C.y / dy) * (1 - y / v.C.y);
 }
 const live = (pt) => (pt && !pt.dead ? pt : null);
 
@@ -684,8 +687,9 @@ function spawnSelenite(g) {
 // boss: SELENE, the lunar fortress (the mare)
 // --------------------------------------------------------------------------------
 //   p1  the crescent: the horn cannons take turns firing crescent volleys (seven rocks in a fan whose edges
-//       fly faster than its middle, so the fan bows into a crescent round the jet) chased by a needle pair;
-//       the ridge batteries fire 2-round twin bursts. The dome is shut (shots spark off it).
+//       fly faster than its middle, so the fan bows into a crescent round the jet; the horn's barrels glow
+//       amber for half a second before) chased by a needle pair; the ridge batteries fire 2-round twin
+//       bursts. The dome is shut (shots spark off it).
 //   p2  horns and batteries down (or 44 s): the dome swings open and the solar mirror rises; the tide
 //       emitters in the crescent's back open. The mirror tracks the jet (a faint beam), locks (the beam
 //       flares, trembling toward the side it will sweep to), then sweeps a dense sun-lance of needles 1.1 rad
@@ -699,6 +703,11 @@ function spawnSelenite(g) {
 // onto the mare, blasts run round the crescent, it breaks in two at the spine, rock and embers fly in slow
 // lunar arcs, a final blast.
 const SE_TEMPO = 0.7;                  // leftover guns' rate in p2 (p3: 0.5)
+// p1's crescent volleys: one every HORN_GAP s (÷ diff.fr, the horns taking turns), CRES_N rocks across a fan
+// CRES_W rad either side of the aim (0.5 left gaps too tight to read: the volleys alone made stage 5 the
+// hardest of 4–6); the horn that fires next glows at its barrels for the last HORN_TELL s (and clicks as it
+// starts to charge)
+const HORN_GAP = 3.2, HORN_TELL = 0.5, CRES_N = 7, CRES_W = 0.58;
 function seleneAI() {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, v = g.view;
@@ -795,10 +804,11 @@ function seleneAI() {
     // horn cannons: crescent volleys, alternating
     if (live(H[0]) || live(H[1])) {
       s.hornT -= dt * late;
+      const h = live(H[s.hk ^ 1]) || live(H[s.hk]);           // the horn that fires next
+      if (s.hornT < HORN_TELL) hornTell(g, s, h, 1 - Math.max(0, s.hornT) / HORN_TELL);
       if (s.hornT <= 0) {
-        s.hornT = 3.0 / fr;
+        s.hornT = HORN_GAP / fr; s.told = false;
         s.hk ^= 1;
-        const h = live(H[s.hk]) || live(H[s.hk ^ 1]);
         crescentVolley(g, e, h);
       }
     }
@@ -845,13 +855,23 @@ function liftDust(g, e, rate) {
   const lp = LIFT_PTS[(Math.random() * LIFT_PTS.length) | 0];
   dust(g, e.gx + lp[0] + rnd(-0.6, 0.6), e.gz + lp[1] + rnd(-0.6, 0.6), 1.6, rate);
 }
-// seven rocks in a fan whose edges fly faster than its middle: the fan bows into a crescent round the jet;
+const TELL_A = [2.6, 1.7, 0.7, 1], TELL_B = [1.4, 0.6, 0.15, 0];          // a horn's barrels charging (amber)
+/** the next crescent volley's tell: its horn's barrels glow brighter as it nears (k: 0 → 1) */
+function hornTell(g, s, h, k) {
+  if (!s.told) { s.told = true; g.audio.play('lock', { vol: 0.35, pitch: -9 }); }
+  if (Math.random() < 0.5) return;
+  for (let q = 0; q < 2; q++) {
+    const m = g.muzzlePos(h.obj, q);
+    g.fx.p.emit(m.x, 0.3, m.z, 0, 0, 0, 0.12, 0.4 + 0.9 * k, 0.3 + 0.7 * k, TELL_A, TELL_B, F.GLOW, 0, NO_DRAG);
+  }
+}
+// CRES_N rocks in a fan whose edges fly faster than its middle: the fan bows into a crescent round the jet;
 // a needle pair down the barrels' line follows it
 function crescentVolley(g, e, h) {
   if (!h) return;
   const m0 = g.muzzlePos(h.obj, 0), x0 = m0.x, z0 = m0.z, m1 = g.muzzlePos(h.obj, 1), x1 = m1.x, z1 = m1.z;
   const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, a = g.aim(mx, mz);
-  for (let i = 0; i < 7; i++) { const u = (i / 6) * 2 - 1; g.shoot(mx, mz, a + u * 0.5, 4.8 + 1.5 * u * u, g.BK.BIG); }
+  for (let i = 0; i < CRES_N; i++) { const u = (i / (CRES_N - 1)) * 2 - 1; g.shoot(mx, mz, a + u * CRES_W, 4.8 + 1.5 * u * u, g.BK.BIG); }
   g.fx.muzzle(x0, z0, 1.2, 1.6, 2.8, 1.3); g.fx.muzzle(x1, z1, 1.2, 1.6, 2.8, 1.3);
   g.audio.play('explodeS', { vol: 0.55, pitch: -7 });
   g.shake.add(0.12);

@@ -529,17 +529,20 @@ function spawnHydra(g) {
 // boss: AEGIS, the orbital defence platform
 // --------------------------------------------------------------------------------
 // p1: the shield dome is up over the hub; the ring turns, its three gun turrets fire aimed twin-needle
-//     bursts and its three shield generators take turns pulsing slow rings of orbs; the hub fires aimed
-//     big fans → p2 once the generators are gone (or after 44 s; the dome collapses either way): the
-//     railgun swings round out of its cradle — it tracks the jet, locks (a wide red lane: the telegraph)
-//     and fires a rail of big orbs flanked by needles down the lane; between shots the capacitor banks
-//     spray counter-rotating spirals → p3 once the railgun and both banks are gone (or after 42 s): the
-//     reactor opens — a three-arm spiral that reverses, then woven rings, a breather with an aimed fan;
-//     low on HP it adds homing mines.
+//     bursts and its three shield generators take turns pulsing slow rings of orbs (quicker as they fall);
+//     the hub fires aimed big fans → p2 once the generators are gone (or after 44 s; the dome collapses
+//     either way): the railgun swings round out of its cradle — it tracks the jet firing ranging needle
+//     trios down the barrel, locks (a wide red lane: the telegraph) and fires a rail of big orbs flanked
+//     by needles down the lane, and then the capacitor banks each dump an aimed fan of big orbs; all but
+//     while it fires the banks spray counter-rotating spirals beaded with big orbs → p3 once the railgun
+//     and both banks are gone (or after 42 s): the reactor opens — a three-arm spiral that reverses, then
+//     woven rings with aimed needle trios between them, a breather with two aimed big fans; low on HP it
+//     adds homing mines.
 // Parts left alive keep firing in the later phases at a reduced rate.
 const AE_TURRET_HALF = [0, 0, Math.PI];        // which ring half carries turret k (its frame's extra yaw)
 const AE_GEN_HALF = [0, Math.PI, Math.PI];
 const AE_GUN_Z = 1.3;                          // railgun pivot: model z −1.3 → world e.z + 1.3 (yaw π)
+const AE_GEN_GAP = [0, 1.45, 1.8, 2.2];        // shield-generator pulse interval by generators left (÷ diff.fr)
 function aegisAI() {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, v = g.view;
@@ -636,10 +639,16 @@ function aegisAI() {
     if (can && s.gun !== 'deploy' && s.gun !== 'stow') {
       s.gunT += dt;
       const caps = (cL ? 1 : 0) + (cR ? 1 : 0);
-      if (s.gun === 'track') {
+      if (s.gun === 'track') {                   // ranging rounds: needle trios down the barrel as it swings
         co.rotation.y += clamp(wrapA(railAim(g, e) - co.rotation.y), -0.9 * dt, 0.9 * dt);
         cu.setBeam(0.28); cu.setCharge(0.15);
-        if (s.gunT > 1.5) { s.gun = 'lock'; s.gunT = 0; g.audio.play('lock', { vol: 0.55, pitch: -3 }); }
+        s.rgT = (s.rgT ?? 0.3) - dt;
+        if (s.rgT <= 0 && s.gunT < 1.3) {
+          s.rgT = 0.45 / fr;
+          const m = g.muzzlePos(co), mx = m.x, mz = m.z;
+          g.fan(mx, mz, co.rotation.y + e.yaw - Math.PI, 3, 0.18, 9, g.BK.NEEDLE); greenFlash(g, mx, mz, 0.45);
+        }
+        if (s.gunT > 1.5) { s.gun = 'lock'; s.gunT = 0; s.rgT = 0.3; g.audio.play('lock', { vol: 0.55, pitch: -3 }); }
       } else if (s.gun === 'lock') {             // the telegraph: the lane is fixed now, the rails charge
         const need = 1.0 + (2 - caps) * 0.35;
         const k = Math.min(1, s.gunT / need);
@@ -665,19 +674,33 @@ function aegisAI() {
           s.nst += 0.09;
           g.shoot(rx + px * 0.95, rz + pz * 0.95, ang, 13, g.BK.NEEDLE); g.shoot(rx - px * 0.95, rz - pz * 0.95, ang, 13, g.BK.NEEDLE);
         }
-        if (s.gunT > 0.65) { s.gun = 'cool'; s.gunT = 0; }
+        if (s.gunT > 0.65) { s.gun = 'cool'; s.gunT = 0; s.dumpL = !!cL; s.dumpR = !!cR; s.dumpT = 0.2; }
       } else if (s.gun === 'cool') {
         cu.setBeam(0); cu.setCharge(0);
         if (s.gunT > 2.1 / (fr * (s.mode === 'p3' ? 0.5 : 1))) { s.gun = 'track'; s.gunT = 0; }
       }
     } else if (cu && s.gun !== 'deploy') { cu.setBeam(0); cu.setCharge(0); }
-    // capacitor banks: counter-rotating two-arm spirals while the railgun isn't locking or firing
-    if (s.mode !== 'p1' && s.gun !== 'lock' && s.gun !== 'fire' && s.gun !== 'deploy' && (cL || cR)) {
+    // capacitor banks: counter-rotating two-arm spirals (every third volley a big orb: beaded arms), all but
+    // while the railgun fires — the lane has to be left through them
+    if (s.mode !== 'p1' && s.gun !== 'fire' && s.gun !== 'deploy' && (cL || cR)) {
       s.cst = (s.cst || 0) - dt;
       if (s.cst <= 0) {
         s.cst = (s.mode === 'p2' ? 0.17 : 0.24) / fr; s.c += 0.23;
-        if (cL) { const m = g.muzzlePos(cL.obj); g.shoot(m.x, m.z, s.c, 4.6); g.shoot(m.x, m.z, s.c + Math.PI, 4.6); }
-        if (cR) { const m = g.muzzlePos(cR.obj); g.shoot(m.x, m.z, -s.c, 4.6); g.shoot(m.x, m.z, -s.c + Math.PI, 4.6); }
+        const k = (s.cv = ((s.cv | 0) + 1) % 3) ? g.BK.ORB : g.BK.BIG;
+        if (cL) { const m = g.muzzlePos(cL.obj); g.shoot(m.x, m.z, s.c, 4.6, k); g.shoot(m.x, m.z, s.c + Math.PI, 4.6, k); }
+        if (cR) { const m = g.muzzlePos(cR.obj); g.shoot(m.x, m.z, -s.c, 4.6, k); g.shoot(m.x, m.z, -s.c + Math.PI, 4.6, k); }
+      }
+    }
+    // after each rail the banks dump what charge they have left: an aimed fan of big orbs from each in turn
+    // (left first), on the jet that has just stepped out of the lane
+    if ((s.dumpL || s.dumpR) && (s.dumpT -= dt) <= 0) {
+      s.dumpT = 0.34;
+      const b = s.dumpL ? cL : cR;
+      if (s.dumpL) s.dumpL = false; else s.dumpR = false;
+      if (b) {
+        const m = g.muzzlePos(b.obj), mx = m.x, mz = m.z;
+        g.fan(mx, mz, g.aim(mx, mz), 5, 0.72, 5.8, g.BK.BIG);
+        greenFlash(g, mx, mz, 0.9); g.audio.play('explodeS', { vol: 0.4, pitch: 4, pan: clamp(mx / 10, -1, 1) });
       }
     }
     // ring turrets: aimed 3-round twin-needle bursts, staggered
@@ -695,18 +718,19 @@ function aegisAI() {
         }
       }
     }
-    // shield generators: in turn, a slow ring of orbs from the crystal (the dome ripples)
+    // shield generators: in turn, a slow ring of orbs from the crystal (the dome ripples); the fewer are
+    // left holding the dome, the harder they pulse
     if (gens) {
       s.gpT = (s.gpT ?? 1.6) - dt * late;
       if (s.gpT <= 0) {
-        s.gpT = 2.2 / fr;
+        s.gpT = AE_GEN_GAP[gens] / fr;
         for (let q = 0; q < 3; q++) {
           s.gk = (s.gk + 1) % 3;
           const gp = live(s.gen[s.gk]);
           if (!gp) continue;
           const m = g.muzzlePos(gp.obj), mx = m.x, mz = m.z;
           s.b += 0.37;
-          g.ring(mx, mz, hard ? 12 : 10, 3.8, s.b);
+          g.ring(mx, mz, hard ? 14 : 12, 3.8, s.b);
           greenFlash(g, mx, mz, 1);
           if (ud.pulseShield) ud.pulseShield(0.8);
           break;
@@ -716,39 +740,44 @@ function aegisAI() {
     if (s.mode === 'p1') {
       // hub: aimed big fans now and then
       s.hfT = (s.hfT ?? 3.2) - dt;
-      if (s.hfT <= 0) { s.hfT = 4.6 / fr; const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, g.aim(m.x, m.z), 5, 0.8, 6.2, g.BK.BIG); }
+      if (s.hfT <= 0) { s.hfT = 3.6 / fr; const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, g.aim(m.x, m.z), hard ? 7 : 5, hard ? 1.0 : 0.8, 6.2, g.BK.BIG); }
       return;
     }
     if (s.mode !== 'p3' || !core || s.open < 0.85) return;
     // open reactor, in 9 s cycles: a three-arm spiral that reverses every 1.4 s, woven rings (each a half
-    // step off the last), then a breather with an aimed big fan; below 40 % homing mines join in
+    // step off the last) with an aimed needle trio between each two, then a breather with two aimed big fans
+    // (the second on where the jet has gone); below 40 % homing mines join in
     const cm = g.muzzlePos(core.obj), cx = cm.x, cz = cm.z;
     s.cyc += dt;
-    const cyc = s.cyc % 9;
+    const cyc = s.cyc % 9, seg = cyc < 4.2 ? 0 : cyc < 7.6 ? 1 : 2;
     const rage = core.hp < core.maxHp * 0.4;
+    if (seg !== s.seg) { s.seg = seg; s.ndT = 0.45 / fr; s.fans = 0; s.fanT = 0; }
     s.ct = (s.ct || 0) - dt;
-    if (cyc < 4.2) {
+    if (seg === 0) {
       if (s.ct <= 0) {
         s.ct = (rage ? 0.13 : 0.15) / fr;
         const dir = Math.floor(s.cyc / 1.4) & 1 ? -1 : 1;
         s.a += 0.24 * dir;
         for (let k = 0; k < 3; k++) g.shoot(cx, cz, s.a + (k * TAU) / 3, 4.8);
       }
-    } else if (cyc < 7.6) {
+    } else if (seg === 1) {
       if (s.ct <= 0) {
         s.ct = (rage ? 0.8 : 0.95) / fr;
         const n = hard ? 20 : rage ? 18 : 16;
         s.c = (s.c || 0) + 0.5;
         g.ring(cx, cz, n, 4.1, s.c * (TAU / n) + s.cyc * 0.05);
       }
-    } else if (!s.fanned) { s.fanned = true; g.fan(cx, cz, g.aim(cx, cz), hard ? 7 : 5, hard ? 0.95 : 0.75, 6.6, g.BK.BIG); g.audio.play('lock', { vol: 0.4 }); }
-    if (cyc < 7.6) s.fanned = false;
+      if ((s.ndT -= dt) <= 0) { s.ndT = (rage ? 0.8 : 0.95) / fr; g.fan(cx, cz, g.aim(cx, cz), 3, 0.2, 8.2, g.BK.NEEDLE); }
+    } else if (s.fans < 2 && (s.fanT -= dt) <= 0) {
+      s.fans++; s.fanT = 0.55;
+      g.fan(cx, cz, g.aim(cx, cz), hard ? 7 : 5, hard ? 0.95 : 0.75, 6.6, g.BK.BIG); g.audio.play('lock', { vol: 0.4 });
+    }
     if (rage) {
       s.mnT = (s.mnT ?? 1.5) - dt;
       if (s.mnT <= 0) {
         s.mnT = 3.8 / fr;
-        for (const sx of [-1.8, 1.8]) {
-          const i = g.shoot(cx + sx, cz, g.aim(cx + sx, cz) + sx * 0.25, 2.2, g.BK.MINE);
+        for (let q = 0; q < 2; q++) {
+          const sx = q ? 1.8 : -1.8, i = g.shoot(cx + sx, cz, g.aim(cx + sx, cz) + sx * 0.25, 2.2, g.BK.MINE);
           if (i >= 0) { g.eb.home[i] = 1.1; g.eb.az[i] = 0.3; }
         }
       }
@@ -943,7 +972,7 @@ const TIMELINE = makeTimeline((at) => {
   at(446, (g) => { W4.jink(g, [-6, -3, 0, 3, 6], 0.35); g.later(2.6, () => W4.mines(g, [[-5.5, 0], [5.5, 0.5]], 2.6)); });
   at(468, (g) => { W4.laser(g, -1, -4.5, 0.22, 2); g.later(1.5, () => W4.frigate(g, 1, 0.3, ['P'])); });
   at(494, (g) => { W4.loop(g, 1, 6, 0.3); g.later(1.2, () => W4.loop(g, -1, 6, 0.3)); g.later(2.2, () => W4.laser(g, 1, 3.5, 0.18, 1)); });
-  at(516, (g) => { W.carrier(g, 0, ['P']); g.later(1.0, () => W4.ring(g, 0, 6, 0.22, -1)); });
+  at(516, (g) => { W.carrier(g, 0, ['P']); g.later(1.0, () => W4.ring(g, 0, 6, 0.22, -1)); g.later(2.2, () => W4.laser(g, 1, 4.8, 0.24, 2)); });
   at(532, (g) => { W4.frigate(g, 1, 0.18, null); g.later(2.2, () => W4.frigate(g, -1, 0.32, ['B'])); g.later(3.6, () => W4.jink(g, [-4, 4], 0.3, 2, 0.24)); });
   at(556, (g) => { W4.ring(g, 0, 6, 0.26); g.later(1.4, () => W4.mines(g, [[-4, 0], [4, 0.5]])); });
   at(572, (g) => { W4.laser(g, 1, 5, 0.2, 1); W4.laser(g, -1, -5, 0.2, 1); });

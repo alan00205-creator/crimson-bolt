@@ -8499,8 +8499,10 @@ function menger(x, d, y, s, rot) {
 }
 // a fragment of a ring-world passing by: a broad ribbon of land and sea on a hull, rim walls along both
 // edges, following a vast circle (centre cx, cd; radius R at the edge toward the play area, R − W at the far
-// one), drawn for
-// the part of it in [a, b) from dA to dB, broken off at the ends
+// one), drawn for the part of it in [a, b) from dA to dB, broken off at the ends. It lies as low as chunk
+// geometry can (the space occluder at GROUND_Y + 0.1 hides whatever a chunk draws under it), its near rim
+// beyond 8.5 on the play plane on every portrait view (x ≥ 9.8 at y ≤ 0.75), so it shows as a band along
+// the screen's edge, widest at the top, and never runs through the lanes
 function ringworld(cx, cd, R, W, y, a, b, dA, dB, seed) {
   const s = Math.sign(-cx);          // the side of the circle facing the play area
   const A = Math.max(a, dA), B = Math.min(b, dB);
@@ -8543,7 +8545,10 @@ function landCol(d, t, seed, out) {
   mixInto(out, KP.amber, sstep(0.6, 0.68, h));
   mixInto(out, OP.rockL, sstep(0.7, 0.76, h));
   mixInto(out, KP.snow, sstep(0.66, 0.78, cl) * 0.75);
-  out[0] *= 0.78; out[1] *= 0.78; out[2] *= 0.8;          // (a world far off: kept below the play's brightness)
+  // a world far off: greyed a third of the way and kept well below the play's brightness, so bullets over
+  // it keep their contrast
+  const L = (out[0] * 0.3 + out[1] * 0.59 + out[2] * 0.11) * 0.35;
+  out[0] = (out[0] * 0.65 + L) * 0.68; out[1] = (out[1] * 0.65 + L) * 0.68; out[2] = (out[2] * 0.65 + L) * 0.72;
   return out;
 }
 
@@ -8559,8 +8564,8 @@ function genCosmos(w, ch, k, d0) {
   if (band === 0 && (k === 3 || k === 7 || k === 10)) { const d = rr(d0 + 5, d1 - 5); obelisk(side() * rr(7, 9), d, rr(0.6, 1.1), rr(1.6, 2.4), rr(0, TAU)); }
   if (band === 1) { const s = rr(1.2, 1.8), d = rr(d0 + 4, d1 - 4); menger(side() * rr(xin(d) + s + 0.8, 9.5), d, rr(1.4, 2.4), s, rr(0, TAU)); }
   if (band === 2) {
-    ringworld(-427.1, 1010, 420, 4.6, 1.1, d0, d1, 930, 1085, 11);
-    ringworld(442.3, 1165, 435, 4.2, 1.5, d0, d1, 1115, 1215, 23);
+    ringworld(-429.8, 1010, 420, 5.0, 0.2, d0, d1, 930, 1085, 11);
+    ringworld(444.8, 1165, 435, 4.6, 0.3, d0, d1, 1115, 1215, 23);
   }
   if (band === 2 && rand() < 0.5) { const d = rr(d0, d1), r = rr(0.2, 0.5); asteroid(side() * rr(xin(d) + r * 1.3, 8.5), d, rr(1, 3), r, KP.stone); }
   // tumblers: monoliths in the void, fractals in the web, shards in warped space, debris at the horizon

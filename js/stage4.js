@@ -553,6 +553,10 @@ const AE_RAIL = 0.65;                          // the rail fires this long
 const AE_DUMP = [0.2, 0.34];                   // the banks' dumps: the first this long after the rail, the second after it
 const AE_TELL = 0.45;                          // amber charge glow before the hub's and the reactor's big-orb fans
 const AE_TRIO_TELL = 0.32;                     // the reactor orb flares this long before each aimed needle trio
+const AE_FR_CAP = 1.3;                         // the hub's big fans and the reactor's needle trios quicken with diff.fr
+                                               // only up to this (loop 1's 1.2975 is under it): with the turrets, the
+                                               // generators and the rest all quickening as well, a full loop-2 rate
+                                               // made AEGIS the hardest fight in the game
 const AE_REACH = 20;                           // the station's furthest reach up-screen of the jet's lowest row (a tall
                                                // phone: 17 from the jet's row, vs 15.2 on a desktop view; see aegisAI)
 function aegisAI() {
@@ -630,7 +634,7 @@ function aegisAI() {
     // ring turrets track the jet (aiming is free; firing is gated below)
     for (let i = 0; i < 3; i++) { const t = live(s.tur[i]); if (t) aimRingPart(g, e, t, s.spin + AE_TURRET_HALF[i], dt, 2.4); }
     const co = s.can && s.can.obj, cu = co && co.userData;
-    const fr = g.diff.fr, hard = g.diff.level >= 1;
+    const fr = g.diff.fr, frc = Math.min(fr, AE_FR_CAP), hard = g.diff.level >= 1;
     const late = s.mode === 'p1' ? 1 : s.mode === 'p2' ? 0.7 : 0.5;     // leftover ring guns slow down
     // the railgun: swing round out of the cradle, then track / lock / fire / cool
     if (!can && s.gun !== 'stow' && s.gun !== 'deploy') s.gun = 'dead';
@@ -773,8 +777,8 @@ function aegisAI() {
       s.hfT = (s.hfT ?? 3.2) - dt;
       if (s.hfT <= AE_TELL && !s.hfTold) { s.hfTold = true; const m = g.muzzlePos(e.mesh); chargeFlare(g, m.x, m.z, Math.max(0.05, s.hfT), 1.25); }
       if (s.hfT <= 0) {
-        s.hfT = 3.6 / fr; s.hfTold = false;
-        const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, g.aim(m.x, m.z), hard ? 7 : 5, hard ? 1.0 : 0.8, 6.2, g.BK.BIG);
+        s.hfT = 3.6 / frc; s.hfTold = false;      // (five orbs on every loop: the later loops quicken all else)
+        const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, g.aim(m.x, m.z), 5, 0.8, 6.2, g.BK.BIG);
       }
       return;
     }
@@ -787,7 +791,7 @@ function aegisAI() {
     s.cyc += dt;
     const cyc = s.cyc % 9, seg = cyc < 4.2 ? 0 : cyc < 7.6 ? 1 : 2;
     const rage = core.hp < core.maxHp * 0.4;
-    if (seg !== s.seg) { s.seg = seg; s.ndT = 0.45 / fr; s.fans = 0; s.fanT = AE_TELL; s.fanTold = false; }
+    if (seg !== s.seg) { s.seg = seg; s.ndT = 0.45 / frc; s.fans = 0; s.fanT = AE_TELL; s.fanTold = false; }
     let cc = 0;
     s.ct = (s.ct || 0) - dt;
     if (seg === 0) {
@@ -804,14 +808,14 @@ function aegisAI() {
         s.c = (s.c || 0) + 0.5;
         g.ring(cx, cz, n, 4.1, s.c * (TAU / n) + s.cyc * 0.05);
       }
-      if ((s.ndT -= dt) <= 0) { s.ndT = (rage ? 0.8 : 0.95) / fr; g.fan(cx, cz, g.aim(cx, cz), 3, 0.2, 8.2, g.BK.NEEDLE); }
+      if ((s.ndT -= dt) <= 0) { s.ndT = (rage ? 0.8 : 0.95) / frc; g.fan(cx, cz, g.aim(cx, cz), 3, 0.2, 8.2, g.BK.NEEDLE); }
       else if (s.ndT < AE_TRIO_TELL) cc = 1 - s.ndT / AE_TRIO_TELL;
     } else if (s.fans < 2) {
       if (!s.fanTold) { s.fanTold = true; chargeFlare(g, cx, cz, s.fanT, 1.1); g.audio.play('lock', { vol: 0.4 }); }
       cc = 1 - Math.max(0, s.fanT) / 0.55;
       if ((s.fanT -= dt) <= 0) {
         s.fans++; s.fanT = 0.55; s.fanTold = false;
-        g.fan(cx, cz, g.aim(cx, cz), hard ? 7 : 5, hard ? 0.95 : 0.75, 6.6, g.BK.BIG);
+        g.fan(cx, cz, g.aim(cx, cz), 5, 0.75, 6.6, g.BK.BIG);
       }
     }
     core.obj.userData.setCharge(cc);

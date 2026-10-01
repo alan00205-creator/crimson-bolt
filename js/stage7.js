@@ -187,7 +187,7 @@ function sporeBurst(g, x, z, n, sp = 1) {
 // Flock: n drones swirl round a centre that drops into the upper screen (zf of the height) and sways across.
 // Each drone spits one aimed orb as it swirls into view (its sac flickers: a rippling volley from the ring, so a
 // flock bites even when a strong jet burns it down at once); after `hold` s they peel off one by one (k·0.22 s
-// apart) and dive at the jet in a straight line (the sac flares as each one breaks: the tell), every third one
+// apart) and dive at the jet in a straight line (the sac flares as each one breaks: the tell), every other one
 // firing another aimed orb as it goes.
 function flockAI(cx, zf, k, n, dir = 1, hold = 2.0, R = 2.0) {
   return (e, dt, g) => {
@@ -209,7 +209,7 @@ function flockAI(cx, zf, k, n, dir = 1, hold = 2.0, R = 2.0) {
         const p = g.player, dx = p.x - e.x, dz = Math.max(3, p.z - e.z), l = Math.hypot(dx, dz);
         s.dx = dx / l; s.dz = dz / l;                   // never up the screen
         if (ud.setRage) ud.setRage(1);
-        if (k % 3 === 0 && g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.2);
+        if (k % 2 === 0 && g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.2);
       }
     } else {
       s.dt += dt;
@@ -327,7 +327,7 @@ function stingAI(x0, strikes = 3, zf = 0.24) {
 // over time, and from every hit it takes (60 % of its hull in damage fills them) — and blaze brighter as they
 // fill; at 85 % it rings a warning, full it discharges: three needles down the line of every spine (a starburst of
 // needle lines) and an aimed fan of big orbs from the crown, then the spines are dark again. From the moment it
-// noses into view the crown fires an aimed needle trio every 2.2 s.
+// noses into view the crown fires an aimed needle trio every 2 s.
 function crystalAI(x0, zf = 0.22, stay = 10) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
@@ -361,7 +361,7 @@ function crystalAI(x0, zf = 0.22, stay = 10) {
       g.fx.p.emit(e.x, 0.4, e.z, 0, 0, 0, 0.25, 1.4, 4.5, XT_A, XT_B, F.GLOW, 0, NO_DRAG);
       g.audio.play('hitArmor', { vol: 0.8 }); g.audio.play('explodeS', { vol: 0.6, pitch: 6 });
     }
-    if (e.t > 1.7 && e.t < 3 + stay && fireTimerS(s, 'nt', dt, g, 2.2, 0.15) && g.canFire(e)) {
+    if (e.t > 1.7 && e.t < 3 + stay && fireTimerS(s, 'nt', dt, g, 2.0, 0.15) && g.canFire(e)) {
       const m = g.muzzlePos(e.mesh, 6), mx = m.x, mz = m.z, a = g.aim(mx, mz);
       g.shoot(mx, mz, a - 0.13, 8.4, g.BK.NEEDLE); g.shoot(mx, mz, a, 8.8, g.BK.NEEDLE); g.shoot(mx, mz, a + 0.13, 8.4, g.BK.NEEDLE);
     }
@@ -762,9 +762,9 @@ function nemesisAI() {
     const held = 1 + 0.1 * outer;
     // side spires, in turn: a double ring — an inner ring and a faster outer ring half a step round (a lattice);
     // two volleys in four (one from each spire) the inner ring is laid on the jet and both are of big orbs, so a
-    // lattice line runs down its column. With every ring the spire's facets refract a burst at the jet: three needle lines from across its
-    // face, converging where the jet is. When the lance locks, the next ring comes at once: a lattice to thread
-    // on the way out of the lane
+    // lattice line runs down its column. With every ring the spire's facets refract a burst at the jet: three needle
+    // lines from across its face, converging where the jet is. When the lance locks, the next ring comes at once: a
+    // lattice to thread on the way out of the lane
     if ((pL || pR) && s.grow >= 1) {
       s.prT = (s.prT ?? 1.0) - dt * spMul;
       if (s.prT <= 0) {

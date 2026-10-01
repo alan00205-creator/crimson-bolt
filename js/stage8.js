@@ -961,7 +961,10 @@ function omegaAI() {
       } else if (cyc < 5.4) {                   // the lull: the star flares (0.45 s: the tell) and spits a fan of big orbs
         const key = Math.floor(s.cyc / 12);
         if (cyc > 4.3 && s.sfK !== key) { s.sfK = key; s.sfW = 0.45; g.fx.p.emit(cx, 1.0, cz, 0, 0, 0, 0.45, 0.6, 4.2, WH_A, ST_B, F.FLARE, 0, NO_DRAG); g.audio.play('lock', { vol: 0.45, pitch: -6 }); }
-        if (s.sfW > 0 && (s.sfW -= dt) <= 0) { g.fan(cx, cz, g.aim(cx, cz), 9, 1.3, 5.4, g.BK.BIG); g.audio.play('hitArmor', { vol: 0.45, pitch: -4 }); }
+        if (s.sfW > 0) {
+          s.sfW -= dt;
+          if (s.sfW <= 0) { g.fan(cx, cz, g.aim(cx, cz), 9, 1.3, 5.4, g.BK.BIG); g.audio.play('hitArmor', { vol: 0.45, pitch: -4 }); }
+        }
       } else if (cyc < 8.6) {                   // supernovas: two rings at once, a flower
         if (s.ct <= 0) {
           s.ct = 1.0 / fr; s.b += 0.4;

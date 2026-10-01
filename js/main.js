@@ -493,7 +493,8 @@ let resumeT = 0, resumeShown = 0;
 // Keyboard / gamepad menu navigation: up/down (arrows, W/S, D-pad/stick) move the focus, left/right
 // change the focused settings switch or slider, A activates, B goes back. A panel whose only focus
 // stop is its OK button (HOW TO PLAY) scrolls instead, so the text under OK can be read. In the
-// hangar, left/right (and Q/E, LB/RB) switch its tabs. In a name entry for the board, A confirms
+// hangar, left/right (and Q/E, LB/RB) switch its tabs, except on 塗裝's aircraft picker, where
+// left/right step the picker (Q/E, LB/RB still switch tabs). In a name entry for the board, A confirms
 // the name in the box and B keeps the prefilled one.
 function menuNav() {
   const up = input.take('navUp') || input.take('up'), down = input.take('navDown') || input.take('down');
@@ -505,9 +506,11 @@ function menuNav() {
     if (back || !(performance.now() - entry.focusAt < ENTRY_GAP)) commitEntry(back);
     return;
   }
-  if ((left || right || tabPrev || tabNext) && !$('hangar').hidden) {
-    stepHangarTab(left || tabPrev ? -1 : 1);
-    if (!up && !down && !ok && !back) return;
+  if (!$('hangar').hidden) {
+    // (left/right on 塗裝's aircraft picker step the picker instead: the switch-group code below)
+    const ae0 = document.activeElement, onPick = !!(ae0 && ae0.closest && ae0.closest('#hpick'));
+    const d = tabPrev ? -1 : tabNext ? 1 : onPick ? 0 : left ? -1 : right ? 1 : 0;
+    if (d) { stepHangarTab(d); if (!up && !down && !ok && !back) return; }
   }
   // focus stops: buttons, each switch group once (at its selected option), sliders and name boxes
   const stops = [];
@@ -1017,6 +1020,17 @@ function previewShip(id) {
   ui.renderHangar(w, hangar);
   audio.play('select', { vol: 0.35 });
 }
+// 塗裝's aircraft picker (tap / click / ←→ on it): whose paints the list shows, that jet on the
+// fly-by in its own paint. Picking only browses: buying a jet stays in 機體.
+function pickPaintShip(id) {
+  if (!shipDef(id) || $('hangar').hidden || state !== 'title' || hangar.tab !== 'paint' || id === hangar.sel) return;
+  const w = readWallet();
+  disarmHangar();
+  hangar.sel = id; hangar.paint = w.paint[id];
+  game.setAircraft(id, hangar.paint);
+  ui.renderHangar(w, hangar);
+  audio.play('select', { vol: 0.4 });
+}
 // The same for a paint of the picked aircraft.
 function previewPaint(pid) {
   if ($('hangar').hidden || state !== 'title' || hangar.tab !== 'paint' || !paintOf(hangar.sel, pid)) return;
@@ -1174,6 +1188,7 @@ function bindUI() {
       case 'htab': if (state === 'title' && !$('hangar').hidden) setHangarTab(b.dataset.tab, true); break;
       case 'ship': if (state === 'title' && !$('hangar').hidden) activateShip(b); break;
       case 'paint': if (state === 'title' && !$('hangar').hidden) activatePaint(b); break;
+      case 'hpick': if (state === 'title' && !$('hangar').hidden) pickPaintShip(b.dataset.ship); break;
       case 'up': if (state === 'title' && !$('hangar').hidden) activateUpgrade(b); break;
       case 'rank-clear': if (state === 'title' && !$('ranking').hidden) clearRecords(b); break;
       case 'back': closePanel(); break;

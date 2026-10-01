@@ -48,7 +48,8 @@ export const ENEMY = {
   // below the head (the coils trail along the same figure of eight, so they stay out of its reach too).
   // No hull, on purpose: the coils cross in front of the eye and the spines on every loop of the eight, and
   // armour there would eat the shots aimed through them (measured with a coil-shaped hull: a level-3 vulcan
-  // no longer kills the eye before the 46 s retreat, a level-6 laser takes 25–38 s instead of 20).
+  // no longer kills the eye before the 46 s retreat, a level-6 laser takes 25–38 s instead of 20). A shot
+  // crossing a coil strikes a glancing spark instead (coilSparks) and flies on.
   basilisk: {
     hp: 9999, score: 40000, radius: 1.0, air: true, explode: 3.4, debris: 32, midboss: true, noRevenge: true, bodyTarget: false, keepOff: 6.5, prewarm: 1,
     parts: [
@@ -315,6 +316,8 @@ const BA_R = [1.05, 0.95, 1.0, 1.0, 1.0, 0.95, 0.85, 0.72, 0.58, 0.48];   // ram
 const PATH_N = 320, PATH_STEP = 0.08;     // the head's trail (25.6 units: the body is 10.4 plus the stinger)
 const PQ = { x: 0, z: 0 }, PR = { x: 0, z: 0 };
 const GAZE_A = [2.4, 0.5, 0.2, 0.9], GAZE_B = [1.2, 0.1, 0.02, 0], OPT_GAZE = { drag: 0, rot: 0 };
+const TICK_A = [3.0, 2.6, 2.0, 1], TICK_B = [1.2, 0.6, 0.2, 0], OPT_TICK = { drag: 0, rot: 0 }, OPT_TICKS = { drag: 6, stretch: 0.05 };
+const TICK_GAP = 0.045;                   // coil sparks: at most one per 0.045 s
 /** lay the trail straight back from (x, z) along the unit vector (dx, dz) */
 function pathInit(s, x, z, dx, dz) {
   if (!s.px) { s.px = new Float32Array(PATH_N); s.pz = new Float32Array(PATH_N); s.bx = new Float32Array(BAS_N); s.bz = new Float32Array(BAS_N); s.by = new Float32Array(BAS_N); }
@@ -366,7 +369,7 @@ function basiliskAI() {
       s.sx = -8.5; s.sz = v.zTop - 3; e.x = s.sx; e.z = s.sz;
       pathInit(s, e.x, e.z, -0.34, -0.94);   // trailing straight back up and to the left, off the screen
       s.spA = g.partByKey(e, 'spineA'); s.spB = g.partByKey(e, 'spineB'); s.tail = g.partByKey(e, 'tail'); s.core = g.partByKey(e, 'core');
-      s.spT = [1.2, 2.4]; s.venT = 2.8; s.hissT = 1.6; s.jaw = 0; s.gz = 'rest'; s.gt = 1.2; s.gAng = 0; s.gst = 0;
+      s.spT = [1.2, 2.4]; s.venT = 2.8; s.hissT = 1.6; s.jaw = 0; s.gz = 'rest'; s.gt = 1.2; s.gAng = 0; s.gst = 0; s.tick = 0;
       if (ud.reset) ud.reset();
       layBody(e, s, ud, g);
     }
@@ -391,6 +394,7 @@ function basiliskAI() {
     }
     pathPush(s, e.x, e.z);
     layBody(e, s, ud, g);
+    coilSparks(g, s, dt);
     // ramming: the coils are solid (the engine only tests the head's circle)
     const p = g.player;
     if (p.alive && s.mode !== 'enter') {
@@ -441,6 +445,38 @@ function basiliskAI() {
     }
     if (core && s.open > 0.85) gaze(e, dt, g, s, core, fr, hard);
   };
+}
+// Shots fly on through the coils (no hull, on purpose: see ENEMY.basilisk); a small glancing spark where one
+// crosses a coil shows it went through rather than vanishing into the armour. The shot is untouched; one spark
+// at a time (TICK_GAP), from the first shot found over a coil (bones 1–9, the ramming circles a little
+// tightened: the visible body).
+function coilSparks(g, s, dt) {
+  s.tick -= dt;
+  const ps = g.ps;
+  if (s.tick > 0 || !ps.n) return;
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+  for (let k = 1; k < BAS_N; k++) {
+    const x = s.bx[k], z = s.bz[k];
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  x0 -= 1.1; x1 += 1.1; z0 -= 1.1; z1 += 1.1;
+  for (let i = 0; i < ps.n; i++) {
+    const x = ps.x[i], z = ps.z[i];
+    if (x < x0 || x > x1 || z < z0 || z > z1) continue;
+    for (let k = 1; k < BAS_N; k++) {
+      const dx = x - s.bx[k], dz = z - s.bz[k], r = BA_R[k] * 0.85;
+      if (dx * dx + dz * dz > r * r) continue;
+      const p = g.fx.p, y = 0.35 + s.by[k];
+      OPT_TICK.rot = rnd(0, TAU);
+      p.emit(x, y, z, 0, 0, 0, 0.1, 1.3, 0.5, TICK_A, TICK_B, F.FLARE, 0, OPT_TICK);   // a white-hot glint
+      for (let n = 0; n < 2; n++) {
+        const a = rnd(0, TAU), v = rnd(6, 10);
+        p.emit(x, y, z, Math.cos(a) * v, 0, Math.sin(a) * v - 2, rnd(0.1, 0.18), 0.16, 0.05, TICK_A, TICK_B, F.STREAK, 0, OPT_TICKS);
+      }
+      s.tick = TICK_GAP;
+      return;
+    }
+  }
 }
 // the petrifying gaze: rest → track (a dim line of sparks follows the jet) → lock (the line holds and burns
 // bright: the telegraph) → fire (a stream of needles down the locked line, flanking needles either side) →

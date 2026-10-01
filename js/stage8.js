@@ -374,17 +374,27 @@ function fragAI(a, sp) {
 // never more than a fifth of its slow speed). Then it collapses: a ring of orbs appears on the horizon, falls in,
 // crosses in the middle and flies out the far side. shoot() never places an orb within reach of the jet, so the ring
 // always has a gap where the jet is.
-const MN_ARM = 0.95, MN_R = 3.6, MN_PULL = 1.3, MN_PULL_R = 7.5;
-function mineAI(vx, vz, fuse = 5, near = 5.5) {
+// A thrown mine (tx given: OMEGA casts them) glides out to (tx, tz) instead, slowing as it gets there (never faster
+// than MN_THROW), and arms once it has settled — or at its fuse; it then holds still (vx, vz are 0).
+const MN_ARM = 0.95, MN_R = 3.6, MN_PULL = 1.3, MN_PULL_R = 7.5, MN_THROW = 7;
+function mineAI(vx, vz, fuse = 5, near = 5.5, tx = null, tz = 0) {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, p = g.player, v = g.view;
     if (s.mode === undefined) { s.mode = 'drift'; s.mt = 0; s.on = 0; s.fixedYaw = true; s.yaw = 0; if (ud.setArm) ud.setArm(0); }
     s.mt += dt;
     if (s.mode === 'drift') {
-      e.x += vx * dt; e.z += vz * dt;
+      let ready;
+      if (tx === null) {
+        e.x += vx * dt; e.z += vz * dt;
+        const dx = p.x - e.x, dz = p.z - e.z;
+        ready = jetFree(g) && dx * dx + dz * dz < near * near;
+      } else {
+        const dx = tx - e.x, dz = tz - e.z, d = Math.hypot(dx, dz);
+        if (d > 1e-3) { const f = Math.min(1, (Math.min(MN_THROW, 0.5 + d * 2.2) * dt) / d); e.x += dx * f; e.z += dz * f; }
+        ready = d < 0.3;
+      }
       if (v.onScreen(e.x, e.z, -1)) s.on += dt;
-      const dx = p.x - e.x, dz = p.z - e.z;
-      if (s.on > 0.6 && (s.on > fuse || (jetFree(g) && dx * dx + dz * dz < near * near))) {
+      if (s.on > 0.6 && (s.on > fuse || ready)) {
         s.mode = 'arm'; s.mt = 0; s.n = g.diff.level >= 2 ? 14 : 12; s.a0 = rnd(0, TAU);
         g.audio.play('lock', { vol: 0.35, pitch: -8 });
         // the horizon: a faint ring, and a mote on every spot an orb will appear
@@ -625,8 +635,8 @@ function spawnSentinel(g) {
 //    tracks the jet (a faint beam), locks (the beam flares: the telegraph) and fires a needle stream down the line;
 //    the halo's twelve nodes shed orbs as it turns (a slow galaxy)
 //    → p3 once the eyes are gone (or after 42 s): the cage opens on the star — stellar wind (four curling arms),
-//    supernovas (two rings at once, a flower), starfall (aimed needle fans), breathers; below 60 % it casts
-//    singularity mines out at the jet's flanks
+//    supernovas (two rings at once, a flower), starfall (aimed needle fans), breathers; below 60 % it throws
+//    singularity mines out to the jet's flanks, where they settle, arm and implode
 //    → p4 when the star dies: the field is wiped, the lights turn crimson and the singularity comes out of the cinder.
 //    It pulls at the jet (gently: never more than a seventh of its slow speed); the event horizon — motes on a great
 //    circle round it, then orbs there falling in, crossing and flying out — alternates with Hawking radiation (rings of
@@ -646,6 +656,19 @@ function omegaHull(e, s) {
     d = live(s.py[0]) || live(s.py[1]) ? OMEGA_PLATE : s.unf > 0.5 ? OMEGA_HALO : OMEGA_HALO_F;
   }
   if (e.def !== d) e.def = d;
+}
+/** OMEGA's singularity mines: a pair thrown from the star (cx, cz) out to the jet's flanks — 3.4 to each side and 3.2
+ *  above it, inside the screen (one the edge pushes in toward the jet settles higher, clear of it) */
+function omegaMines(g, cx, cz) {
+  const p = g.player, v = g.view;
+  for (let sx = -1; sx <= 1; sx += 2) {
+    let tz = clamp(p.z - 3.2, cz + 5, v.zBottom - 4);
+    const hw = v.hw(tz) - 2.4, tx = clamp(p.x + sx * 3.4, -hw, hw);
+    if (Math.abs(tx - p.x) < 2.6) tz = Math.max(cz + 5, tz - 1.6);
+    g.spawn('s8_mine', { x: cx + sx * 0.8, z: cz + 0.6, ai: mineAI(0, 0, 3.6, 0, tx, tz) });
+  }
+  g.fx.p.emit(cx, 0.4, cz, 0, 0, 0, 0.3, 0.5, 3.2, LENS_A, LENS_B, F.FLARE, 0, NO_DRAG);
+  g.audio.play('missile', { vol: 0.5, pitch: -8 });
 }
 /** the yaw a part must turn to (in the unit's yawed frame) to face the jet */
 function partAim(g, e, pt) { return wrapA(Math.atan2(-(g.player.x - pt.x), -(g.player.z - pt.z)) - e.yaw); }
@@ -719,7 +742,7 @@ function omegaAI() {
       for (const pt of s.eye) if (pt && !pt.obj.userData.destroyed) { pt.obj.userData.setOpen(smooth((s.unf - 0.3) / 0.7)); if (s.unf > 0.6) pt.dead = false; }
     }
     if (s.mode === 'p2' && s.unf >= 1 && (!nEye || s.ph > OM_P2)) {
-      s.mode = 'p3'; s.ph = 0; s.cyc = 0; s.mineT = 5;
+      s.mode = 'p3'; s.ph = 0; s.cyc = 0;
       g.shake.add(0.6); g.ui.flash(0.35); g.audio.play('explodeL'); g.audio.play('warning', { vol: 0.5 });
       for (let k = 0; k < 3; k++) { const pt = s.eye[k]; if (pt) pt.obj.userData.setBeam(0); }
     }
@@ -867,14 +890,11 @@ function omegaAI() {
       } else if (cyc > 9.2 && cyc < 10.6) {     // starfall: aimed needle fans
         if (s.ct <= 0) { s.ct = 0.55 / fr; g.fan(cx, cz, g.aim(cx, cz), hard ? 9 : 7, 0.95, 8.2, g.BK.NEEDLE); }
       }
-      // below 60 %: singularity mines cast out at the jet's flanks
+      // below 60 %: singularity mines thrown out to the jet's flanks as the starfall ends, so they settle and arm in the
+      // lull and implode into the next stellar wind (later loops: a second pair between the wind and the supernovas)
       if (s.core.hp < s.core.maxHp * 0.6) {
-        s.mineT -= dt;
-        if (s.mineT <= 0 && countType(g, 's8_mine') < 4) {
-          s.mineT = 7.5 / fr;
-          for (const sx of [-1, 1]) g.spawn('s8_mine', { x: cx + sx * 1.2, z: cz, ai: mineAI(sx * 2.8, 1.4, 2.6, 5) });
-          g.audio.play('missile', { vol: 0.5, pitch: -8 });
-        }
+        const slot = cyc > 10.7 ? 2 : hard && cyc > 4.3 ? 1 : 0, key = Math.floor(s.cyc / 12) * 3 + slot;
+        if (slot && s.mineK !== key && countType(g, 's8_mine') < (hard ? 4 : 2)) { s.mineK = key; omegaMines(g, cx, cz); }
       }
       return;
     }

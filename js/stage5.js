@@ -708,6 +708,7 @@ const SE_TEMPO = 0.7;                  // leftover guns' rate in p2 (p3: 0.5)
 // hardest of 4–6); the horn that fires next glows at its barrels for the last HORN_TELL s (and clicks as it
 // starts to charge)
 const HORN_GAP = 3.2, HORN_TELL = 0.5, CRES_N = 7, CRES_W = 0.58;
+const SE_REACH = 17;                   // the station's furthest reach up-screen of the jet's lowest row (see seleneAI)
 function seleneAI() {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, v = g.view;
@@ -721,8 +722,11 @@ function seleneAI() {
       s.sealed = [s.bay[0], s.bay[1], s.mir, s.core];
       for (const pt of s.sealed) if (pt) pt.dead = true;          // sealed: out of the hit list (the HP bar still counts them)
       e.def = SELENE_DOMED; e.invuln = true; e.armored = true;
-      // station: the crescent's back (≈ 7.4 up-screen of the unit on the plane) stays below the boss bar
-      const zs = Math.max(v.zTop + 10.5, zAtRow(v, BAR_ROW) + 7.8);
+      // station: the crescent's back (≈ 7.4 up-screen of the unit on the plane) stays below the boss bar, and
+      // the fortress stands no further than SE_REACH up-screen of the jet's lowest row. On a desktop view the
+      // bar sets it (≈ 16.9 up); on a phone held upright the plane is a quarter deeper and the bar alone stood
+      // it ~3.6 further off, so its volleys had that much longer to open out before they reached the jet
+      const zs = Math.max(v.zTop + 10.5, zAtRow(v, BAR_ROW) + 7.8, (v.zPlayerMax ?? v.zBottom - 1.3) - SE_REACH);
       s.stationGz = v.pToGz(zs); s.fromGz = v.gTop - 12;
       e.gx = 0;
       if (ud.reset) ud.reset();

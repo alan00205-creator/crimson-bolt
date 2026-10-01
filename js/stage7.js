@@ -39,8 +39,8 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 export const ENEMY = {
   // swarm drones come by the dozen (flocks, streams, broods): no revenge shots, no distance HP growth
   s7_swarmer: { hp: 3, score: 250, radius: 0.7, air: true, explode: 0.8, debris: 4, medal: 0.15, noRevenge: true, noHpSeg: true, prewarm: 32 },
-  s7_stinger: { hp: 22, score: 1100, radius: 0.95, air: true, explode: 1.3, debris: 9, medal: 0.5, prewarm: 6 },
-  s7_crystal: { hp: 150, score: 5000, radius: 1.6, air: true, explode: 2.3, debris: 16, medal: 2, prewarm: 3 },
+  s7_stinger: { hp: 30, score: 1100, radius: 0.95, air: true, explode: 1.3, debris: 9, medal: 0.5, prewarm: 6 },
+  s7_crystal: { hp: 150, score: 5000, radius: 1.6, air: true, explode: 2.3, debris: 16, medal: 2, prewarm: 4 },
   s7_gate: { hp: 110, score: 6000, radius: 1.9, air: true, explode: 2.4, debris: 18, medal: 2, noRevenge: true, prewarm: 3 },
   // mid-boss: the wings (their spore glands) and the maw, then the heart (armoured under its lid until both wings
   // are gone or 16 s have passed; the maw in front of it shields it too). The body is armour and never a target
@@ -180,27 +180,31 @@ function sporeBurst(g, x, z, n, sp = 1) {
 // --------------------------------------------------------------------------------
 // swarm drones
 // --------------------------------------------------------------------------------
-// Flock: n drones swirl round a centre that drops into the upper screen (zf of the height) and sways across;
-// after `hold` s they peel off one by one (k·0.26 s apart) and dive at the jet in a straight line (the sac
-// flares as each one breaks: the tell), every other one firing an aimed orb as it goes.
-function flockAI(cx, zf, k, n, dir = 1, hold = 2.6, R = 2.0) {
+// Flock: n drones swirl round a centre that drops into the upper screen (zf of the height) and sways across.
+// Each drone spits one aimed orb as it swirls into view (its sac flickers: a rippling volley from the ring, so a
+// flock bites even when a strong jet burns it down at once); after `hold` s they peel off one by one (k·0.22 s
+// apart) and dive at the jet in a straight line (the sac flares as each one breaks: the tell), every third one
+// firing another aimed orb as it goes.
+function flockAI(cx, zf, k, n, dir = 1, hold = 2.0, R = 2.0) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (s.mode === undefined) {
       s.mode = 'swirl'; s.z0 = v.zTop - 3; s.cz = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + R);
-      s.a0 = (k / n) * TAU; s.brk = hold + k * 0.26; s.ph = rnd(0, TAU); s.dx = 0; s.dz = 1; s.dt = 0;
+      s.a0 = (k / n) * TAU; s.brk = hold + k * 0.22; s.ph = rnd(0, TAU); s.dx = 0; s.dz = 1; s.dt = 0; s.spat = false; s.rg = 0;
       if (ud.setRage) ud.setRage(0);
     }
     if (s.mode === 'swirl') {
       const u = ease(e.t / 2.0), ccx = cx + dir * Math.sin(e.t * 0.55) * 2.2 * u, ccz = s.z0 + (s.cz - s.z0) * u;
       const a = s.a0 + e.t * 2.1 * dir, r = R * (0.6 + 0.4 * u) * (0.85 + 0.15 * Math.sin(e.t * 3.3 + s.ph));
       e.x = ccx + Math.cos(a) * r; e.z = ccz + Math.sin(a) * r * 0.75;
+      if (!s.spat && e.t > 0.3 + (k % 3) * 0.08 && g.canFire(e)) { s.spat = true; s.rg = 0.8; g.shoot(e.x, e.z, g.aim(e.x, e.z), 6.4); }
+      if (s.rg > 0) { s.rg = Math.max(0, s.rg - dt * 3); if (ud.setRage) ud.setRage(s.rg); }
       if (e.t > s.brk) {
         s.mode = 'dive';
         const p = g.player, dx = p.x - e.x, dz = Math.max(3, p.z - e.z), l = Math.hypot(dx, dz);
         s.dx = dx / l; s.dz = dz / l;                   // never up the screen
         if (ud.setRage) ud.setRage(1);
-        if (k % 2 === 0 && g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.2);
+        if (k % 3 === 0 && g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 7.2);
       }
     } else {
       s.dt += dt;
@@ -257,7 +261,8 @@ function brood(g, src, x, z, a0, n, fan = 0.5, gap = 0.2) {
 // Swings in from the top to a perch in the upper screen, turned to face the jet. Then, `strikes` times: it curls
 // its tail up over its back (0.6 s: the venom bulb blazes and it hisses — the tell), strikes (two venom pincers
 // 0.15 s apart from the sting, each pair bowing in to cross where the jet was), recoils and hops to a new perch
-// nearer the jet's column. Then it flies off.
+// nearer the jet's column. Then it flies off. The first curl comes during the last 0.45 s of the swoop in, so
+// the first strike lands as it settles on its perch.
 function stingAI(x0, strikes = 3, zf = 0.24) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData, p = g.player;
@@ -274,7 +279,11 @@ function stingAI(x0, strikes = 3, zf = 0.24) {
       const dur = s.mode === 'in' ? 1.2 : 0.5, u = clamp(s.mt / dur, 0, 1), k = s.mode === 'in' ? ease(u) : smooth(u);
       e.x = s.sx + (s.tx - s.sx) * k; e.z = s.sz + (s.tz - s.sz) * k;
       if (s.mode === 'hop' && Math.random() < 0.6) bioPuff(g, e.x, e.z - 0.6, s.sx > s.tx ? 1 : -1, -0.6, 0.3);
-      if (u >= 1) { s.mode = 'curl'; s.mt = 0; g.audio.play('lock', { vol: 0.3, pitch: 9 }); }
+      if (s.mode === 'in') {                    // the first tell, while it glides in
+        if (!s.hiss && s.mt > 0.75) { s.hiss = true; g.audio.play('lock', { vol: 0.3, pitch: 9 }); }
+        if (ud.setCurl) ud.setCurl((s.mt - 0.75) / 0.42);
+        if (u >= 1) { s.mode = 'strike'; s.mt = 0; s.q = 0; }
+      } else if (u >= 1) { s.mode = 'curl'; s.mt = 0; g.audio.play('lock', { vol: 0.3, pitch: 9 }); }
     } else if (s.mode === 'curl') {              // the tell: the tail rises over the back, the bulb blazes
       e.x = s.tx + Math.sin(s.mt * 40) * 0.02;
       if (ud.setCurl) ud.setCurl(Math.min(1, s.mt / 0.55));
@@ -312,8 +321,8 @@ function stingAI(x0, strikes = 3, zf = 0.24) {
 // Noses down into the upper screen, holds there drifting for `stay` s, then climbs away. Its spines store light —
 // over time, and from every hit it takes (60 % of its hull in damage fills them) — and blaze brighter as they
 // fill; at 85 % it rings a warning, full it discharges: three needles down the line of every spine (a starburst of
-// needle lines) and an aimed fan of big orbs from the crown, then the spines are dark again. Now and then the
-// crown fires an aimed needle pair.
+// needle lines) and an aimed fan of big orbs from the crown, then the spines are dark again. From the moment it
+// noses into view the crown fires an aimed needle pair every 2.2 s.
 function crystalAI(x0, zf = 0.22, stay = 10) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
@@ -347,7 +356,7 @@ function crystalAI(x0, zf = 0.22, stay = 10) {
       g.fx.p.emit(e.x, 0.4, e.z, 0, 0, 0, 0.25, 1.4, 4.5, XT_A, XT_B, F.GLOW, 0, NO_DRAG);
       g.audio.play('hitArmor', { vol: 0.8 }); g.audio.play('explodeS', { vol: 0.6, pitch: 6 });
     }
-    if (e.t > 3 && e.t < 3 + stay && fireTimerS(s, 'nt', dt, g, 2.2, 1.4) && g.canFire(e)) {
+    if (e.t > 1.7 && e.t < 3 + stay && fireTimerS(s, 'nt', dt, g, 2.2, 0.15) && g.canFire(e)) {
       const m = g.muzzlePos(e.mesh, 6), mx = m.x, mz = m.z, a = g.aim(mx, mz);
       g.shoot(mx, mz, a - 0.06, 8.6, g.BK.NEEDLE); g.shoot(mx, mz, a + 0.06, 8.6, g.BK.NEEDLE);
     }
@@ -591,7 +600,8 @@ function spawnLeviathan(g) {
 //     bays open in turn (the iris shrinks back and the mouth blazes: the tell) and fling out three drones each;
 //     the prow drops a swaying curtain of big orbs → p2 once the cannons and bays are gone (or after 44 s): the crystal
 //     spires grow out of their sockets — the side spires fire double rings (an inner ring and a faster outer ring
-//     half a step round: a lattice), the lance spire tracks the jet, locks (its beam flares: the telegraph) and fires
+//     half a step round: a lattice, at times laid on the jet) and refract needle lines that converge on the jet,
+//     the lance spire tracks the jet, locks (its beam flares: the telegraph; a lattice comes with it) and fires
 //     a stream of needles down the lane with two refracted side streams → p3 once the spires are gone (or after
 //     40 s): the ribs open on the brood-heart — galaxy spirals (three arms of orbs that curl as they fly),
 //     breathing rings, a breather with an aimed fan; low on HP it flings broods and homing mines.
@@ -696,7 +706,7 @@ function nemesisAI() {
       const t = live(s.sp[i]);
       if (!t) continue;
       t.fireT -= dt * late;
-      if (t.fireT <= 0) { t.fireT = (3.3 + i * 0.35) / fr; t.burst = 2; t.bt = 0; }
+      if (t.fireT <= 0) { t.fireT = (2.5 + i * 0.3) / fr; t.burst = 2; t.bt = 0; }
       if (t.burst > 0) {
         t.bt -= dt;
         if (t.bt <= 0) {
@@ -730,18 +740,29 @@ function nemesisAI() {
       // the prow: a curtain of big orbs straight down the screen, swept slowly to and fro — not aimed (the
       // cannons' pincers keep the jet moving; a fan that tracked it too would corner it)
       s.pfT = (s.pfT ?? 3.4) - dt;
-      if (s.pfT <= 0) { s.pfT = 5.4 / fr; const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, Math.sin(s.pt * 0.9) * 0.3, 6, 1.25, 5.6, g.BK.BIG); }
+      if (s.pfT <= 0) { s.pfT = 4.4 / fr; const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, Math.sin(s.pt * 0.9) * 0.3, 6, 1.25, 5.6, g.BK.BIG); }
       return;
     }
     const spMul = s.mode === 'p2' ? 1 : 0.6;
-    // side spires, in turn: a double ring — an inner ring and a faster outer ring half a step round (a lattice)
+    // p1 guns still standing (the 44 s timeout) slow the spires down: their fire is already on top of it
+    const held = 1 + 0.1 * outer;
+    // side spires, in turn: a double ring — an inner ring and a faster outer ring half a step round (a lattice);
+    // two volleys in four (one from each spire) the inner ring is laid on the jet, so a lattice line runs down its
+    // column. With every ring the spire's facets refract a burst at the jet: three needle lines from across its
+    // face, converging where the jet is. When the lance locks, the next ring comes at once: a lattice to thread
+    // on the way out of the lane
     if ((pL || pR) && s.grow >= 1) {
       s.prT = (s.prT ?? 1.0) - dt * spMul;
       if (s.prT <= 0) {
-        s.prT = 2.3 / fr; s.bk ^= 1;
+        s.prT = (2.1 / fr) * held; s.bk ^= 1; s.vq = (s.vq || 0) + 1;
         const pt = (s.bk ? pL : pR) || pL || pR, m = g.muzzlePos(pt.obj), mx = m.x, mz = m.z, n = hard ? 14 : 12;
-        s.b += 0.37;
+        const a = g.aim(mx, mz), ca = Math.cos(a), sa = Math.sin(a);
+        s.b = s.vq & 2 ? a : s.b + 0.37;
         g.ring(mx, mz, n, 3.9, s.b); g.ring(mx, mz, n, 5.3, s.b + Math.PI / n);
+        for (let q = -1; q <= 1; q++) {
+          const fx = mx + ca * q * 1.3, fz = mz - sa * q * 1.3, fa = g.aim(fx, fz);
+          g.shoot(fx, fz, fa, 8.0, g.BK.NEEDLE); g.shoot(fx, fz, fa, 6.9, g.BK.NEEDLE);
+        }
         g.fx.p.emit(mx, 0.5, mz, 0, 0, 0, 0.25, 0.8, 3.0, XT_A, XT_B, F.GLOW, 0, NO_DRAG);
         g.audio.play('hitArmor', { vol: 0.4, pitch: 5 });
       }
@@ -752,7 +773,7 @@ function nemesisAI() {
       if (s.lance === 'idle') {                                // lt: the countdown to the next lock
         s.lt -= dt * spMul;
         lu.setBeam(0.22); lu.setCharge(0.1);
-        if (s.lt <= 0) { s.lance = 'lock'; s.lt = 0; g.audio.play('lock', { vol: 0.5, pitch: -3 }); }
+        if (s.lt <= 0) { s.lance = 'lock'; s.lt = 0; g.audio.play('lock', { vol: 0.5, pitch: -3 }); if (s.prT > 0.35) s.prT = 0.35; }
       } else if (s.lance === 'lock') {                         // lt: time in the state
         s.lt += dt;
         const k = Math.min(1, s.lt / 1.0);
@@ -769,7 +790,7 @@ function nemesisAI() {
           const m = g.muzzlePos(lo), mx = m.x, mz = m.z;
           g.shoot(mx, mz, ang - 0.48, 9.5, g.BK.NEEDLE); g.shoot(mx, mz, ang + 0.48, 9.5, g.BK.NEEDLE);
         }
-        if (s.lt > 0.75) { s.lance = 'idle'; s.lt = (s.mode === 'p2' ? 2.2 : 3.2) / fr; }
+        if (s.lt > 0.75) { s.lance = 'idle'; s.lt = (s.mode === 'p2' ? 1.6 * held : 3.2) / fr; }
       }
     } else if (lu && !pC) { lu.setBeam(0); lu.setCharge(0); }
     if (s.mode !== 'p3' || !core || s.open < 0.85) return;
@@ -924,7 +945,7 @@ function spawnNemesis(g) {
 // --------------------------------------------------------------------------------
 const W7 = {
   // a flock of n drones over cx (dir: its swirl), breaking to dive after `hold` s
-  flock(g, cx = 0, n = 7, zf = 0.24, dir = 1, hold = 2.6, R = 2.0) {
+  flock(g, cx = 0, n = 7, zf = 0.24, dir = 1, hold = 2.0, R = 2.0) {
     for (let k = 0; k < n; k++) g.spawn('s7_swarmer', { x: cx, z: -60, ai: flockAI(cx, zf, k, n, dir, hold, R) });
   },
   // a stream of n drones pouring in from `side` (+1: the right)
@@ -945,7 +966,7 @@ const TIMELINE = makeTimeline((at) => {
   at(56, (g) => W.carrier(g, 2, ['P']));
   at(70, (g) => W7.stingers(g, [-4, 4], 0.9));
   at(92, (g) => { W7.flock(g, 3, 8, 0.24, 1); g.later(1.4, () => W7.stream(g, -1, 6)); });
-  at(112, (g) => { W7.crystal(g, 0, ['S'], 9); g.later(3, () => W7.flock(g, -4, 6, 0.3, 1, 2.2)); });
+  at(112, (g) => { W7.crystal(g, 0, ['S'], 9); g.later(3, () => W7.flock(g, -4, 6, 0.3, 1, 1.7)); });
   at(136, (g) => { W7.stream(g, 1, 8); g.later(2.2, () => W7.stinger(g, -3)); });
   at(154, (g) => W7.stingers(g, [-5, 0, 5], 0.8));
   at(174, (g) => { W7.gate(g, -3.5, 8); g.later(2.4, () => W7.flock(g, 3.5, 6, 0.2)); });
@@ -954,7 +975,7 @@ const TIMELINE = makeTimeline((at) => {
   at(234, (g) => { W7.crystal(g, -4, ['P'], 9); g.later(2.2, () => W7.stinger(g, 4.5, 3)); });
   at(258, (g) => { W7.stream(g, 1, 8); g.later(1.6, () => W7.stream(g, -1, 8, 0.24, 0.2)); });
   at(280, (g) => { W7.gate(g, 4, 9); g.later(3.2, () => W7.stingers(g, [-5, -1.5], 0.6)); });
-  at(306, (g) => { W7.flock(g, 0, 10, 0.22, -1, 2.8, 2.6); g.later(2.4, () => W7.stream(g, -1, 7)); });
+  at(306, (g) => { W7.flock(g, 0, 10, 0.22, -1, 2.2, 2.6); g.later(2.4, () => W7.stream(g, -1, 7)); });
   at(326, (g) => { W7.crystal(g, -4.5, ['S'], 8); W7.crystal(g, 4.5, null, 8, 0.28); });
   // (rest beat)
   at(356, (g) => W.carrier(g, 0, ['P']));
@@ -964,7 +985,7 @@ const TIMELINE = makeTimeline((at) => {
   at(426, (g) => { W7.gate(g, -4, 9); g.later(1.2, () => W7.crystal(g, 4, ['P'], 9)); });
   at(452, (g) => { W7.stingers(g, [5, 0, -5], 0.7); g.later(2.4, () => W7.flock(g, 0, 8, 0.24)); });
   at(476, (g) => { W7.stream(g, -1, 9); g.later(1.4, () => W7.stream(g, 1, 9, 0.24, 0.22)); });
-  at(496, (g) => { W7.crystal(g, -3.5, null, 9); W7.crystal(g, 3.5, ['S'], 9, 0.28); g.later(3, () => W7.flock(g, 0, 6, 0.36, 1, 2.2)); });
+  at(496, (g) => { W7.crystal(g, -3.5, null, 9); W7.crystal(g, 3.5, ['S'], 9, 0.28); g.later(3, () => W7.flock(g, 0, 6, 0.36, 1, 1.7)); });
   at(522, (g) => { W7.gate(g, -5, 8); g.later(1.6, () => W7.gate(g, 5, 8, 0.3)); });
   at(546, (g) => { W.carrier(g, 0, ['P']); g.later(1.4, () => W7.stream(g, 1, 7)); });
   at(558, (g) => W7.stingers(g, [-6, -2, 2, 6], 0.55));
@@ -977,7 +998,7 @@ const TIMELINE = makeTimeline((at) => {
   at(714, (g) => { W7.stingers(g, [-6, 6, -2.5, 2.5], 0.5); g.later(2.8, () => W7.flock(g, 0, 8, 0.24)); });
   at(742, (g) => { W7.gate(g, -4.5, 8); g.later(1.4, () => W7.gate(g, 4.5, 8, 0.32)); });
   at(768, (g) => { W.carrier(g, 2, ['P']); g.later(1.5, () => W7.stream(g, -1, 8)); });
-  at(786, (g) => W7.flock(g, 0, 9, 0.22, 1, 2.8, 2.4));
+  at(786, (g) => W7.flock(g, 0, 9, 0.22, 1, 2.2, 2.4));
   // DUST LANES ─────────────────────────────────────────
   at(806, (g) => { W7.crystal(g, 0, ['S'], 10); g.later(1.8, () => { W7.flock(g, -4.5, 6, 0.3, 1); W7.flock(g, 4.5, 6, 0.3, -1); }); });
   at(832, (g) => W7.stingers(g, [-6, -3, 0, 3, 6], 0.5));
@@ -1008,4 +1029,5 @@ export const STAGE = {
   // the swarm thickens among the star clusters and in the dust lanes
   hpSeg: (d) => (d < 420 ? 1 : d < 800 ? 1.15 : 1.3),
   scroll: 7, warnScroll: 3, bossScroll: 2.2,
+  bulletRim: 1,   // hard dark bullet rims: the galactic core's golden bulge and NEMESIS's crystal spires are bright
 };

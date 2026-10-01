@@ -139,6 +139,9 @@ const TRAIL_COL = [2.6, 1.1, 0.35]; // engine exhaust sprite colour when the mod
 // shield upgrade: the charge's bubble (ring radius around the jet, HDR colour) and what a break does
 const SHIELD_R = 1.2, SHIELD_COL = [0.36, 0.95, 1.35];
 const SHIELD_INVULN = 1.5, SHIELD_CLEAR_R = 3.6;
+// score popups (popupAt): how far below the HUD's lowest row a popup's anchor must sit (CSS px:
+// ui.popup's 26 px rise + half a 17 px line + a 2 px gap), and the row step of popups held there
+const POP_CLEAR = 38, POP_STEP = 24;
 // debris fallbacks for models without userData.debrisColor
 const DEATH_DEBRIS = new THREE.Color(0.9, 0.15, 0.18);
 const PART_DEBRIS = new THREE.Color(0.4, 0.4, 0.45);
@@ -179,6 +182,8 @@ export class Game {
     this.tmpA = { x: 0, z: 0, s: 1 };
     this.tmpV = new THREE.Vector3();
     this.tmpS = { x: 0, y: 0 };
+    this.hudRows = { w: 0, h: 0, strip: -1, bar: -1 };   // hudFloor's DOM reads, per view size
+    this.popLow = { t: -9, x: 0, n: 0 };                // the last popup held under the HUD (popupAt)
     this.targets = [];
     for (let i = 0; i < 64; i++) this.targets.push({ x: 0, z: 0, r: 0, e: null, part: null, armored: false, uid: 0 });
     this.nTargets = 0;
@@ -541,7 +546,7 @@ export class Game {
     this.world.update(dt, 5.5);
     const p = this.player;
     p.x = Math.sin(t * 0.45) * 2.4;
-    const row = this.view.screenToPlane(this.view.w / 2, this.view.h * 0.84, { x: 0, z: 0 }).z;
+    const row = this.view.screenToPlane(this.view.w / 2, this.view.h * 0.84, this.tmpA).z;
     p.z = row + Math.sin(t * 0.7) * 0.8;
     const bank = Math.cos(t * 0.45) * 0.45;
     p.bank = lerp(p.bank, bank, 0.1);
@@ -1199,9 +1204,38 @@ export class Game {
     if (n && !quiet) { this.audio.play('oneup'); this.onEvent('extend'); }
     return n;
   }
+  // Score / pickup popups. One projected above the HUD's top strip (score, HI-SCORE + CR, the
+  // pause button) — or the boss bar while it shows — is held just under it, its rise included, so
+  // it never prints over them; another held there within 0.3 s steps a row down instead of
+  // stacking up into the strip (medals merge into one counter in ui.popup, so they don't step).
   popupAt(x, z, text, cls) {
     const s = this.view.toScreen(x, 0, z, this.tmpS);
+    const top = this.hudFloor() + POP_CLEAR;
+    if (s.y < top) {
+      const q = this.popLow, dt = this.time - q.t;
+      if (cls !== 'medal') {
+        q.n = dt >= 0 && dt < 0.3 && Math.abs(q.x - s.x) < POP_STEP ? Math.min(q.n + 1, 3) : 0;
+        q.t = this.time; q.x = s.x;
+      }
+      s.y = top + POP_STEP * (cls !== 'medal' ? q.n : 0);
+    }
     this.ui.popup(text, s.x, s.y, cls);
+  }
+  // The lowest CSS-px row of the HUD's top strip, or of the boss bar while it shows (popupAt). Read
+  // from the DOM once per view size (and when the boss bar first shows), never per frame; 0 while
+  // there is no HUD on screen.
+  hudFloor() {
+    const el = this.ui && this.ui.el, hud = el && el.hud;
+    if (!hud || hud.hidden || !hud.getBoundingClientRect) return 0;
+    const c = this.hudRows, v = this.view;
+    if (c.w !== v.w || c.h !== v.h) { c.w = v.w; c.h = v.h; c.strip = -1; c.bar = -1; }
+    const bar = !!el.bossbar && !el.bossbar.hidden;
+    if (c.strip < 0 || (bar && c.bar < 0)) {
+      const y0 = hud.getBoundingClientRect().top, strip = hud.querySelector('.hud-top');
+      c.strip = strip ? Math.max(0, strip.getBoundingClientRect().bottom - y0) : 0;
+      if (bar) c.bar = Math.max(0, el.bossbar.getBoundingClientRect().bottom - y0);
+    }
+    return bar && c.bar > c.strip ? c.bar : c.strip;
   }
   haptic(pattern) {
     if (!this.settings.haptics) return;

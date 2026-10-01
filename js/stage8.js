@@ -35,15 +35,18 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 // Enemy definitions (see the field list at the top of stage.js).
 export const ENEMY = {
   s8_wraith: { hp: 9, score: 600, radius: 0.85, air: true, explode: 1.0, debris: 6, medal: 0.35, prewarm: 12 },
-  // the warped space sends four or three while the last ones still hover (d 862, 1134): 5 alive at loop 2
+  // pools: prewarm ≥ 1 + the most of each the timeline puts up at once (a jet that never fires: nothing dies early;
+  // the splits: the most seen while fractals are shot down). Watchers: four or three sent while the last ones still hover (d 862, 1134) make 5
   s8_watcher: { hp: 90, score: 3000, radius: 1.3, air: true, explode: 1.9, debris: 12, medal: 2, prewarm: 6 },
   // a fractal construct splits when it dies (its AI plays the split, see fractalAI): three sizes, one model; the
-  // splits are the answer to a kill, so none of them fires revenge shots
-  s8_fractal: { hp: 60, score: 2000, radius: 1.35, air: true, explode: 1.8, debris: 10, medal: 1, noRevenge: true, prewarm: 5 },
+  // splits are the answer to a kill, so none of them fires revenge shots (constructs: three at d 1080 while the
+  // pair from d 990 still hold, 5)
+  s8_fractal: { hp: 60, score: 2000, radius: 1.35, air: true, explode: 1.8, debris: 10, medal: 1, noRevenge: true, prewarm: 6 },
   s8_frag: { hp: 7, score: 400, radius: 0.75, air: true, explode: 1.1, debris: 5, medal: 0.3, noRevenge: true, model: 's8_fractal', prewarm: 9 },
   s8_shard: { hp: 1.5, score: 100, radius: 0.45, air: true, explode: 0.6, debris: 3, medal: 0.12, noRevenge: true, noHpSeg: true, model: 's8_fractal', prewarm: 18 },
-  // a mine that is shot pops (no revenge: it would fire from where the implosion would have been)
-  s8_mine: { hp: 8, score: 350, radius: 0.75, air: true, explode: 0.9, debris: 4, medal: 0.25, noRevenge: true, prewarm: 12 },
+  // a mine that is shot pops (no revenge: it would fire from where the implosion would have been); the sweep of three
+  // from d 892 and the two of five at d 918 make 13 when none is shot
+  s8_mine: { hp: 8, score: 350, radius: 0.75, air: true, explode: 0.9, debris: 4, medal: 0.25, noRevenge: true, prewarm: 14 },
   // mid-boss: the two shields and the halo, then the eye (armoured under its iris until both shields are gone or 16 s
   // have passed; a shut shield in front of it takes the shots). The body is armour and never a target
   // (bodyTarget: false), so shots, locks and missiles go for the parts; hp is only a backstop. keepOff holds the jet

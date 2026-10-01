@@ -23,8 +23,9 @@
 //   never accumulates dead nodes.
 // * Mix: every SFX has a level in the SFX table, calibrated against the music at the game's
 //   default volumes AND the per-call vol js/game.js passes (hit 0.35, graze 0.4, …): weapons
-//   ~10 dB under the music, pickups at music level, explosions +2…+7 dB, bomb/death/boss
-//   kill as loud as the limiter allows. Checked on a phone-speaker proxy too (explosions
+//   ~10 dB under the music, pickups at music level, explosions +2.5…+8 dB (a dB up on the
+//   first calibration, for the denser battle themes), bomb/death/boss kill as loud as the
+//   limiter allows. Checked on a phone-speaker proxy too (explosions
 //   carry a mid-band punch layer; the kick a "knock").
 // * 'laser' and 'plasma' are sustained voices: the game calls play('laser') every frame, and
 //   every call within 0.09 s keeps the same voice alive (no new nodes), so it is one steady beam.
@@ -1712,9 +1713,9 @@ const SFX = {
   missile:    { gap: 0.06,  max: 4, pri: 2, lv: 6, bake: [1, 0.6], jit: 0.75 },
   hit:        { gap: 0.045, max: 4, pri: 1, lv: 10.5, bake: [2, 0.1], jit: 1, streak: [3, 0.1] },
   hitArmor:   { gap: 0.08,  max: 2, pri: 2, lv: 11, bake: [1, 0.3], jit: 0.75, streak: [2, 0.2] },
-  explodeS:   { gap: 0.025, max: 6, pri: 3, lv: 0, verb: 1, bake: [2, 1.1], jit: 1.5 },
-  explodeM:   { gap: 0.04,  max: 5, pri: 4, lv: 1, verb: 1, bake: [1, 2.2], jit: 1.25 },
-  explodeL:   { gap: 0.07,  max: 3, pri: 6, lv: 2, verb: 1, bake: [1, 3.4], jit: 1 },
+  explodeS:   { gap: 0.025, max: 6, pri: 3, lv: 0.5, verb: 1, bake: [2, 1.1], jit: 1.5 },
+  explodeM:   { gap: 0.04,  max: 5, pri: 4, lv: 2, verb: 1, bake: [1, 2.2], jit: 1.25 },
+  explodeL:   { gap: 0.07,  max: 3, pri: 6, lv: 3, verb: 1, bake: [1, 3.4], jit: 1 },
   bomb:       { gap: 0.3,   max: 2, pri: 9, lv: 3, verb: 1 },
   item:       { gap: 0.04,  max: 3, pri: 5, lv: 9, bake: [1, 0.5] },
   powerup:    { gap: 0.15,  max: 2, pri: 7, lv: 6.5 },
@@ -1876,6 +1877,13 @@ const DRUM = {
   // stage 4: four-on-the-floor under 16th hats accented on the offbeat 8ths (the sequencer pulse)
   orA:    { k: 'x...x...x...x...', s: '....x.....g.x...', h: 'xgXgxgXgxgXgxgXg' },
   orB:    { k: 'x...x...x.x.x...', s: '....x..g..g.x..g', h: 'xgXgxgXgxgXgxgXo' },
+  // boss 4: the battery's riff — the call's "da-da DAAA" (dotted 8th, 16th, the backbeat) and an
+  // 8th, twice a bar; busier; under 16th double kick (the riff accented)
+  agA:    { k: 'x..xx.x.x..xx.x.', s: '....x.......x...', h: 'X.x.X.x.X.x.X.x.' },
+  agB:    { k: 'x..xx.x.x..xx.xx', s: '....x..g....x.gg', h: 'XgxgXgxgXgxgXgxg' },
+  agD:    { k: 'xggxxgxgxggxxgxg', s: '....x.......x...', h: 'X...X...X...X...' },
+  // boss 5's reprise: the riff-melody's 3+3+2, a 16th double-kick pickup into every group
+  seR:    { k: 'x.gx.gx.x.gx.gx.', s: '....x.......x...', h: 'X.x.X.x.X.x.X.x.' },
   // stage 5: the walkers' stomp — half-time snare, 3+3+2 kicks, floor-tom footsteps
   moonH:  { k: 'x.....x.....x...', s: '........x.......', t: '...f.....f...fff', h: 'x.g.x.g.x.g.x.g.' },
   // stage 6: the orbits' hemiola — kicks in 3+3+3+3+4 under a straight backbeat
@@ -1935,6 +1943,8 @@ const BASS = {
   nm:     'R.R.R..R.R.R..O.',      // locked to boss 7's 2+2+3 kick
   fifths: 'RFOFRFOFRFOFRFOF',      // root, fifth, octave, fifth (stage 8's open fifths)
   dnb:    'R_____RRR_____OR',      // two-step: held roots on the kicks
+  agR:    'R..RO.R.R..RO.R.',      // locked to boss 4's riff, the octave firing on the backbeat
+  sel:    'R.RR.RO.R.RR.RO.',      // locked to boss 5's 3+3+2 reprise
 };
 
 // register of each arp voice's chord-tone ladder (the lowest ladder note is this + 0..11)
@@ -1986,6 +1996,8 @@ const GTR = {
   hemM: 'M..m..M..m..M.m.',   // stage 6's hemiola, muted
   hemX: 'X__X__X__X__X___',   // the same, ringing
   nmG:  'M.M.M..M.M.M..M.',   // locked to boss 7's 2+2+3 kick
+  agG:  'M..MX_M.M..MX_M.',   // boss 4's riff: chugs, a chord ringing on the backbeat
+  selG: 'M.mM.mX_M.mM.mX_',   // boss 5's 3+3+2 reprise, the 2s rung
 };
 
 // Modes for `scale` (offsets from the tonic).
@@ -2439,10 +2451,13 @@ const SONGDEF = {
 
   // AEGIS, the orbital defence battery. C minor (the stage's key a fourth up), 172 BPM: the
   // call "da-da DAAA" down the Andalusian cadence (Cm Bb Ab G, then the Neapolitan D-flat) on
-  // the driven lead, over 16th double-kick blasts, galloping bass and guitars and brass hits on
-  // the downbeats; the machine sequencer throughout and square "charging" stabs on the
-  // offbeats (the battery powering up in the intro, over a tonic-pedal 16th bass); a half-time
-  // choir hymn before the last climb to the leading tone. 4-bar intro, 32-bar loop: A B C A2.
+  // the driven lead, and the band locked to its rhythm — kick, bass and palm-mutes fire the
+  // call's dotted 8th, 16th and backbeat twice a bar (the octave and a ringing chord on the
+  // backbeat), square "charging" stabs tick in the riff's gaps, the machine sequencer above;
+  // the climb runs on straight eighth double kick and 16th bass; then the battery recharges in a
+  // half-time machine breakdown (steel clanks, the bass droning on C under the brass) and
+  // charges back up through the riff; the reprise puts 16th double kick under it. The intro
+  // powers up over a tonic-pedal 16th bass. 4-bar intro, 32-bar loop: A B C(recharge) A2.
   boss4: {
     bpm: 172, key: 0, minor: true, delay: 0.75, intro: ['I'], loop: ['A', 'B', 'C', 'A2'],
     S: {
@@ -2456,33 +2471,33 @@ const SONGDEF = {
         chords: 'Cm Bb Ab G Cm Bb Db G', leadV: 'dlead',
         lead: AEGIS_A + 'g5:3 g5:1 c6:4 d6:2 eb6:2 d6:2 c6:2 | bb5:3 bb5:1 f6:4 eb6:2 d6:2 c6:2 bb5:2 |' +
               'ab5:3 ab5:1 db6:4 c6:2 bb5:2 ab5:2 f5:2 | g5:4 b5:4 d6:4 f6:4',
-        bass: 'gallop*8', drums: 'bD*3 bG bD*3 fX', crash: [0, 4],
-        gtr: 'gal*3 half gal*3 push', stab: 'hA hA hA hB hA hA hA hB', arp: 'arpM*8',
-        p2: { harm: 1, drums: 'bD*7 fX', stab: 'hA sM hA hB hA sM hA hB' },
+        bass: 'agR*8', drums: 'agA*3 agB agA*3 fX', crash: [0, 4],
+        gtr: 'agG*3 half agG*3 push', stab: 'sA*3 hB sA*3 hB', arp: 'arpM*8',
+        p2: { harm: 1, drums: 'agB*3 agD agB*3 fX', stab: 'hA sA hA hB hA sA hA hB' },
       },
       B: {
         chords: 'Fm Fm Cm Cm Db Eb G G', dbl: 'bell+12',
         lead: 'ab5:8 c6:4 f6:4 | eb6:6 db6:2 c6:4 ab5:4 | g5:8 c6:4 eb6:4 | d6:6 c6:2 g5:8 |' +
               'f5:4 ab5:4 db6:6 c6:2 | bb5:4 eb6:4 g6:6 f6:2 | f6:4 d6:2 b5:2 g5:4 b5:4 | d6:2 eb6:2 d6:2 c6:2 b5:2 c6:2 d6:2 f6:2',
-        bass: 'pump*6 build*2', drums: 'bG*3 bD bG*3 fS', crash: [0, 4],
-        gtr: 'half*6 ch16 hold', stab: 'hB*8', arp: 'bellA*8',
-        p2: { harm: 1, dbl: null, arp: 'arpC*8' },
+        bass: 'p16*6 build*2', drums: 'bC*3 agB bC*3 fS', crash: [0, 4],
+        gtr: 'ch8*6 ch16 hold', stab: 'sM*6 hB hB', arp: 'bellA*8',
+        p2: { harm: 1, dbl: null, arp: 'arpC*8', stab: 'hB*6 hD hA' },
       },
       C: {
-        chords: 'Ab Eb Bb Cm Ab Eb Fm G', leadV: 'brass', padV: 'choir', pad: 1,
+        chords: 'Ab Eb Bb Cm Ab Eb Fm G', leadV: 'brass',
         lead: 'c5:12 eb5:4 | bb4:8 eb5:4 g5:4 | f5:12 d5:4 | eb5:8 g5:4 c6:4 |' +
               'c6:12 bb5:4 | g5:8 bb5:4 eb6:4 | ab5:4 c6:4 f6:4 eb6:4 | d6:4 b5:4 g5:2 b5:2 d6:2 f6:2',
-        bass: 'halves*4 pump*3 build', drums: 'bH*4 milB*3 fR', crash: [0, 4],
-        gtr: 'hold*4 half*3 hold', stab: 'hA none*3 hA none hA hB', arp: 'bellSlow*4 arpM*4',
+        bass: 'drone*4 agR*3 build', drums: 'mHalf*3 fT agB*3 fD', crash: [0, 4], rise: 2,
+        gtr: 'syn*4 agG*3 hold', stab: 'sA*7 hA', arp: 'arpM*8',
         p2: { dbl: 'bell+12' },
       },
       A2: {
         chords: 'Cm Bb Ab G Cm Bb Db G', leadV: 'dlead', dbl: 'bell+12',
         lead: AEGIS_A + 'c6:3 c6:1 g6:4 f6:2 eb6:2 d6:2 eb6:2 | d6:3 d6:1 bb5:4 f5:4 bb5:4 |' +
               'db6:3 db6:1 f6:4 eb6:2 db6:2 c6:2 ab5:2 | b5:2 c6:2 d6:2 f6:2 g6:8',
-        bass: 'gallop*7 build', drums: 'bD*6 fR fD', crash: [0, 4, 6], rise: 2,
-        gtr: 'gal*6 ch16 hold', stab: 'hB*8', arp: 'arpM*8',
-        p2: { harm: 1, dbl: null },
+        bass: 'agR*7 build', drums: 'agD*6 fR fD', crash: [0, 4, 6], rise: 2,
+        gtr: 'agG*6 ch16 hold', stab: 'sA*6 hB hA', arp: 'arpM*8',
+        p2: { harm: 1, dbl: null, stab: 'hB sA hB sA hB sA hB hA' },
       },
     },
   },
@@ -2545,7 +2560,9 @@ const SONGDEF = {
   // the Neapolitan C major for the dark cadence), 174 BPM: galloping kick, bass and guitars,
   // the driven lead on a 3+3+2 riff-melody, brass hits on the downbeats, a machine arpeggio;
   // a breakdown of crash stabs under crater-echo bells and a choir before the double-kick
-  // climb. 2-bar intro, 32-bar loop: A B C(breakdown → build) A2.
+  // climb; the reprise locks the whole band to the riff-melody's 3+3+2 (kick, bass and
+  // palm-mutes with a 16th double-kick pickup into every group, brass hits on the 3+3+2).
+  // 2-bar intro, 32-bar loop: A B C(breakdown → build) A2.
   boss5: {
     bpm: 174, key: 11, minor: true, delay: 0.5, intro: ['I'], loop: ['A', 'B', 'C', 'A2'],
     S: {
@@ -2579,8 +2596,8 @@ const SONGDEF = {
         chords: 'Bm Bm G A Bm Bm C F#', leadV: 'dlead',
         lead: SELENE_A + 'd6:3 c#6:3 b5:2 f#6:3 e6:3 d6:2 | e6:3 d6:3 c#6:2 b5:8 |' +
               'c6:3 b5:3 g5:2 e5:3 g5:3 b5:2 | a#5:2 c#6:2 e6:2 f#6:2 e6:2 c#6:2 a#5:2 c#6:2',
-        bass: 'gallop*7 build', drums: 'bD*6 fR fD', crash: [0, 4], rise: 2,
-        gtr: 'gal*6 ch16 hold', stab: 'hB*8', arp: 'arpC*8',
+        bass: 'sel*7 build', drums: 'seR*6 fR fD', crash: [0, 4], rise: 2,
+        gtr: 'selG*6 ch16 hold', stab: 'hD*6 hB hA', arp: 'arpC*8',
         p2: { harm: 1 },
       },
     },
@@ -2701,7 +2718,7 @@ const SONGDEF = {
     bpm: 172, key: 8, minor: true, delay: 0.75, intro: ['I'], loop: ['A1', 'A2', 'B', 'C', 'D'],
     S: {
       I: {
-        chords: 'G#m Em G#m D#', lead: 'r:48 d#5:1 e5:1 d#5:1 g5:1 a#5:4 d#6:8',
+        chords: 'G#m G#m Em D#', lead: 'r:48 d#5:1 e5:1 d#5:1 g5:1 a#5:4 d#6:8',
         bass: 'hold dnb p16 build', drums: 'dnbI dnbA dnbB fS', crash: [0], rise: 2,
         gtr: 'none ch16*2 hold', arp: 'glassS warp*3',
       },

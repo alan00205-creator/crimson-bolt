@@ -119,6 +119,7 @@
     </div>
     <div class="scroll"><table id="results"></table></div>
     <p id="summary"></p>
+    <p id="dip" class="note"></p>
     <p id="cpu" class="note"></p>
     <div class="scroll"><table id="songs"></table></div>
     <p class="note">Section check: renders each looping track over its whole variation cycle (intro + both loop passes) plus 4 bars past the wrap, and lists every section's peak, rms, rms above ~500 Hz (a small-speaker proxy) and below ~150 Hz, plus the loop seam (last bar before the wrap vs the first bar after it). Flags a section that is silent, clips, or sits more than 4 dB away from its track's average.</p>
@@ -272,8 +273,33 @@ async function runAuto() {
     tr.onclick = () => drawOne(name, sec, true);
     tbl.appendChild(tr);
   }
-  $('summary').textContent = `${pass} / ${jobs.length} passed (rms > 0, no NaN, final peak ≤ 1.0).`;
-  $('summary').style.color = pass === jobs.length ? 'var(--ok)' : 'var(--bad)';
+  // the music dip under explodeL / explodeM ('duck:<sfx>': a constant in place of the music, the
+  // effects cut from the mix): flat with the effects at 0 or muted; at effects volume v the dip in
+  // dB is v² × the one at 1, so it shrinks with what is heard of the blast
+  const dips = [];
+  const dipOf = async (nm, sv, mu) => {
+    const { buf, from } = await __renderBuffer('duck:' + nm, 5, { sfxVol: sv, muted: mu });
+    const d = buf.getChannelData(2);
+    let lo = Infinity, hi = 0;
+    for (let i = from; i < d.length; i++) { const v = d[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+    return hi > 0 && lo > 0 ? 20 * Math.log10(lo / hi) : NaN;
+  };
+  for (const nm of ['explodeL', 'explodeM']) {
+    const full = await dipOf(nm, 1, false);
+    dips.push({ name: nm, sfxVol: 1, muted: false, dB: full, want: '< -0.5', ok: full < -0.5 });
+    for (const [sv, mu] of [[0.8, false], [0.5, false], [0, false], [1, true]]) {
+      const got = await dipOf(nm, sv, mu), want = mu ? 0 : full * sv * sv;
+      dips.push({ name: nm, sfxVol: sv, muted: mu, dB: got, want: +want.toFixed(2), ok: Math.abs(got - want) < 0.03 });
+    }
+  }
+  const dipPass = dips.filter((x) => x.ok).length;
+  pass += dipPass;
+  const total = jobs.length + dips.length;
+  $('dip').innerHTML = 'Music dip under explosions, dB on the music bus (at effects volume v: v² × the dip at 1; none when muted): ' +
+    dips.map((x) => `<b style="color:${x.ok ? 'var(--ok)' : 'var(--bad)'}">${x.name} ${x.muted ? 'muted' : x.sfxVol} ${x.dB.toFixed(2)}</b>` +
+      (x.sfxVol === 1 && !x.muted ? '' : ` (${x.want})`)).join(' · ');
+  $('summary').textContent = `${pass} / ${total} passed (rms > 0, no NaN, final peak ≤ 1.0; ${dipPass} / ${dips.length} music dip checks).`;
+  $('summary').style.color = pass === total ? 'var(--ok)' : 'var(--bad)';
   // music CPU next to the budget (the heavier of the stage-1 theme and the boss theme): the first
   // 8 s only, best of three; the section check's whole-cycle numbers are the steadier measure.
   const ms = Object.fromEntries(rows.filter((r) => r.kind === 'music' && MUSIC_TRACKS.includes(r.name)).map((r) => [r.name, r.msPerSec]));
@@ -295,7 +321,7 @@ async function runAuto() {
       `<td>${v.loopSec ?? '—'}</td><td>${v.variationCycleSec ?? '—'}</td><td>${v.lengthSec ?? '—'}</td>` +
       `<td style="text-align:left">${v.sections.filter((s) => !s.name.endsWith("'")).map((s) => s.name + '·' + s.bars).join(' ')}</td>` +
       `<td class="${v.warn.length ? 'bad' : 'ok'}">${v.warn.length ? v.warn.join('; ') : 'none'}</td></tr>`).join('');
-  window.__autoResults = { rows, pass, total: jobs.length, songs: info, cpu: { budget, ms }, bake: { ms: bake.ms, seconds: bake.seconds, count: bake.entries.length, silent } };
+  window.__autoResults = { rows, pass, total, dips, songs: info, cpu: { budget, ms }, bake: { ms: bake.ms, seconds: bake.seconds, count: bake.entries.length, silent } };
   return window.__autoResults;
 }
 $('auto').onclick = runAuto;

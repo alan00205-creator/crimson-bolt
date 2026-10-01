@@ -28,7 +28,9 @@
 //   limiter allows. Checked on a phone-speaker proxy too (explosions
 //   carry a mid-band punch layer; the kick a "knock"). explodeM / explodeL also dip the music's
 //   dry bus for an instant (-1 / -1.5 dB for 0.12 / 0.16 s, see duckMusic; overlapping dips merge
-//   into one, so a chain of blasts never pumps).
+//   into one, so a chain of blasts never pumps). The dip follows what is heard of the blast: its
+//   depth in dB scales with the call's vol × the effects bus gain (sfxVol²), so the music never
+//   moves with the effects at 0 or muted.
 // * 'laser' and 'plasma' are sustained voices: the game calls play('laser') every frame, and
 //   every call within 0.09 s keeps the same voice alive (no new nodes), so it is one steady beam.
 // * 'medal' snaps opts.pitch up to E G A B C D E, so the chain (pitch = step × 2) climbs a
@@ -338,6 +340,8 @@ class Engine extends Synth {
     this.sfxVerb = g(0);
     this.mduck = g(1);                                 // momentary dip under big explosions (duckMusic)
     this.duckLv = 1; this.duckEnd = -1;
+    this.sfxK = 1;                                     // effects bus gain re full (sfxVol²; applyLevels)
+    this.muted = !!settings.muted;
     this.musicVol.connect(this.mduck);
     this.mduck.connect(this.master);
     this.musicVerbVol.connect(this.verb);
@@ -371,6 +375,7 @@ class Engine extends Synth {
     const t = this.ctx.currentTime;
     const m = s.musicVol * s.musicVol * MUSIC_BASE * clamp01(s.duck);
     const x = s.sfxVol * s.sfxVol * SFX_BASE;
+    this.sfxK = s.sfxVol * s.sfxVol;
     const set = (p, v, tau) => {
       if (instant) { p.cancelScheduledValues(0); p.setValueAtTime(v, t); }
       else { p.cancelScheduledValues(t); p.setTargetAtTime(v, t, tau); }
@@ -384,6 +389,7 @@ class Engine extends Synth {
   setMuted(b) {
     const t = this.ctx.currentTime;
     const p = this.mute.gain;
+    this.muted = !!b;
     p.cancelScheduledValues(t);
     p.setTargetAtTime(b ? 0 : 1, t, 0.03);
   }
@@ -1732,7 +1738,8 @@ const SHIELD_PINGS = [2349.3, 3322.4, 4186, 5587.7], PING_PAN = [0, 0.35, -0.35,
 //          repeated calls (seconds after the last call), streak: [heat, k] attenuation of
 //          sustained streams (see playSfx), bake: [variants, seconds] pre-rendered
 //          at startup (frequent sounds; played back with ±jit semitones of random pitch),
-//          duck: [music gain, seconds] a momentary dip of the music bus under it (duckMusic) }
+//          duck: [music gain, seconds] a momentary dip of the music bus under it (duckMusic), that
+//          deep at the call's vol 1 and effects volume 1 (dB × vol × sfxVol², see playSfx) }
 const SFX = {
   shot:       { gap: 0.045, max: 3, pri: 1, lv: 10, bake: [2, 0.09], jit: 0.6 },
   laser:      { gap: 0.045, max: 1, pri: 2, lv: -14, hold: 0.09 },
@@ -3614,7 +3621,12 @@ Object.assign(Engine.prototype, {
       this.hsrc = null; this.henv = null;
     }
     slot.name = name; slot.pri = def.pri; slot.start = now; slot.end = now + dur; slot.g = g; slot.v = vg; slot.p = pn;
-    if (def.duck) this.duckMusic(now, Math.pow(def.duck[0], vol), def.duck[1]);   // a quieter call dips less (dB × vol)
+    if (def.duck && !this.muted) {
+      // the dip follows what is heard of the blast: dB × the call's vol × the effects bus gain
+      // (sfxVol²), so a quieter call or a lower effects volume dips less, and effects at 0 not at all
+      const k = vol * this.sfxK;
+      if (k > 0.001) this.duckMusic(now, Math.pow(def.duck[0], k), def.duck[1]);
+    }
     return true;
   },
 
@@ -3957,7 +3969,7 @@ async function renderOffline(name, seconds, o) {
   const X = new Engine(octx, sink, {
     musicVol: o.musicVol === undefined ? 1 : o.musicVol,
     sfxVol: o.sfxVol === undefined ? 1 : o.sfxVol,
-    duck: 1, muted: false,
+    duck: 1, muted: !!o.muted,      // o.muted: silences the final output only (ch 2-3 still read the bus)
   });
   X.master.connect(sp);
   sp.connect(merger, 0, 2);
@@ -4025,6 +4037,20 @@ async function renderOffline(name, seconds, o) {
     g.gain.value = 0.1;
     s.connect(g); g.connect(X.master);
     s.start(0);
+  } else if (name.slice(0, 5) === 'duck:') {
+    // the music dip under an explosion (duckMusic), exactly: 'duck:<sfx>' feeds a constant 1 into
+    // the music's dry bus instead of a track and cuts the effects buses from the mix, then fires
+    // <sfx> (o.opts) every 1.5 s from 1 s. The pre-limiter channels hold musicVol × the dip: flat
+    // with o.sfxVol 0 or o.muted, down to duck[0] ^ (vol × sfxVol²) under each blast otherwise.
+    kind = 'duck';
+    const nm = name.slice(5);
+    const dc = octx.createConstantSource();
+    dc.connect(X.musicVol);
+    dc.start(0);
+    X.sfxVol.disconnect(); X.sfxVerb.disconnect();
+    if (Object.prototype.hasOwnProperty.call(SFX, nm)) {
+      for (let t = 1; t < seconds - 0.5; t += 1.5) { const tt = PRE + t; cues.push([tt, () => X.playSfx(nm, o.opts || null, tt)]); }
+    }
   }
   cues.sort((x, y) => x[0] - y[0]);
   let ci = 0;
@@ -4201,7 +4227,8 @@ export function __scenarios() {
 // weapon alone, see WEAPON_SCN), 'hitStream' / 'armorStream' (29 hits/s into a boss at the
 // game's volumes), 'runStart' / 'runStart2' … 'runStart9' (a stage's fanfare + its music, as at
 // the start of that stage), 'note:<voice>:<midi>[:<sec>]' (one instrument note on the music
-// bus, for level calibration), 'calib' (small-signal gain of the master chain).
+// bus, for level calibration), 'calib' (small-signal gain of the master chain), 'duck:<sfx>'
+// (the music dip under <sfx> on a constant in place of the music; opts.sfxVol / opts.muted / opts.opts).
 export async function __renderForTest(nameOrTrack, seconds, opts) {
   const r = await renderOffline(nameOrTrack, seconds || 2, opts);
   return r.stats;

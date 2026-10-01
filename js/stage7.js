@@ -90,6 +90,12 @@ function zAtRow(v, py, y = 0) {
   const dy = f.y - f.z * k, dz = f.z + f.y * k;             // the ray: forward + up·k (up = (0, −f.z, f.y))
   return v.C.z + dz * (-v.C.y / dy) * (1 - y / v.C.y);
 }
+// The rows the swarm hovers at are fractions zf of the screen's height, held at no more than a 480×800 window's
+// distance above the bottom edge: a phone held upright shows ~42 units of the plane from top to bottom against ~33,
+// and the same fraction hung the flocks, stingers, crystals and gates a third further from the jet there, their fans
+// opening into wide gaps on the way down (the phone measured stage 7 under stage 6). Shorter views are unchanged.
+const ROW_H = 33.2;
+const rowZ = (v, zf) => Math.max(v.zTop + (v.zBottom - v.zTop) * zf, v.zBottom - (1 - zf) * ROW_H);
 const live = (pt) => (pt && !pt.dead ? pt : null);
 /** like stage.js fireTimer, on a named slot of s (a unit with several independent guns) */
 function fireTimerS(s, key, dt, g, interval, first) {
@@ -194,7 +200,7 @@ function flockAI(cx, zf, k, n, dir = 1, hold = 2.0, R = 2.0) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (s.mode === undefined) {
-      s.mode = 'swirl'; s.z0 = v.zTop - 3; s.cz = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + R);
+      s.mode = 'swirl'; s.z0 = v.zTop - 3; s.cz = Math.max(rowZ(v, zf), zAtRow(v, HUD_ROW) + R);
       s.a0 = (k / n) * TAU; s.brk = hold + k * 0.22; s.ph = rnd(0, TAU); s.dx = 0; s.dz = 1; s.dt = 0; s.spat = false; s.rg = 0;
       s.zs = zAtRow(v, HUD_ROW);                       // spits only once clear of the score strip
       if (ud.setRage) ud.setRage(0);
@@ -226,8 +232,7 @@ function streamAI(side, zf, k) {
   return (e, dt, g) => {
     const s = e.s, v = g.view;
     if (!s.P) {
-      const T = v.zTop, H = v.zBottom - v.zTop;
-      s.P = [[side * 11, T + zf * H], [side * 3.2, T + (zf - 0.1) * H], [-side * 1.2, T + (zf + 0.46) * H], [-side * 10.5, T + (zf + 0.3) * H]];
+      s.P = [[side * 11, rowZ(v, zf)], [side * 3.2, rowZ(v, zf - 0.1)], [-side * 1.2, rowZ(v, zf + 0.46)], [-side * 10.5, rowZ(v, zf + 0.3)]];
       s.ph = k * 0.9;
     }
     const u = e.t / 3.6;
@@ -275,7 +280,7 @@ function stingAI(x0, strikes = 3, zf = 0.24) {
     if (!s.mode) {
       s.mode = 'in'; s.mt = 0; s.n = 0; s.fixedYaw = true; s.yaw = Math.PI;
       s.sx = x0 + (x0 >= 0 ? 4 : -4); s.sz = v.zTop - 2;
-      s.tx = x0; s.tz = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + 1.6);
+      s.tx = x0; s.tz = Math.max(rowZ(v, zf), zAtRow(v, HUD_ROW) + 1.6);
       e.x = s.sx; e.z = s.sz;
       if (ud.setCurl) ud.setCurl(0);
     }
@@ -312,7 +317,7 @@ function stingAI(x0, strikes = 3, zf = 0.24) {
         else {
           s.mode = 'hop';
           s.tx = clamp(e.x + clamp(p.x - e.x, -3.5, 3.5) + rnd(-1.2, 1.2), -6.5, 6.5);
-          s.tz = clamp(e.z + rnd(-0.6, 1.4), zAtRow(v, HUD_ROW) + 1.2, v.zTop + (v.zBottom - v.zTop) * 0.42);
+          s.tz = clamp(e.z + rnd(-0.6, 1.4), zAtRow(v, HUD_ROW) + 1.2, rowZ(v, 0.42));
         }
       }
     } else {                                      // off over the nearer edge, climbing
@@ -333,7 +338,7 @@ function crystalAI(x0, zf = 0.22, stay = 10) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (s.z0 === undefined) {
-      s.z0 = v.zTop - 3; s.tz = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + 2.2); s.fixedYaw = true; s.yaw = Math.PI;
+      s.z0 = v.zTop - 3; s.tz = Math.max(rowZ(v, zf), zAtRow(v, HUD_ROW) + 2.2); s.fixedYaw = true; s.yaw = Math.PI;
       s.charge = 0; s.hp0 = e.hp; s.warned = false;
       if (ud.setCharge) ud.setCharge(0);
     }
@@ -382,7 +387,7 @@ function gateAI(x0, zf = 0.26, life = 9) {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (s.mode === undefined) {
       s.mode = 'warp'; s.mt = 0; s.fixedYaw = true; s.yaw = 0; s.pt = 0.9; s.pulses = 0; s.ex = rnd(-1, 1);
-      s.z0 = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + 2.6);
+      s.z0 = Math.max(rowZ(v, zf), zAtRow(v, HUD_ROW) + 2.6);
       e.x = x0; e.z = s.z0; e.invuln = true;
       if (ud.setOpen) ud.setOpen(0);
       e.mesh.scale.setScalar(0.15);

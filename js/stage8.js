@@ -93,6 +93,13 @@ function zAtRow(v, py, y = 0) {
   const dy = f.y - f.z * k, dz = f.z + f.y * k;             // the ray: forward + up·k (up = (0, −f.z, f.y))
   return v.C.z + dz * (-v.C.y / dy) * (1 - y / v.C.y);
 }
+// The rows the void's units hover at are fractions zf of the screen's height, held at no more than a 480×800 window's
+// distance above the bottom edge (as in stage 7): a phone held upright shows ~42 units of the plane from top to bottom
+// against ~33, and the same fraction hung them a third further from the jet there. Shorter views are unchanged.
+const ROW_H = 33.2;
+const rowZ = (v, zf) => Math.max(v.zTop + (v.zBottom - v.zTop) * zf, v.zBottom - (1 - zf) * ROW_H);
+/** the fraction whose row is z (rowZ's inverse) */
+const rowF = (v, z) => Math.min((z - v.zTop) / (v.zBottom - v.zTop), 1 - (v.zBottom - z) / ROW_H);
 const live = (pt) => (pt && !pt.dead ? pt : null);
 /** the jet can be touched by the stage right now (pulls, ambush placement) */
 const jetFree = (g) => g.player.alive && g.player.entering <= 0 && g.phase !== 'bossdead' && g.phase !== 'clear';
@@ -160,10 +167,10 @@ const WR_FORM = 0.55, WR_FOLD = 0.22;
 function wraithAI(x0, zf = 0.24, hops = 2, glide = 0.9) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData, p = g.player;
-    const top = zAtRow(v, HUD_ROW) + 1.2, low = v.zTop + (v.zBottom - v.zTop) * 0.46;
+    const top = zAtRow(v, HUD_ROW) + 1.2, low = rowZ(v, 0.46);
     if (!s.mode) {
       s.mode = 'form'; s.mt = 0; s.n = 0; s.fixedYaw = true; s.yaw = Math.PI;
-      e.x = x0; e.z = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, top); e.invuln = true;
+      e.x = x0; e.z = Math.max(rowZ(v, zf), top); e.invuln = true;
       // never condense within 5.5 of the jet: up the screen first, then sideways away from it
       for (let q = 0; q < 14 && Math.hypot(e.x - p.x, e.z - p.z) < 5.5; q++) {
         if (e.z > top) e.z = Math.max(top, e.z - 1);
@@ -231,7 +238,7 @@ function watcherAI(x0, zf = 0.24, stay = 8) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (s.z0 === undefined) {
-      s.z0 = v.zTop - 3; s.tz = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + 1.8);
+      s.z0 = v.zTop - 3; s.tz = Math.max(rowZ(v, zf), zAtRow(v, HUD_ROW) + 1.8);
       s.fixedYaw = true; s.yaw = Math.PI; s.st = 'idle'; s.ct = 0.5; s.mt = 0; s.spin = 0.6; s.q = 0;
       if (ud.setCharge) ud.setCharge(0);
     }
@@ -314,7 +321,7 @@ function fractalAI(x0, zf = 0.24, stay = 10) {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (fractalHit(e)) { fractalSplit(e, g); return; }
     if (s.z0 === undefined) {
-      s.z0 = v.zTop - 3; s.tz = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + 2.0); s.fixedYaw = true; s.yaw = Math.PI;
+      s.z0 = v.zTop - 3; s.tz = Math.max(rowZ(v, zf), zAtRow(v, HUD_ROW) + 2.0); s.fixedYaw = true; s.yaw = Math.PI;
       s.st = 'idle'; s.ct = 0.5; s.mt = 0;
       e.mesh.scale.setScalar(1);
       if (ud.setTint) { ud.setTint(0); ud.setCharge(0); }
@@ -1116,7 +1123,7 @@ const W8 = {
       g.later(i * 0.12, () => {
         const a = Math.PI + (i / (n - 1 || 1) - 0.5) * 2.3;          // fanned over the upper half round the jet
         const x = clamp(p.x + Math.sin(a) * 7.5, -6.6, 6.6);
-        const zf = clamp((p.z + Math.cos(a) * 7.5 - v.zTop) / (v.zBottom - v.zTop), 0.12, 0.5);
+        const zf = clamp(rowF(v, p.z + Math.cos(a) * 7.5), 0.12, 0.5);
         g.spawn('s8_wraith', { x, z: -60, ai: wraithAI(x, zf, hops, 1.1) });
       });
     }
@@ -1134,7 +1141,7 @@ const W8 = {
     for (let i = 0; i < n; i++) {
       g.later(i * gap, () => {
         const v = g.view;
-        W8.mine(g, side * 11, -side * 3.0, 0.5, 4.0, v.zTop + (v.zBottom - v.zTop) * zf);
+        W8.mine(g, side * 11, -side * 3.0, 0.5, 4.0, rowZ(v, zf));
       });
     }
   },

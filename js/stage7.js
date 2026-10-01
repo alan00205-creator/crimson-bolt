@@ -77,13 +77,17 @@ const BOSS_AT = 1275;
 
 // The top HUD is fixed CSS px (index.html: score strip ≈ 58 px, boss bar down to ≈ 102 px), so on short
 // phones a row picked relative to zTop can sit under it. zAtRow gives the world z at height y that
-// projects to CSS pixel row py (screen centre column): hover rows are kept at or below it.
+// projects to CSS pixel row py (screen centre column): hover rows are kept at or below it. It works from the
+// camera's rest pose (view.C, the view direction view.v, the fixed fov) instead of unprojecting through the
+// camera: during a screen shake the camera stands up to ~0.9 off view.C and screenToPlane's ray (a point
+// ~2 in front of the shaken camera, less view.C) swings by several units — a boss stationed in a shake (its
+// entrance flash) would hold its whole fight several units low.
 const HUD_ROW = 80;    // clear of the score strip
 const BAR_ROW = 118;   // 16 px under the boss bar
-const rowQ = { x: 0, z: 0 };
 function zAtRow(v, py, y = 0) {
-  const q = v.screenToPlane(v.w / 2, py, rowQ);
-  return v.C.z + (q.z - v.C.z) * (1 - y / v.C.y);
+  const f = v.v, k = (1 - (2 * py) / v.h) * Math.tan(v.camera.fov * Math.PI / 360);
+  const dy = f.y - f.z * k, dz = f.z + f.y * k;             // the ray: forward + up·k (up = (0, −f.z, f.y))
+  return v.C.z + dz * (-v.C.y / dy) * (1 - y / v.C.y);
 }
 const live = (pt) => (pt && !pt.dead ? pt : null);
 /** like stage.js fireTimer, on a named slot of s (a unit with several independent guns) */
@@ -599,13 +603,13 @@ function spawnLeviathan(g) {
 // It tears in through a warp rift at the top of the screen (a violet ring, the ship swelling out of it).
 // p1: the bio-cannons on its mandible arms fire curving pincers at the jet (two pairs each, staggered); the brood
 //     bays open in turn (the iris shrinks back and the mouth blazes: the tell) and fling out three drones each;
-//     the prow drops a swaying double curtain of big orbs → p2 once the cannons and bays are gone (or after 44 s): the crystal
-//     spires grow out of their sockets — the side spires fire double rings (an inner ring and a faster outer ring
-//     half a step round: a lattice, at times laid on the jet) and refract needle lines that converge on the jet,
-//     the lance spire tracks the jet, locks (its beam flares: the telegraph; a lattice comes with it) and fires
-//     a stream of needles down the lane with two refracted side streams → p3 once the spires are gone (or after
-//     40 s): the ribs open on the brood-heart — galaxy spirals (three arms of orbs that curl as they fly),
-//     breathing rings, a breather with an aimed fan; low on HP it flings broods and homing mines.
+//     the prow drops a swaying double curtain of big orbs → p2 once the cannons and bays are gone (or after 44 s):
+//     the crystal spires grow out of their sockets — the side spires fire double rings (an inner ring and a faster
+//     outer ring half a step round: a lattice, at times laid on the jet in big orbs) and refract needle lines that
+//     converge on the jet, the lance spire tracks the jet, locks (its beam flares: the telegraph; a lattice comes
+//     with it) and fires a stream of needles down the lane with two refracted side streams → p3 once the spires
+//     are gone (or after 40 s): the ribs open on the brood-heart — galaxy spirals (three arms of orbs that curl as
+//     they fly), aimed fans of big orbs, breathing rings, a breather; low on HP it flings broods and homing mines.
 // Parts left alive keep firing in the later phases at a reduced rate.
 const NM_FIGHT_P1 = 44, NM_FIGHT_P2 = 40;
 function nemesisAI() {
@@ -743,7 +747,7 @@ function nemesisAI() {
       // fan that tracked it too would corner it)
       s.pfT = (s.pfT ?? 3.4) - dt;
       if (s.pfT <= 0) {
-        s.pfT = 3.8 / fr; s.pfQ = 0.4; s.pfA = Math.sin(s.pt * 0.9) * 0.3;
+        s.pfT = 4.0 / fr; s.pfQ = 0.4; s.pfA = Math.sin(s.pt * 0.9) * 0.3;
         const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, s.pfA, 7, 1.38, 5.6, g.BK.BIG);
       }
       if (s.pfQ > 0) {
@@ -756,8 +760,8 @@ function nemesisAI() {
     // p1 guns still standing (the 44 s timeout) slow the spires down: their fire is already on top of it
     const held = 1 + 0.1 * outer;
     // side spires, in turn: a double ring — an inner ring and a faster outer ring half a step round (a lattice);
-    // two volleys in four (one from each spire) the inner ring is laid on the jet, and is of big orbs, so a lattice line
-    // runs down its column. With every ring the spire's facets refract a burst at the jet: three needle lines from across its
+    // two volleys in four (one from each spire) the inner ring is laid on the jet and both are of big orbs, so a
+    // lattice line runs down its column. With every ring the spire's facets refract a burst at the jet: three needle lines from across its
     // face, converging where the jet is. When the lance locks, the next ring comes at once: a lattice to thread
     // on the way out of the lane
     if ((pL || pR) && s.grow >= 1) {
@@ -767,7 +771,8 @@ function nemesisAI() {
         const pt = (s.bk ? pL : pR) || pL || pR, m = g.muzzlePos(pt.obj), mx = m.x, mz = m.z, n = hard ? 14 : 12;
         const a = g.aim(mx, mz), ca = Math.cos(a), sa = Math.sin(a);
         s.b = s.vq & 2 ? a : s.b + 0.37;
-        g.ring(mx, mz, n, 3.9, s.b, s.vq & 2 ? g.BK.BIG : g.BK.ORB); g.ring(mx, mz, n, 5.3, s.b + Math.PI / n);
+        const kind = s.vq & 2 ? g.BK.BIG : g.BK.ORB;
+        g.ring(mx, mz, n, 3.9, s.b, kind); g.ring(mx, mz, n, 5.3, s.b + Math.PI / n, kind);
         for (let q = -1; q <= 1; q++) {
           const fx = mx + ca * q * 1.3, fz = mz - sa * q * 1.3, fa = g.aim(fx, fz);
           g.shoot(fx, fz, fa, 8.0, g.BK.NEEDLE); g.shoot(fx, fz, fa, 6.9, g.BK.NEEDLE);
@@ -804,8 +809,9 @@ function nemesisAI() {
     } else if (lu && !pC) { lu.setBeam(0); lu.setCharge(0); }
     if (s.mode !== 'p3' || !core || s.open < 0.85) return;
     // the brood-heart, in 10 s cycles: galaxy spirals (three arms of orbs that curl as they fly; the curl flips each
-    // cycle), then breathing rings (out, a stop, back through the heart and out again), then a breather with an
-    // aimed fan; below 40 % it flings broods and homing mines too
+    // cycle) that end in an aimed fan of big orbs, then breathing rings (out, a stop, back through the heart and out
+    // again; every other one of big orbs), then a breather with a wider aimed fan; below 40 % it flings broods and
+    // homing mines too
     const cm = g.muzzlePos(core.obj), cx = cm.x, cz = cm.z;
     s.cyc += dt;
     const cyc = s.cyc % 10, dir = Math.floor(s.cyc / 10) & 1 ? -1 : 1;
@@ -818,15 +824,18 @@ function nemesisAI() {
         for (let k = 0; k < 3; k++) curve(g, g.shoot(cx, cz, s.a + (k * TAU) / 3, 4.3), 1.7 * dir);
       }
     } else if (cyc < 8.6) {
+      if (!s.fanned2) { s.fanned2 = true; g.fan(cx, cz, g.aim(cx, cz), 7, 1.05, 6.2, g.BK.BIG); g.audio.play('lock', { vol: 0.35, pitch: 3 }); }
       if (s.ct <= 0) {
         s.ct = (rage ? 0.85 : 1.0) / fr;
         const n = hard ? 20 : 16;
-        s.c += 0.5;
-        for (let q = 0; q < n; q++) breathe(g, g.shoot(cx, cz, (s.c + q) * (TAU / n), 5.0), 0.42);
+        s.c += 0.5; s.bq = (s.bq || 0) + 1;
+        const kind = s.bq & 1 ? g.BK.ORB : g.BK.BIG;      // every other breath of big orbs
+        for (let q = 0; q < n; q++) breathe(g, g.shoot(cx, cz, (s.c + q) * (TAU / n), 5.0, kind), 0.42);
         g.fx.p.emit(cx, 0.4, cz, 0, 0, 0, 0.3, 1.2, 4.6, VEN_A, VEN_B, F.RING, 0, OPT_FLAT);
       }
     } else if (!s.fanned) { s.fanned = true; g.fan(cx, cz, g.aim(cx, cz), hard ? 9 : 7, hard ? 1.25 : 1.05, 6.6, g.BK.BIG); g.audio.play('lock', { vol: 0.4 }); }
     if (cyc < 8.6) s.fanned = false;
+    if (cyc < 4.6) s.fanned2 = false;
     if (rage) {
       s.rgT = (s.rgT ?? 1.5) - dt;
       if (s.rgT <= 0) {

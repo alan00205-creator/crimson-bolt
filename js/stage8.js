@@ -88,13 +88,17 @@ const BOSS_AT = 1275;
 
 // The top HUD is fixed CSS px (index.html: score strip ≈ 58 px, boss bar down to ≈ 102 px), so on short
 // phones a row picked relative to zTop can sit under it. zAtRow gives the world z at height y that
-// projects to CSS pixel row py (screen centre column): hover rows are kept at or below it.
+// projects to CSS pixel row py (screen centre column): hover rows are kept at or below it. It works from the
+// camera's rest pose (view.C, the view direction view.v, the fixed fov) instead of unprojecting through the
+// camera: during a screen shake the camera stands up to ~0.9 off view.C and screenToPlane's ray (a point
+// ~2 in front of the shaken camera, less view.C) swings by several units — a boss stationed in a shake (its
+// entrance flash) would hold its whole fight several units low.
 const HUD_ROW = 80;    // clear of the score strip
 const BAR_ROW = 118;   // 16 px under the boss bar
-const rowQ = { x: 0, z: 0 };
 function zAtRow(v, py, y = 0) {
-  const q = v.screenToPlane(v.w / 2, py, rowQ);
-  return v.C.z + (q.z - v.C.z) * (1 - y / v.C.y);
+  const f = v.v, k = (1 - (2 * py) / v.h) * Math.tan(v.camera.fov * Math.PI / 360);
+  const dy = f.y - f.z * k, dz = f.z + f.y * k;             // the ray: forward + up·k (up = (0, −f.z, f.y))
+  return v.C.z + dz * (-v.C.y / dy) * (1 - y / v.C.y);
 }
 const live = (pt) => (pt && !pt.dead ? pt : null);
 /** the jet can be touched by the stage right now (pulls, ambush placement) */
@@ -920,23 +924,22 @@ function omegaAI() {
         }
         if (es.mt > 0.6) {
           es.st = 'idle'; es.t = (2.7 + k * 0.35) / fr;
-          // phase 2: as the stream ends the lit lens weeps four big orbs after the jet, the gap in the middle on it
-          // (it holds still for this one; the streams are what keep it moving)
+          // phase 2: as the stream ends the lit lens weeps a fan of big orbs after the jet
           if (s.mode === 'p2') {
             const m = g.muzzlePos(o), mx = m.x, mz = m.z;
-            g.fan(mx, mz, g.aim(mx, mz), 4, 0.78, 5.0, g.BK.BIG);
+            g.fan(mx, mz, g.aim(mx, mz), 5, 0.9, 5.0, g.BK.BIG);
             g.fx.p.emit(mx, 0.5, mz, 0, 0, 0, 0.2, 0.6, 2.4, ST_A, ST_B, F.FLARE, 0, NO_DRAG);
           }
         }
       }
     }
     if (s.mode === 'p2') {
-      // the halo's clockwork: half its nodes in turn shed an orb out along the way it turns (a galaxy); every sixth
+      // the halo's clockwork: half its nodes in turn shed an orb out along the way it turns (a galaxy); every fourth
       // volley the orbs are big ones
       s.ckT = (s.ckT ?? 1.0) - dt;
       if (s.ckT <= 0 && halo) {
         s.ckT = 0.46 / fr; s.ck = (s.ck || 0) + 1;
-        const kind = s.ck % 6 === 0 ? g.BK.BIG : g.BK.ORB;
+        const kind = s.ck % 4 === 0 ? g.BK.BIG : g.BK.ORB;
         for (let k = s.ck & 1; k < 12; k += 2) {
           const m = g.muzzlePos(halo, k), mx = m.x, mz = m.z, rad = Math.atan2(mx - e.x, mz - (e.z - 0.8));
           g.shoot(mx, mz, rad - 0.85, 3.8, kind);
@@ -1013,7 +1016,7 @@ function omegaAI() {
     if (s.rfT <= 0 && !(s.rfW > 0)) { s.rfW = 0.45; g.fx.p.emit(cx0, 1.0, cz0, 0, 0, 0, 0.45, 0.6, 3.6, RED_A, RED_B, F.FLARE, 0, NO_DRAG); }
     if (s.rfW > 0) {
       s.rfW -= dt;
-      if (s.rfW <= 0) { s.rfT = (rage ? 2.8 : 5.0) / fr; g.fan(cx0, cz0, g.aim(cx0, cz0), rage ? 7 : 5, rage ? 1.05 : 0.8, 5.6, g.BK.BIG); g.audio.play('hitArmor', { vol: 0.45, pitch: -9 }); }
+      if (s.rfW <= 0) { s.rfT = (rage ? 2.8 : 4.2) / fr; g.fan(cx0, cz0, g.aim(cx0, cz0), rage ? 7 : 5, rage ? 1.05 : 0.8, 5.6, g.BK.BIG); g.audio.play('hitArmor', { vol: 0.45, pitch: -9 }); }
     }
   };
 }

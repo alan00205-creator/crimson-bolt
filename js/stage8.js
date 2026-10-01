@@ -8,10 +8,10 @@
 //               fold into a sliver of light and blink somewhere else (a shimmer marks where) — a few hops, then back
 //               into the void. Packs of them ambush the jet from all round
 //   s8_watcher  cosmic sentinels: a great eye in a gyroscope; the ring spins up and its four emitters blaze (the
-//               tell), then spray three waves outward as it turns (a rotating lattice, big orbs in the middle one),
+//               tell), then spray four waves outward as it turns (a rotating lattice, the second of big orbs),
 //               and the eye fires a needle line at the jet
 //   s8_fractal  fractal constructs: a Sierpinski tetrahedron that fires spinning three-armed fans from its corners
-//               and, destroyed, splits into three smaller constructs (s8_frag, one aimed shot each), which split
+//               and, destroyed, splits into three smaller constructs (s8_frag, one aimed big orb each), which split
 //               again into splinters (s8_shard) that tumble away
 //   s8_mine     singularity mines: they drift in and arm when the jet comes near (or their fuse runs out): the ring
 //               spins up and blazes, space pulls toward them (a gentle tug on the jet) and a ring of light marks the
@@ -231,7 +231,7 @@ function wraithAI(x0, zf = 0.24, hops = 2, glide = 0.9) {
 // cosmic sentinel (watcher)
 // --------------------------------------------------------------------------------
 // Glides down into the upper screen, holds for `stay` s with a slow sway, then climbs away. Its cycle: the ring
-// spins up and the emitters blaze (0.55 s: the tell), then three waves 0.16 s apart (the middle one of big orbs) —
+// spins up and the emitters blaze (0.55 s: the tell), then four waves 0.16 s apart (the second of big orbs) —
 // each emitter throws a pair outward along its arm, and the ring is still turning, so the waves wind into a lattice —
 // and the eye fires a line of three needles at the jet.
 function watcherAI(x0, zf = 0.24, stay = 8) {
@@ -259,22 +259,22 @@ function watcherAI(x0, zf = 0.24, stay = 8) {
       s.spin = 0.6 + 2.6 * smooth(s.mt / 0.55);
       if (s.mt > 0.55) { s.st = 'burst'; s.mt = 0; s.q = 0; }
     } else {
-      while (s.q < 3 && s.mt >= s.q * 0.16) {
+      while (s.q < 4 && s.mt >= s.q * 0.16) {
         s.q++;
         if (g.canFire(e) && ud.ring) {
           for (let k = 0; k < 4; k++) {
             const m = g.muzzlePos(ud.ring, k), mx = m.x, mz = m.z, a = Math.atan2(mx - e.x, mz - e.z);
-            const kind = s.q === 2 ? g.BK.BIG : g.BK.ORB;       // the middle wave of big orbs
+            const kind = s.q === 2 ? g.BK.BIG : g.BK.ORB;       // the second wave of big orbs
             g.shoot(mx, mz, a - 0.1, 5.4, kind); g.shoot(mx, mz, a + 0.1, 5.4, kind);
           }
         }
       }
-      if (s.q >= 3 && s.mt > 0.55) {
+      if (s.q >= 4 && s.mt > 0.7) {
         if (g.canFire(e)) {
           const m = g.muzzlePos(e.mesh), mx = m.x, mz = m.z, a = g.aim(mx, mz);
           for (let q = 0; q < 3; q++) g.shoot(mx, mz, a, 7.8 + q * 1.1, g.BK.NEEDLE);
         }
-        s.st = 'idle'; s.ct = 2.2 / g.diff.fr;
+        s.st = 'idle'; s.ct = 2.0 / g.diff.fr;
       }
     }
   };
@@ -338,7 +338,7 @@ function fractalAI(x0, zf = 0.24, stay = 10) {
     } else if (s.mt < 0.45) {
       if (ud.setCharge) ud.setCharge(s.mt / 0.45);
     } else {
-      s.st = 'idle'; s.ct = 2.0 / g.diff.fr;
+      s.st = 'idle'; s.ct = 1.8 / g.diff.fr;
       if (ud.setCharge) ud.setCharge(0);
       if (g.canFire(e)) {
         for (let k = 0; k < 3; k++) {
@@ -354,7 +354,7 @@ function fractalAI(x0, zf = 0.24, stay = 10) {
   };
 }
 // A piece flung out of a split (heading a, speed sp): it slows, then drifts down and away, still turning. The middle
-// size fires one aimed orb after 0.9 s; the splinters don't fire.
+// size fires one aimed big orb after 0.9 s; the splinters don't fire.
 function fragAI(a, sp) {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, f = FR[e.type];
@@ -371,7 +371,7 @@ function fragAI(a, sp) {
     if (ud.setCharge) ud.setCharge(Math.max(0, 0.6 - e.t));
     if (e.type === 's8_frag' && !s.fired && e.t > 0.9) {
       s.fired = true;
-      if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 6.4);
+      if (g.canFire(e)) g.shoot(e.x, e.z, g.aim(e.x, e.z), 6.0, g.BK.BIG);
     }
   };
 }
@@ -405,7 +405,7 @@ function mineAI(vx, vz, fuse = 5, near = 5.5, tx = null, tz = 0) {
       }
       if (v.onScreen(e.x, e.z, -1)) s.on += dt;
       if (s.on > 0.6 && (s.on > fuse || ready)) {
-        s.mode = 'arm'; s.mt = 0; s.n = g.diff.level >= 2 ? 14 : 12; s.a0 = rnd(0, TAU);
+        s.mode = 'arm'; s.mt = 0; s.n = g.diff.level >= 2 ? 16 : 14; s.a0 = rnd(0, TAU);
         g.audio.play('lock', { vol: 0.35, pitch: -8 });
         // the horizon: a faint ring, and a mote on every spot an orb will appear
         g.fx.p.emit(e.x, 0.1, e.z, 0, 0, 0, MN_ARM, MN_R / 0.39, MN_R / 0.39 * 0.97, RIM_A, RIM_B, F.RING, 0, OPT_FLAT);
@@ -640,17 +640,18 @@ function spawnSentinel(g) {
 // It comes out of the black hole at the top of the screen: a point of light swelling into the machine as it glides
 // down, space falling in round it.
 // p1 the pylons: in turn each crystal flares (the tell) and fires a needle burst at the jet; now and then all four
-//    throw orbs that curl round the machine (an orrery), and light leaks out of the cage as rings of big orbs
+//    throw orbs that curl round the machine (an orrery), light leaks out of the cage as rings of big orbs, and the
+//    star flares in its cage (the tell) and spits two staggered fans of big orbs at the jet
 //    → p2 once the pylons are gone (or after 44 s): the halo widens and its three eyes open as it turns. Each eye
-//    tracks the jet (a faint beam), locks (the beam flares: the telegraph) and fires a needle stream down the line;
-//    the halo's twelve nodes shed orbs as it turns (a slow galaxy)
-//    → p3 once the eyes are gone (or after 42 s): the cage opens on the star — stellar wind (four curling arms),
-//    supernovas (two rings at once, a flower), starfall (aimed needle fans), breathers; below 60 % it throws
-//    singularity mines out to the jet's flanks, where they settle, arm and implode
+//    tracks the jet (a faint beam), locks (the beam flares: the telegraph) and fires a needle trident down the line,
+//    then the still-lit lens weeps a fan of big orbs; the halo's twelve nodes shed orbs as it turns (a galaxy)
+//    → p3 once the eyes are gone (or after 42 s): the cage opens on the star — stellar wind (four curling arms), a
+//    flare (the tell) and a fan of big orbs, supernovas (two rings at once, a flower), starfall (aimed needle fans);
+//    below 60 % it throws singularity mines out to the jet's flanks, where they settle, arm and implode
 //    → p4 when the star dies: the field is wiped, the lights turn crimson and the singularity comes out of the cinder.
 //    It pulls at the jet (gently: never more than a seventh of its slow speed); the event horizon — motes on a great
 //    circle round it, then orbs there falling in, crossing and flying out — alternates with Hawking radiation (rings of
-//    needles) and a spiral of curling orbs.
+//    needles) and a spiral of curling orbs; between them the heart flares crimson (the tell) and fans big orbs.
 // Parts left alive keep firing in the later phases at a reduced rate.
 const OM_P1 = 44, OM_P2 = 42, OM_ENTER = 7.0, OM_FALL = 3.4;
 const OM_PULL = 0.9, OM_HZ_R = 9.5, OM_HZ_N = 20;
@@ -830,6 +831,7 @@ function omegaAI() {
       for (let k = 0; k < 3; k++) { const pt = s.eye[k], es = s.es[k]; if (pt) { pt.obj.userData.setBeam(0); pt.obj.userData.setCharge(0); } if (es.st !== 'idle') { es.st = 'idle'; es.t = 1.5; } }
       if (s.cfQ !== undefined) { s.cfQ = undefined; s.cfT = 1.5; }          // a flare cut short is told again
       if (s.rfW > 0) { s.rfW = 0; s.rfT = 1.5; }
+      s.sfW = 0;
       return;
     }
     const fr = g.diff.fr, hard = g.diff.level >= 2;
@@ -871,7 +873,7 @@ function omegaAI() {
       }
       // light leaking from the cage: a ring of big orbs
       s.rgT = (s.rgT ?? 5.0) - dt;
-      if (s.rgT <= 0) { s.rgT = 6.6 / fr; s.a += 0.17; g.ring(e.x, e.z - 0.8, hard ? 22 : 20, 3.4, s.a, g.BK.BIG); }
+      if (s.rgT <= 0) { s.rgT = 6.0 / fr; s.a += 0.17; g.ring(e.x, e.z - 0.8, hard ? 22 : 20, 3.4, s.a, g.BK.BIG); }
       // the star flares in its cage (0.6 s: the tell, a swelling glare at the centre) and spits two fans of big orbs
       // at the jet through the petals, the second slower and half a step round: a staggered wall to slip through twice
       s.cfT = (s.cfT ?? 3.0) - dt;
@@ -885,7 +887,7 @@ function omegaAI() {
         if (s.cfW <= 0) {
           const cz = e.z - 0.8, a = g.aim(e.x, cz);
           if (s.cfQ === 0) { s.cfA = a; g.fan(e.x, cz, a, 7, 1.1, 5.2, g.BK.BIG); s.cfQ = 1; s.cfW = 0.28; g.audio.play('hitArmor', { vol: 0.45, pitch: -4 }); }
-          else { g.fan(e.x, cz, s.cfA, 6, 1.1 * 5 / 6, 4.5, g.BK.BIG); s.cfQ = undefined; s.cfT = 7.0 / fr; }
+          else { g.fan(e.x, cz, s.cfA, 6, 1.1 * 5 / 6, 4.5, g.BK.BIG); s.cfQ = undefined; s.cfT = 5.8 / fr; }
           g.fx.p.emit(e.x, 0.6, cz, 0, 0, 0, 0.25, 1.2, 3.5, ST_A, ST_B, F.RING, 0, OPT_FLAT);
         }
       }
@@ -923,7 +925,7 @@ function omegaAI() {
           if (s.mode === 'p2' && es.fq & 1) { g.shoot(mx, mz, es.ang - 0.26, 10, g.BK.NEEDLE); g.shoot(mx, mz, es.ang + 0.26, 10, g.BK.NEEDLE); }
         }
         if (es.mt > 0.6) {
-          es.st = 'idle'; es.t = (2.7 + k * 0.35) / fr;
+          es.st = 'idle'; es.t = (2.4 + k * 0.35) / fr;
           // phase 2: as the stream ends the lit lens weeps a fan of big orbs after the jet
           if (s.mode === 'p2') {
             const m = g.muzzlePos(o), mx = m.x, mz = m.z;
@@ -934,12 +936,12 @@ function omegaAI() {
       }
     }
     if (s.mode === 'p2') {
-      // the halo's clockwork: half its nodes in turn shed an orb out along the way it turns (a galaxy); every fourth
+      // the halo's clockwork: half its nodes in turn shed an orb out along the way it turns (a galaxy); every third
       // volley the orbs are big ones
       s.ckT = (s.ckT ?? 1.0) - dt;
       if (s.ckT <= 0 && halo) {
         s.ckT = 0.46 / fr; s.ck = (s.ck || 0) + 1;
-        const kind = s.ck % 4 === 0 ? g.BK.BIG : g.BK.ORB;
+        const kind = s.ck % 3 === 0 ? g.BK.BIG : g.BK.ORB;
         for (let k = s.ck & 1; k < 12; k += 2) {
           const m = g.muzzlePos(halo, k), mx = m.x, mz = m.z, rad = Math.atan2(mx - e.x, mz - (e.z - 0.8));
           g.shoot(mx, mz, rad - 0.85, 3.8, kind);
@@ -956,16 +958,20 @@ function omegaAI() {
       s.ct = (s.ct || 0) - dt;
       if (cyc < 4.2) {                          // stellar wind: four arms of curling orbs
         if (s.ct <= 0) { s.ct = 0.21 / fr; s.a += 0.23 * dir; for (let k = 0; k < 4; k++) curve(g, g.shoot(cx, cz, s.a + (k * TAU) / 4, 4.4), 1.4 * dir); }
-      } else if (cyc > 5.4 && cyc < 8.6) {      // supernovas: two rings at once, a flower
+      } else if (cyc < 5.4) {                   // the lull: the star flares (0.45 s: the tell) and spits a fan of big orbs
+        const key = Math.floor(s.cyc / 12);
+        if (cyc > 4.3 && s.sfK !== key) { s.sfK = key; s.sfW = 0.45; g.fx.p.emit(cx, 1.0, cz, 0, 0, 0, 0.45, 0.6, 4.2, WH_A, ST_B, F.FLARE, 0, NO_DRAG); g.audio.play('lock', { vol: 0.45, pitch: -6 }); }
+        if (s.sfW > 0 && (s.sfW -= dt) <= 0) { g.fan(cx, cz, g.aim(cx, cz), 9, 1.3, 5.4, g.BK.BIG); g.audio.play('hitArmor', { vol: 0.45, pitch: -4 }); }
+      } else if (cyc < 8.6) {                   // supernovas: two rings at once, a flower
         if (s.ct <= 0) {
-          s.ct = 1.3 / fr; s.b += 0.4;
+          s.ct = 1.0 / fr; s.b += 0.4;
           const n = hard ? 16 : 14;
           g.ring(cx, cz, n, 3.5, s.b, g.BK.BIG); g.ring(cx, cz, n, 4.9, s.b + Math.PI / n);
           g.fx.p.emit(cx, 0.4, cz, 0, 0, 0, 0.3, 1.5, 6, ST_A, ST_B, F.RING, 0, OPT_FLAT);
           g.audio.play('hitArmor', { vol: 0.4, pitch: -6 });
         }
       } else if (cyc > 9.2 && cyc < 10.6) {     // starfall: aimed needle fans
-        if (s.ct <= 0) { s.ct = 0.55 / fr; g.fan(cx, cz, g.aim(cx, cz), hard ? 9 : 7, 0.95, 8.2, g.BK.NEEDLE); }
+        if (s.ct <= 0) { s.ct = 0.5 / fr; g.fan(cx, cz, g.aim(cx, cz), hard ? 9 : 8, 0.95, 8.2, g.BK.NEEDLE); }
       }
       // below 60 %: singularity mines thrown out to the jet's flanks as the starfall ends, so they settle and arm in the
       // lull and implode into the next stellar wind (later loops: a second pair between the wind and the supernovas)
@@ -1016,7 +1022,7 @@ function omegaAI() {
     if (s.rfT <= 0 && !(s.rfW > 0)) { s.rfW = 0.45; g.fx.p.emit(cx0, 1.0, cz0, 0, 0, 0, 0.45, 0.6, 3.6, RED_A, RED_B, F.FLARE, 0, NO_DRAG); }
     if (s.rfW > 0) {
       s.rfW -= dt;
-      if (s.rfW <= 0) { s.rfT = (rage ? 2.8 : 4.2) / fr; g.fan(cx0, cz0, g.aim(cx0, cz0), rage ? 7 : 5, rage ? 1.05 : 0.8, 5.6, g.BK.BIG); g.audio.play('hitArmor', { vol: 0.45, pitch: -9 }); }
+      if (s.rfW <= 0) { s.rfT = (rage ? 2.6 : 3.6) / fr; g.fan(cx0, cz0, g.aim(cx0, cz0), rage ? 7 : 5, rage ? 1.05 : 0.8, 5.6, g.BK.BIG); g.audio.play('hitArmor', { vol: 0.45, pitch: -9 }); }
     }
   };
 }

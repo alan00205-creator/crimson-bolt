@@ -264,7 +264,7 @@ function brood(g, src, x, z, a0, n, fan = 0.5, gap = 0.2) {
 // nebula stinger
 // --------------------------------------------------------------------------------
 // Swings in from the top to a perch in the upper screen, turned to face the jet. Then, `strikes` times: it curls
-// its tail up over its back (0.6 s: the venom bulb blazes and it hisses — the tell), strikes (two venom pincers
+// its tail up over its back (0.6 s: the venom bulb blazes and it hisses — the tell), strikes (three venom pincers
 // 0.15 s apart from the sting, each pair bowing in to cross where the jet was), recoils and hops to a new perch
 // nearer the jet's column. Then it flies off. The first curl comes during the last 0.45 s of the swoop in, so
 // the first strike lands as it settles on its perch.
@@ -293,16 +293,16 @@ function stingAI(x0, strikes = 3, zf = 0.24) {
       e.x = s.tx + Math.sin(s.mt * 40) * 0.02;
       if (ud.setCurl) ud.setCurl(Math.min(1, s.mt / 0.55));
       if (s.mt > 0.6) { s.mode = 'strike'; s.mt = 0; s.q = 0; }
-    } else if (s.mode === 'strike') {            // two pincers down at the jet
-      if (s.q < 2 && s.mt >= s.q * 0.15) {
+    } else if (s.mode === 'strike') {            // three pincers down at the jet
+      if (s.q < 3 && s.mt >= s.q * 0.15) {
         s.q++;
         if (g.canFire(e)) {
           const m = g.muzzlePos(ud.tip), mx = m.x, mz = m.z;
-          pincer(g, mx, mz, p.x, p.z, 7.6, s.q === 1 ? 0.42 : 0.62, g.BK.NEEDLE);
+          pincer(g, mx, mz, p.x, p.z, 7.6, s.q === 1 ? 0.42 : s.q === 2 ? 0.62 : 0.52, g.BK.NEEDLE);
           if (s.q === 1) { g.audio.play('missile', { vol: 0.3, pitch: 7 }); sporeBurst(g, mx, mz, 4, 0.6); }
         }
       }
-      if (s.mt > 0.4) { s.mode = 'recoil'; s.mt = 0; s.n++; }
+      if (s.mt > 0.5) { s.mode = 'recoil'; s.mt = 0; s.n++; }
     } else if (s.mode === 'recoil') {
       if (ud.setCurl) ud.setCurl(Math.max(0, 1 - s.mt / 0.3));
       if (s.mt > 0.35 / Math.min(1.3, g.diff.fr)) {
@@ -355,7 +355,7 @@ function crystalAI(x0, zf = 0.22, stay = 10) {
           for (let q = 0; q < 3; q++) g.shoot(mx, mz, a, 6.0 + q * 1.5, g.BK.NEEDLE);
         }
         const m = g.muzzlePos(e.mesh, 6), mx = m.x, mz = m.z;
-        g.fan(mx, mz, g.aim(mx, mz), 5, 0.7, 6.0, g.BK.BIG);
+        g.fan(mx, mz, g.aim(mx, mz), 7, 0.95, 6.0, g.BK.BIG);
       }
       shatter(g, e.x, e.z, 10, 0.8);
       g.fx.p.emit(e.x, 0.4, e.z, 0, 0, 0, 0.25, 1.4, 4.5, XT_A, XT_B, F.GLOW, 0, NO_DRAG);
@@ -607,9 +607,10 @@ function spawnLeviathan(g) {
 //     the crystal spires grow out of their sockets — the side spires fire double rings (an inner ring and a faster
 //     outer ring half a step round: a lattice, at times laid on the jet in big orbs) and refract needle lines that
 //     converge on the jet, the lance spire tracks the jet, locks (its beam flares: the telegraph; a lattice comes
-//     with it) and fires a stream of needles down the lane with two refracted side streams → p3 once the spires
-//     are gone (or after 40 s): the ribs open on the brood-heart — galaxy spirals (three arms of orbs that curl as
-//     they fly), aimed fans of big orbs, breathing rings, a breather; low on HP it flings broods and homing mines.
+//     with it) and fires a stream of needles down the lane with two refracted side streams, the spent tip shedding
+//     a fan of big shards → p3 once the spires are gone (or after 40 s): the ribs open on the brood-heart — galaxy
+//     spirals (three arms of orbs that curl as they fly), aimed fans of big orbs, breathing rings, a breather; low
+//     on HP it flings broods and homing mines.
 // Parts left alive keep firing in the later phases at a reduced rate.
 const NM_FIGHT_P1 = 44, NM_FIGHT_P2 = 40;
 function nemesisAI() {
@@ -747,7 +748,7 @@ function nemesisAI() {
       // fan that tracked it too would corner it)
       s.pfT = (s.pfT ?? 3.4) - dt;
       if (s.pfT <= 0) {
-        s.pfT = 4.0 / fr; s.pfQ = 0.4; s.pfA = Math.sin(s.pt * 0.9) * 0.3;
+        s.pfT = 3.6 / fr; s.pfQ = 0.4; s.pfA = Math.sin(s.pt * 0.9) * 0.3;
         const m = g.muzzlePos(e.mesh); g.fan(m.x, m.z, s.pfA, 7, 1.38, 5.6, g.BK.BIG);
       }
       if (s.pfQ > 0) {
@@ -767,7 +768,7 @@ function nemesisAI() {
     if ((pL || pR) && s.grow >= 1) {
       s.prT = (s.prT ?? 1.0) - dt * spMul;
       if (s.prT <= 0) {
-        s.prT = (2.1 / fr) * held; s.bk ^= 1; s.vq = (s.vq || 0) + 1;
+        s.prT = (1.85 / fr) * held; s.bk ^= 1; s.vq = (s.vq || 0) + 1;
         const pt = (s.bk ? pL : pR) || pL || pR, m = g.muzzlePos(pt.obj), mx = m.x, mz = m.z, n = hard ? 14 : 12;
         const a = g.aim(mx, mz), ca = Math.cos(a), sa = Math.sin(a);
         s.b = s.vq & 2 ? a : s.b + 0.37;
@@ -804,7 +805,11 @@ function nemesisAI() {
           const m = g.muzzlePos(lo), mx = m.x, mz = m.z;
           g.shoot(mx, mz, ang - 0.48, 9.5, g.BK.NEEDLE); g.shoot(mx, mz, ang + 0.48, 9.5, g.BK.NEEDLE);
         }
-        if (s.lt > 0.75) { s.lance = 'idle'; s.lt = (s.mode === 'p2' ? 1.6 * held : 3.2) / fr; }
+        if (s.lt > 0.75) {
+          s.lance = 'idle'; s.lt = (s.mode === 'p2' ? 1.6 * held : 3.2) / fr;
+          // phase 2: the spent tip sheds its charge as a fan of big shards after the jet
+          if (s.mode === 'p2') { const m = g.muzzlePos(lo), mx = m.x, mz = m.z; g.fan(mx, mz, g.aim(mx, mz), 7, 1.1, 5.4, g.BK.BIG); shatter(g, mx, mz, 5, 0.5); }
+        }
       }
     } else if (lu && !pC) { lu.setBeam(0); lu.setCharge(0); }
     if (s.mode !== 'p3' || !core || s.open < 0.85) return;

@@ -37,7 +37,7 @@ export const ENEMY = {
   s8_watcher: { hp: 90, score: 3000, radius: 1.3, air: true, explode: 1.9, debris: 12, medal: 2, prewarm: 4 },
   // a fractal construct splits when it dies (its AI plays the split, see fractalAI): three sizes, one model; the
   // splits are the answer to a kill, so none of them fires revenge shots
-  s8_fractal: { hp: 60, score: 2000, radius: 1.35, air: true, explode: 1.8, debris: 10, medal: 1, noRevenge: true, prewarm: 3 },
+  s8_fractal: { hp: 60, score: 2000, radius: 1.35, air: true, explode: 1.8, debris: 10, medal: 1, noRevenge: true, prewarm: 4 },
   s8_frag: { hp: 7, score: 400, radius: 0.75, air: true, explode: 1.1, debris: 5, medal: 0.3, noRevenge: true, model: 's8_fractal', prewarm: 9 },
   s8_shard: { hp: 1.5, score: 100, radius: 0.45, air: true, explode: 0.6, debris: 3, medal: 0.12, noRevenge: true, noHpSeg: true, model: 's8_fractal', prewarm: 18 },
   // a mine that is shot pops (no revenge: it would fire from where the implosion would have been)
@@ -657,13 +657,15 @@ function omegaHull(e, s) {
   }
   if (e.def !== d) e.def = d;
 }
-/** OMEGA's singularity mines: a pair thrown from the star (cx, cz) out to the jet's flanks — 3.4 to each side and 3.2
- *  above it, inside the screen (one the edge pushes in toward the jet settles higher, clear of it) */
+/** OMEGA's singularity mines: a pair thrown from the star (cx, cz) out to the jet's flanks — 3.2 above it and 4.8 from
+ *  it (beyond canFire's reach, or the ring would fizzle), inside the screen (one the edge pushes in toward the jet
+ *  settles higher, clear of it) */
 function omegaMines(g, cx, cz) {
   const p = g.player, v = g.view;
   for (let sx = -1; sx <= 1; sx += 2) {
     let tz = clamp(p.z - 3.2, cz + 5, v.zBottom - 4);
-    const hw = v.hw(tz) - 2.4, tx = clamp(p.x + sx * 3.4, -hw, hw);
+    const dz = p.z - tz, ox = Math.sqrt(Math.max(11.6, 23 - dz * dz));
+    const hw = v.hw(tz) - 2.4, tx = clamp(p.x + sx * ox, -hw, hw);
     if (Math.abs(tx - p.x) < 2.6) tz = Math.max(cz + 5, tz - 1.6);
     g.spawn('s8_mine', { x: cx + sx * 0.8, z: cz + 0.6, ai: mineAI(0, 0, 3.6, 0, tx, tz) });
   }

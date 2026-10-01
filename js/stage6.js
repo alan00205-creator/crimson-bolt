@@ -34,7 +34,9 @@ const live = (pt) => (pt && !pt.dead ? pt : null);
 
 // Enemy definitions (see the field list at the top of stage.js).
 export const ENEMY = {
-  s6_skimmer: { hp: 5, score: 300, radius: 0.8, air: true, explode: 0.9, debris: 6, medal: 0.2, prewarm: 16 },
+  // skimmers are the swarm fodder (streams of five to eight, skippers in threes): like the stage-7 swarmers they
+  // never answer a kill with a revenge shot — a stream mown down would otherwise send a wall of slow orbs back
+  s6_skimmer: { hp: 5, score: 300, radius: 0.8, air: true, explode: 0.9, debris: 6, medal: 0.2, noRevenge: true, prewarm: 20 },
   s6_raider: { hp: 22, score: 1200, radius: 1.2, air: true, explode: 1.4, debris: 10, medal: 0.6, prewarm: 6 },
   s6_rock: { hp: 14, score: 250, radius: 0.95, air: true, explode: 1.2, debris: 9, noRevenge: true, prewarm: 8 },
   s6_sail: { hp: 40, score: 2000, radius: 1.4, air: true, explode: 1.6, debris: 12, medal: 1, prewarm: 5 },
@@ -44,6 +46,9 @@ export const ENEMY = {
   // are gone or 16 s have passed. The coils are armour and never a target (bodyTarget: false): shots, locks
   // and missiles go for the spines, the stinger and the eye; hp is only a backstop. keepOff holds the jet 6.5
   // below the head (the coils trail along the same figure of eight, so they stay out of its reach too).
+  // No hull, on purpose: the coils cross in front of the eye and the spines on every loop of the eight, and
+  // armour there would eat the shots aimed through them (measured with a coil-shaped hull: a level-3 vulcan
+  // no longer kills the eye before the 46 s retreat, a level-6 laser takes 25–38 s instead of 20).
   basilisk: {
     hp: 9999, score: 40000, radius: 1.0, air: true, explode: 3.4, debris: 32, midboss: true, noRevenge: true, bodyTarget: false, keepOff: 6.5, prewarm: 1,
     parts: [
@@ -54,7 +59,8 @@ export const ENEMY = {
   },
   // boss: parts in hit-test order. The corona wings start swept back and sealed (not targets) and count in the
   // HP bar from the start; the core is armoured under its petals until phase 3. hull: the central hull aft of
-  // the core (the spine and the bridge; never in front of a part, and narrower than the aft turret pair).
+  // the core (the spine and the bridge; never in front of a part, and narrower than the aft turret pair);
+  // while the wings are folded the unit wears HELIOS_FOLDED, whose hull spans them (shots spark off).
   helios: {
     hp: 1, score: 0, radius: 5.0, air: true, explode: 4, debris: 40, boss: true, model: 'helios', prewarm: 1,
     parts: [
@@ -66,6 +72,10 @@ export const ENEMY = {
     hull: { hw: 1.0, z0: -6.6, z1: -2.0 },
   },
 };
+// The folded wings lie along the flanks from the pivots (|dx| ≈ 2.3, dz ≈ −2.5) back past the drives (dz ≈ −8,
+// |dx| up to ≈ 6.8): one box over both, starting behind the aft turrets' circles (they and the launchers are
+// tested first and take their own hits) — its front edge sits ≈ 1 under the fans' slanted leading edges.
+const HELIOS_FOLDED = { ...ENEMY.helios, hull: { hw: 6.9, z0: -8.1, z1: -3.2 } };
 
 const MIDBOSS_AT = 590;
 const BOSS_AT = 1275;
@@ -89,6 +99,7 @@ const DUST_A = [0.42, 0.38, 0.34, 0.6], DUST_B = [0.2, 0.18, 0.16, 0];    // roc
 const CHIP_A = [0.55, 0.5, 0.44, 1], CHIP_B = [0.3, 0.27, 0.24, 0];       // rock chips
 const OPT_PUFF = { drag: 1.2 }, OPT_ICE = { drag: 0.8 }, OPT_DUST = { drag: 1.4, vrot: 0 }, OPT_CHIP = { drag: 2, stretch: 0.04 };
 const OPT_RING = { flat: true, rot: 0, drag: 0 };
+const SAIL_RING_A = [1.4, 1.1, 2.2, 0.8], SAIL_RING_B = [0.3, 0.2, 0.6, 0];   // a sail's curtain leaving the film
 /** a puff of golden plasma exhaust behind a unit (dx, dz: the exhaust direction on the plane) */
 function plasmaPuff(g, x, z, dx, dz, s = 0.35) {
   g.fx.p.emit(x + rnd(-0.08, 0.08), 0.02, z + rnd(-0.08, 0.08), dx * rnd(1, 2.5), 0, dz * rnd(1, 2.5), rnd(0.18, 0.32), s, s * 0.3, SUN_A, SUN_B, F.GLOW, 0, OPT_PUFF);
@@ -197,7 +208,7 @@ function sailAI(x0, side = 1, zf = 0.24, cycles = 2) {
         s.wt = 0.34; s.walls--;
         const m = g.muzzlePos(e.mesh, 2), mx = m.x, mz = m.z;
         if (g.canFire(e)) curtain(g, mx, mz, 5, (ud.spread || 1.9), 5.4);
-        g.fx.p.emit(mx, 0.3, mz, 0, 0, 0, 0.3, 1.2, 4.4, [1.4, 1.1, 2.2, 0.8], [0.3, 0.2, 0.6, 0], F.RING, 0, OPT_RING);
+        g.fx.p.emit(mx, 0.3, mz, 0, 0, 0, 0.3, 1.2, 4.4, SAIL_RING_A, SAIL_RING_B, F.RING, 0, OPT_RING);
       }
       if (s.mt > 0.8) {
         s.n++;
@@ -470,6 +481,7 @@ function gazeLine(g, x, z, ang, k) {
   }
 }
 // Death: it thrashes, blasts run up the coils from the stinger to the head, the eye bursts, the items.
+const BAS_WAVE_A = [2.6, 1.9, 0.9, 1], BAS_WAVE_B = [2.8, 2.4, 1.6, 1];
 function basiliskDeath(e, dt, g) {
   const s = e.s, ud = e.mesh.userData;
   s.dieT = (s.dieT || 0) + dt;
@@ -488,8 +500,8 @@ function basiliskDeath(e, dt, g) {
   }
   if (t > 1.8) {
     g.fx.explosion(e.x, 0.4, e.z, 4, { debris: 30, color: ud.debrisColor });
-    g.fx.shockwave(e.x, 0.1, e.z, 18, [2.6, 1.9, 0.9, 1], 0.8);
-    g.fx.shockwave(e.x, 0.1, e.z, 11, [2.8, 2.4, 1.6, 1], 0.5);
+    g.fx.shockwave(e.x, 0.1, e.z, 18, BAS_WAVE_A, 0.8);
+    g.fx.shockwave(e.x, 0.1, e.z, 11, BAS_WAVE_B, 0.5);
     for (let k = 2; k < BAS_N; k += 3) g.fx.explosion(s.bx[k], 0.3, s.bz[k], 1.8, { debris: 8, color: ud.debrisColor });
     g.shake.add(0.7); g.ui.flash(0.5);
     g.audio.play('explodeL');
@@ -556,6 +568,7 @@ const FLARE_RING_A = [2.6, 1.6, 0.6, 0.9], FLARE_RING_B = [0.8, 0.3, 0.05, 0];
 //     two woven rings); low on HP it rages faster.
 // Parts left alive keep firing in the later phases at a reduced rate.
 const BAR_ROW = 118;   // 16 px under the boss bar
+const CME_WAVE = [2.6, 1.8, 0.8, 1];   // a coronal mass ejection's shock front
 function heliosAI() {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, v = g.view;
@@ -569,6 +582,7 @@ function heliosAI() {
       s.wg = [g.partByKey(e, 'wingL'), g.partByKey(e, 'wingR')];
       s.core = g.partByKey(e, 'core');
       for (const w of s.wg) if (w) w.dead = true;                 // swept back and sealed until phase 2
+      e.def = HELIOS_FOLDED;                                       // …and armour: shots spark off the folded fans
       s.flT = 2.2; s.flSide = 0; s.flCh = -1; s.prowT = 3.0; s.focT = 1.2; s.focSide = 0; s.focCh = -1; s.promT = 3.5;
       if (ud.reset) ud.reset();
     }
@@ -606,7 +620,10 @@ function heliosAI() {
     if (s.mode !== 'p1' && s.spread < 1) {            // the corona wings swing out
       s.spread = Math.min(1, s.spread + dt / 2.0);
       if (ud.setWings) ud.setWings(s.spread);
-      if (s.spread > 0.6) for (const w of s.wg) if (w && w.dead && !w.obj.userData.destroyed) w.dead = false;
+      if (s.spread > 0.6) {
+        for (const w of s.wg) if (w && w.dead && !w.obj.userData.destroyed) w.dead = false;
+        e.def = ENEMY.helios;                                      // the wings are targets now: back to the spine's box
+      }
       if (Math.random() < 0.5) g.fx.smokePuff(e.x + (Math.random() < 0.5 ? -2.4 : 2.4), 0.6, e.z - 2.5 + rnd(-0.5, 0.5), 0.6, 0.6);
     }
     const wL = live(s.wg[0]), wR = live(s.wg[1]);
@@ -736,7 +753,7 @@ function heliosAI() {
       s.b += 0.5;
       g.ring(cx, cz, n, 3.9, s.b * (TAU / (2 * n)), g.BK.BIG);
       if (rage || hard) g.ring(cx, cz, n, 5.1, (s.b + 1) * (TAU / (2 * n)));
-      g.fx.shockwave(cx, 0.3, cz, 12, [2.6, 1.8, 0.8, 1], 0.6);
+      g.fx.shockwave(cx, 0.3, cz, 12, CME_WAVE, 0.6);
       g.shake.add(0.35); g.ui.flash(0.15); g.audio.play('explodeL', { vol: 0.7 });
     }
   };
@@ -757,7 +774,8 @@ function aimPartH(g, e, pt, dt, rate) {
 // Death: the guns still standing blow in turn while blasts run over the wings and hull; the captive star goes
 // critical — it swells white, the petals are flung off, a nova flash tears the wings away — then the wreck is
 // drawn back up into the Sun, shrinking, burning.
-const NOVA_A = [3.0, 2.6, 1.8, 1], NOVA_B = [1.4, 0.5, 0.1, 0];
+const NOVA_A = [3.0, 2.6, 1.8, 1], NOVA_B = [1.4, 0.5, 0.1, 0], NOVA_WAVE = [2.8, 2.2, 1.2, 1];
+const WRECK_WAVE_A = [2.8, 2.0, 1.0, 1], WRECK_WAVE_B = [3.0, 2.6, 1.8, 1];
 const BURN_A = [2.4, 1.2, 0.35, 0.9], BURN_B = [0.9, 0.22, 0.04, 0], OPT_BURN = { drag: 0.6, vrot: 0 };
 function heliosDeath(e, dt, g) {
   const s = e.s, ud = e.mesh.userData;
@@ -800,15 +818,15 @@ function heliosDeath(e, dt, g) {
     s.nova = true;
     g.fx.p.emit(e.x, 1.4, cz, 0, 0, 0, 0.45, 3, 16, NOVA_A, NOVA_B, F.GLOW, 0, OPT_RING);
     g.fx.explosion(e.x, 0.8, cz, 3.2, { debris: 16, color: ud.debrisColor });
-    g.fx.shockwave(e.x, 0.2, cz, 26, [2.8, 2.2, 1.2, 1], 0.9);
+    g.fx.shockwave(e.x, 0.2, cz, 26, NOVA_WAVE, 0.9);
     g.audio.play('explodeL'); g.shake.add(0.6); g.ui.flash(0.6);
   }
   if (ud.setBreak) ud.setBreak(clamp((t - 1.6) / 1.6, 0, 1));
   if (t > 2.2 && !s.final) {
     s.final = true;
     g.fx.explosion(e.x, 0.5, e.z, 3.8, { debris: 40, color: ud.debrisColor });
-    g.fx.shockwave(e.x, 0.1, e.z, 32, [2.8, 2.0, 1.0, 1], 1.0);
-    g.fx.shockwave(e.x, 0.1, e.z, 19, [3.0, 2.6, 1.8, 1], 0.8);
+    g.fx.shockwave(e.x, 0.1, e.z, 32, WRECK_WAVE_A, 1.0);
+    g.fx.shockwave(e.x, 0.1, e.z, 19, WRECK_WAVE_B, 0.8);
     g.ui.flash(0.7); g.shake.add(1);
     g.audio.play('bossDown');
     g.haptic([80, 50, 200]);
@@ -868,7 +886,10 @@ const W6 = {
     for (const [x, d, vx] of list) g.later(d, () => g.spawn('s6_rock', { x, z: -60, ai: rockAI(vx || 0, vz, rnd(0.5, 1.6), true) }));
   },
   sail(g, x0, side = 1, zf = 0.24, cycles = 2, drops) { return g.spawn('s6_sail', { x: x0 + side * 7, z: -60, ai: sailAI(x0, side, zf, cycles), drops }); },
-  comet(g, sx, ex, drops, speed) { return g.spawn('s6_comet', { x: sx, z: -60, ai: cometAI(sx, ex, speed), drops }); },
+  comet(g, sx, ex, drops, speed, drop) { return g.spawn('s6_comet', { x: sx, z: -60, ai: cometAI(sx, ex, speed, drop), drops }); },
+  // three comets in a staggered rake from the left (the shards shed slower than a lone comet's: three racks
+  // converging at once would bury the screen)
+  rake(g, xs, gap = 0.85) { xs.forEach(([sx, ex], i) => g.later(i * gap, () => W6.comet(g, sx, ex, undefined, undefined, 0.46))); },
 };
 
 // --------------------------------------------------------------------------------
@@ -915,7 +936,7 @@ const TIMELINE = makeTimeline((at) => {
   at(728, (g) => { W6.skip(g, 1, 0.14, 5, 0.45); g.later(1.4, () => W6.riders(g, [-4, 4], 0.4)); });
   at(750, (g) => { W6.sail(g, -5, -1, 0.2, 2); W6.sail(g, 0, 1, 0.3, 2); W6.sail(g, 5, 1, 0.2, 2); g.later(2.5, () => W.carrier(g, 0, ['P'])); });
   at(776, (g) => { W6.riders(g, [-6, -1, 4], 0.5); g.later(1.6, () => W6.stream(g, -1, 0.22, 6)); });
-  at(798, (g) => { W6.comet(g, -8, 0); W6.comet(g, -4, 4); g.later(0.6, () => W6.comet(g, 0, 8)); });
+  at(798, (g) => W6.rake(g, [[-8, 0], [-4, 4], [0, 8]]));
   at(822, (g) => { W6.sail(g, -4, -1, 0.22, 2); W6.sail(g, 4, 1, 0.22, 2); g.later(1, () => W6.stream(g, 1, 0.34, 7)); });
   at(846, (g) => W.carrier(g, -3, ['P', 'S']));
   at(858, (g) => { W6.riders(g, [-6, -2, 2, 6], 0.4, 0.36); g.later(2.6, () => W6.skip(g, -1, 0.14, 4)); });
@@ -927,11 +948,11 @@ const TIMELINE = makeTimeline((at) => {
   at(970, (g) => { W6.stream(g, 1, 0.2, 7); g.later(1.4, () => W6.stream(g, -1, 0.3, 7)); });
   at(988, (g) => { W6.comet(g, -7, 6); g.later(1.2, () => W6.comet(g, 7, -6, ['B'])); g.later(2.2, () => W6.skip(g, 1, 0.16, 4)); });
   // SATURN'S RINGS ─────────────────────────────────────
-  at(1006, (g) => { W6.stream(g, 1, 0.18, 9, 0.34); g.later(1.0, () => W6.stream(g, -1, 0.3, 9, 0.34)); });
+  at(1006, (g) => { W6.stream(g, 1, 0.18, 7, 0.34); g.later(1.5, () => W6.stream(g, -1, 0.3, 7, 0.34)); });
   at(1028, (g) => { W6.riders(g, [-5, 0, 5], 0.5, 0.36); g.later(1.8, () => W6.rocks(g, [[-6, 0, 0.8], [6, 0.4, -0.8]])); });
   at(1046, (g) => { W6.sail(g, -5, -1, 0.2, 2); W6.sail(g, 5, 1, 0.2, 2); g.later(1.6, () => W6.sail(g, 0, 1, 0.3, 2)); });
   at(1070, (g) => { W.carrier(g, 3, ['P']); g.later(1.2, () => W6.skip(g, -1, 0.14, 4)); });
-  at(1086, (g) => { W6.comet(g, -8, -1); g.later(0.5, () => W6.comet(g, -3, 3)); g.later(1.0, () => W6.comet(g, 3, 8)); g.later(2.2, () => W6.stream(g, 1, 0.3, 7)); });
+  at(1086, (g) => { W6.rake(g, [[-8, -1], [-3, 3], [3, 8]], 0.9); g.later(2.8, () => W6.stream(g, 1, 0.3, 7)); });
   at(1110, (g) => { W6.skip(g, 1, 0.14, 5, 0.45); g.later(1.2, () => W6.stream(g, -1, 0.3, 7)); g.later(2.4, () => W6.sail(g, 4, 1, 0.24, 1)); });
   at(1132, (g) => { W6.riders(g, [-6, -2, 2, 6], 0.4, 0.34); g.later(2.2, () => W6.comet(g, -7, 5)); });
   at(1154, (g) => { W6.sail(g, -4, -1, 0.22, 2); W6.sail(g, 4, 1, 0.22, 2); g.later(2, () => W6.comet(g, 0, 6)); });

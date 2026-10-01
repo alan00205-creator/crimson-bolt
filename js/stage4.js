@@ -626,13 +626,18 @@ function aegisAI() {
         }
       } else if (s.gun === 'fire') {             // the rail: big orbs down the lane, needles along its edges
         cu.setCharge(Math.max(0, 1 - s.gunT / 0.6));
-        const ang = co.rotation.y + e.yaw - Math.PI, px = Math.cos(ang), pz = -Math.sin(ang);
+        const ang = co.rotation.y + e.yaw - Math.PI, ux = Math.sin(ang), uz = Math.cos(ang), px = uz, pz = -ux;
+        // the muzzle points at the jet and sits ~5.7 in front of the hub, so a jet held close under the boss
+        // would be inside shoot()'s point-blank radius of it and the whole rail would fizzle. The rail starts
+        // up the barrel instead: never less than 4.3 short of the jet, measured down the lane (so a jet that
+        // has stepped out of the lane is still clear of the flanking needles), on the same telegraphed line.
+        const m = g.muzzlePos(co), along = (g.player.x - m.x) * ux + (g.player.z - m.z) * uz;
+        const back = clamp(4.3 - along, 0, 4.4), rx = m.x - ux * back, rz = m.z - uz * back;
         s.rst -= dt; s.nst -= dt;
-        while (s.rst <= 0 && s.gunT < 0.5) { s.rst += 0.042; const m = g.muzzlePos(co); g.shoot(m.x, m.z, ang, 15, g.BK.BIG); }
+        while (s.rst <= 0 && s.gunT < 0.5) { s.rst += 0.042; g.shoot(rx, rz, ang, 15, g.BK.BIG); }
         while (s.nst <= 0 && s.gunT < 0.5) {
           s.nst += 0.09;
-          const m = g.muzzlePos(co), mx = m.x, mz = m.z;
-          g.shoot(mx + px * 0.95, mz + pz * 0.95, ang, 13, g.BK.NEEDLE); g.shoot(mx - px * 0.95, mz - pz * 0.95, ang, 13, g.BK.NEEDLE);
+          g.shoot(rx + px * 0.95, rz + pz * 0.95, ang, 13, g.BK.NEEDLE); g.shoot(rx - px * 0.95, rz - pz * 0.95, ang, 13, g.BK.NEEDLE);
         }
         if (s.gunT > 0.65) { s.gun = 'cool'; s.gunT = 0; }
       } else if (s.gun === 'cool') {
@@ -955,4 +960,5 @@ export const STAGE = {
   // enemies toughen through the debris storm and on the station's approach
   hpSeg: (d) => (d < 420 ? 1 : d < 800 ? 1.15 : 1.3),
   scroll: 7, warnScroll: 3, bossScroll: 2.2,
+  bulletRim: 1,   // hard dark bullet rims: the day side's white cloud and the pink limb glow are bright
 };

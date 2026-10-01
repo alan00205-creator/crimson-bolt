@@ -227,7 +227,9 @@ export class Game {
     }
     this.setAircraft(this.ac.id, this.paint); // the current jet (+ drones) come out of their pools first
     for (const [type, def] of Object.entries(ENEMY)) this.pools[type].prewarm(def.prewarm ?? (def.boss || def.midboss ? 1 : 4));
-    const counts = { item_P: 4, item_S: 2, item_B: 2, item_medal: 16, item_1UP: 1 };
+    // medals: the big kills shower them (OMEGA's supernova drops 24 at once, the other bosses 16-18,
+    // often onto a field still holding a destroyed part's few): none built mid-fight
+    const counts = { item_P: 4, item_S: 2, item_B: 2, item_medal: 30, item_1UP: 1 };
     for (const [k, n] of Object.entries(counts)) this.pools[k].prewarm(n);
     for (const ac of AIRCRAFT) {
       if (this.playerKey === 'player:' + ac.id) continue; // already built and in use
@@ -331,6 +333,7 @@ export class Game {
     this.loop = loop;
     this.stageIdx = clamp(stage | 0, 0, STAGES.length - 1);
     this.stage = STAGES[this.stageIdx];
+    this.fx.setAirless(this.stage.airless, this.stage.dust); // stages 4–8: no smoke in a vacuum
     const ac = this.ac;
     this.applyUpgrades();
     if (!keepScore) {

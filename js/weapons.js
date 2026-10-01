@@ -701,7 +701,7 @@ SHOT[SK.HOMING] = {
     ang += clamp(da, -8 * dt, 8 * dt);
     ps.vx[i] = Math.sin(ang) * sp; ps.vz[i] = Math.cos(ang) * sp;
     ps.trail[i] -= dt;
-    if (ps.trail[i] <= 0) { ps.trail[i] = 0.022; g.fx.missileTrail(ps.x[i], ps.z[i], 0.6, 1.8, 0.5); }
+    if (ps.trail[i] <= 0) { ps.trail[i] = 0.022; g.fx.missileTrail(ps.x[i], ps.z[i], 0.6, 1.8, 0.5, ps.vx[i], ps.vz[i]); }
   },
   hit(g, i, t) {
     const ps = g.ps, x = ps.x[i], z = ps.z[i];
@@ -722,7 +722,7 @@ SHOT[SK.NUKE] = {
     const ps = g.ps;
     ps.vz[i] = Math.max(-30, ps.vz[i] - 60 * dt);
     ps.trail[i] -= dt;
-    if (ps.trail[i] <= 0) { ps.trail[i] = 0.022; g.fx.missileTrail(ps.x[i], ps.z[i] + 0.3, 1.4, 0.6, 2.2); }
+    if (ps.trail[i] <= 0) { ps.trail[i] = 0.022; g.fx.missileTrail(ps.x[i], ps.z[i] + 0.3, 1.4, 0.6, 2.2, ps.vx[i], ps.vz[i]); }
   },
   hit(g, i, t) {
     const ps = g.ps, x = ps.x[i], z = ps.z[i];
@@ -814,7 +814,7 @@ SHOT[SK.ROCKET] = {
     ps.trail[i] -= dt;
     if (ps.trail[i] <= 0) {
       ps.trail[i] = g.fx.lowQuality ? 0.055 : 0.03;
-      g.fx.rocketTrail(ps.x[i] - (vx / sp) * 0.45, ps.z[i] - (vz / sp) * 0.45, 0.7, 1.3, 2.6);
+      g.fx.rocketTrail(ps.x[i] - (vx / sp) * 0.45, ps.z[i] - (vz / sp) * 0.45, 0.7, 1.3, 2.6, vx, vz);
     }
   },
   hit(g, i, t) {

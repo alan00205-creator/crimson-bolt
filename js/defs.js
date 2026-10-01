@@ -120,6 +120,10 @@ export const MAX_SUB_LEVEL = 4; // sub-weapon levels 1..4
 // land, air, then out into space: Earth orbit, the Moon, the Solar System, the Galaxy and the edge
 // of the Universe. The last entry is the final stage (ALL CLEAR, then the next loop from stage 1,
 // harder). theme / themeE: the one-word setting (海 SEA …) for the how-to stage list.
+// airless: out in space (stages 4–8) — no air for smoke to billow in: kills, damaged units and
+// missile / rocket exhausts leave a short dim glow and a few sparks instead of grey smoke (fx.js
+// setAirless); dust: there is ground under the fight (the Moon) — a ground blast also throws up
+// a brief low puff of regolith.
 export const STAGE_META = [
   {
     n: 1, name: 'COASTAL FRONT', zh: '沿岸前線', world: 'coastal', theme: '海', themeE: 'SEA',
@@ -140,31 +144,31 @@ export const STAGE_META = [
     mission: '擊破空中母艦 SERAPH',
   },
   {
-    n: 4, name: 'ORBITAL FRONT', zh: '軌道戰線', world: 'orbit', theme: '地球', themeE: 'EARTH',
+    n: 4, name: 'ORBITAL FRONT', zh: '軌道戰線', world: 'orbit', theme: '地球', themeE: 'EARTH', airless: true,
     boss: 'AEGIS', bossZh: '軌道防衛砲台', music: 'stage4', bossMusic: 'boss4', startSfx: 'stageStart4',
     warn: { e: 'ORBITAL CANNON APPROACHING', s: '軌道防衛砲台 接近中' },
     mission: '擊破軌道防衛砲台 AEGIS',
   },
   {
-    n: 5, name: 'LUNAR SIEGE', zh: '月面攻防', world: 'moon', theme: '月球', themeE: 'MOON',
+    n: 5, name: 'LUNAR SIEGE', zh: '月面攻防', world: 'moon', theme: '月球', themeE: 'MOON', airless: true, dust: true,
     boss: 'SELENE', bossZh: '月面要塞', music: 'stage5', bossMusic: 'boss5', startSfx: 'stageStart5',
     warn: { e: 'LUNAR FORTRESS APPROACHING', s: '月面要塞 接近中' },
     mission: '擊破月面要塞 SELENE',
   },
   {
-    n: 6, name: 'SOLAR VOYAGE', zh: '太陽系航線', world: 'solar', theme: '太陽系', themeE: 'SOLAR SYSTEM',
+    n: 6, name: 'SOLAR VOYAGE', zh: '太陽系航線', world: 'solar', theme: '太陽系', themeE: 'SOLAR SYSTEM', airless: true,
     boss: 'HELIOS', bossZh: '日冕戰艦', music: 'stage6', bossMusic: 'boss6', startSfx: 'stageStart6',
     warn: { e: 'CORONA BATTLESHIP APPROACHING', s: '日冕戰艦 接近中' },
     mission: '擊破日冕戰艦 HELIOS',
   },
   {
-    n: 7, name: 'GALACTIC STORM', zh: '銀河風暴', world: 'galaxy', theme: '銀河系', themeE: 'GALAXY',
+    n: 7, name: 'GALACTIC STORM', zh: '銀河風暴', world: 'galaxy', theme: '銀河系', themeE: 'GALAXY', airless: true,
     boss: 'NEMESIS', bossZh: '異星母艦', music: 'stage7', bossMusic: 'boss7', startSfx: 'stageStart7',
     warn: { e: 'ALIEN MOTHERSHIP APPROACHING', s: '異星母艦 接近中' },
     mission: '擊破異星母艦 NEMESIS',
   },
   {
-    n: 8, name: 'EDGE OF INFINITY', zh: '宇宙盡頭', world: 'cosmos', theme: '宇宙', themeE: 'UNIVERSE',
+    n: 8, name: 'EDGE OF INFINITY', zh: '宇宙盡頭', world: 'cosmos', theme: '宇宙', themeE: 'UNIVERSE', airless: true,
     boss: 'OMEGA', bossZh: '終焉之核', music: 'stage8', bossMusic: 'boss8', startSfx: 'stageStart8',
     warn: { e: 'FINAL CORE APPROACHING', s: '終焉之核 接近中' },
     mission: '擊破終焉之核 OMEGA',

@@ -50,6 +50,9 @@ export class UI {
       this.el.popups.appendChild(d);
       this.popPool.push({ el: d, t: 0, life: 0, x: 0, y: 0, sx: 0, sy: 0, medals: 0, sum: 0, tLast: 0, active: false });
     }
+    // the boss bar's state as updatePopups last saw it, and who moves the popups under it when it shows
+    // (game.popsUnderBar: game.js owns where popups sit under the HUD)
+    this.popBar = false; this.onPopBar = null;
     this.flashV = 0;
     this.bannerTimer = null;
   }
@@ -235,8 +238,11 @@ export class UI {
     p.el.className = 'popup ' + cls;
     p.el.textContent = text;
   }
-  // Rise for the first 0.36 s, fade over the last 0.27 s (a merged medal counter lives on).
+  // Rise for the first 0.36 s, fade over the last 0.27 s (a merged medal counter lives on). The frame
+  // the boss bar shows, popups placed under the strip a moment before are moved under the bar first.
   updatePopups(dt) {
+    const bar = !this.el.bossbar.hidden;
+    if (bar !== this.popBar) { this.popBar = bar; if (bar && this.onPopBar) this.onPopBar(); }
     for (const p of this.popPool) {
       if (!p.active) continue;
       p.t += dt;

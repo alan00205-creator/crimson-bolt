@@ -200,6 +200,8 @@ export class Game {
     this.tmpV = new THREE.Vector3();
     this.tmpS = { x: 0, y: 0 };
     this.hudRows = { w: 0, h: 0, strip: -1, bar: -1 };   // hudFloor's DOM reads, per view size
+    this.popMoved = [];                                    // popsUnderBar's popups to move
+    if (this.ui) this.ui.onPopBar = () => this.popsUnderBar();
     this.targets = [];
     for (let i = 0; i < 64; i++) this.targets.push({ x: 0, z: 0, r: 0, e: null, part: null, armored: false, uid: 0 });
     this.nTargets = 0;
@@ -1251,15 +1253,16 @@ export class Game {
   // new one sits at least a line below it, or a line above where it has risen to so far (both rise
   // the same 26 px, so the gap only closes from the second toward the first). The first clear row
   // wins; with none clear, the row with the fewest overlaps — never one ui.popup would lift into
-  // the strip.
-  popRow(pool, x, top, text, cls) {
+  // the strip. A popup moved under the boss bar (popsUnderBar) is placed `age` s into its own rise:
+  // the gap to each other popup then runs from its value now to the one once both have risen.
+  popRow(pool, x, top, text, cls, age = 0) {
     if (cls === 'medal') {
       for (let i = 0; i < pool.length; i++) {
         const q = pool[i];
         if (q.active && q.medals && q.t - q.tLast <= POP_NEAR_T && q.y >= top && Math.abs(q.sx - x) <= POP_MERGE) return q.sy;
       }
     }
-    const px = popPx(cls), w = popW(String(text), px);
+    const px = popPx(cls), w = popW(String(text), px), r0 = POP_RISE * Math.min(1, age / POP_RISE_T);
     let best = top, bestC = Infinity;
     for (let k = 0; k < POP_ROWS; k++) {
       const y = top + POP_STEP * k;
@@ -1268,10 +1271,11 @@ export class Game {
         const q = pool[i];
         if (!q.active || q.t >= q.life) continue;
         if (q.t < POP_NEAR_T && Math.abs(q.x - x) < POP_NEAR && Math.abs(q.y - y) < POP_NEAR) near++;
-        const dy = y - q.y, up = POP_RISE * Math.min(1, q.t / POP_RISE_T);
-        if (dy >= 20 || dy + up <= -20) continue;                // a line apart even for two 17 px popups
+        const dy = y - q.y, now = dy + POP_RISE * Math.min(1, q.t / POP_RISE_T) - r0;
+        const lo = now < dy ? now : dy, hi = now < dy ? dy : now;
+        if (lo >= 20 || hi <= -20) continue;                     // a line apart even for two 17 px popups
         const qpx = popPx(q.el.className), h = (px + qpx) / 2 + 3;
-        if (dy >= h || dy + up <= -h) continue;
+        if (lo >= h || hi <= -h) continue;
         if (Math.abs(q.x - x) >= (w + popW(q.el.textContent, qpx)) / 2 + POP_GAP) continue;
         c++;
       }
@@ -1279,6 +1283,31 @@ export class Game {
       if (c < bestC) { bestC = c; best = y; if (!c) break; }
     }
     return best;
+  }
+  // The boss bar has just shown (ui.updatePopups calls this in that frame, before it draws): a popup
+  // placed under the strip a moment before would rise into the bar for the rest of its life. Each one
+  // anchored above the bar's clamp row moves down to a held row (popRow, as if placed now but with its
+  // age, rise and life kept), the highest on screen first, so their order stays.
+  popsUnderBar() {
+    const pool = this.ui.popPool, mv = this.popMoved;
+    if (!pool) return;
+    const top = this.hudFloor() + POP_CLEAR;
+    mv.length = 0;
+    for (let i = 0; i < pool.length; i++) {
+      const q = pool[i];
+      if (!q.active || q.t >= q.life || q.y >= top) continue;
+      const yq = q.y - POP_RISE * Math.min(1, q.t / POP_RISE_T);
+      let j = mv.length;
+      for (; j > 0 && mv[j - 1].y - POP_RISE * Math.min(1, mv[j - 1].t / POP_RISE_T) > yq; j--) mv[j] = mv[j - 1];
+      mv[j] = q;
+      q.active = false; // not in the way of its own new row
+    }
+    for (let i = 0; i < mv.length; i++) {
+      const q = mv[i];
+      q.y = q.sy = this.popRow(pool, q.x, top, q.el.textContent, q.el.className, q.t);
+      q.active = true;
+    }
+    mv.length = 0;
   }
   // The lowest CSS-px row of the HUD's top strip, or of the boss bar while it shows (popupAt). Read
   // from the DOM once per view size (and when the boss bar first shows), never per frame; 0 while

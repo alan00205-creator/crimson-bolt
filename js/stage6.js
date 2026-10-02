@@ -37,9 +37,11 @@ export const ENEMY = {
   // skimmers are the swarm fodder (streams of five to eight, skippers in threes): like the stage-7 swarmers they
   // never answer a kill with a revenge shot — a stream mown down would otherwise send a wall of slow orbs back
   s6_skimmer: { hp: 5, score: 300, radius: 0.8, air: true, explode: 0.9, debris: 6, medal: 0.2, noRevenge: true, prewarm: 20 },
-  s6_raider: { hp: 22, score: 1200, radius: 1.2, air: true, explode: 1.4, debris: 10, medal: 0.6, prewarm: 6 },
-  // the d 414 field of six while the d 388 three, the d 326 field and the rocks the d 326 / d 364 riders kicked
-  // away still drift: 19 on a phone held upright when none is shot down (17 at 480×800; pool: that + 1)
+  // pools: prewarm ≥ 1 + the most of each the timeline puts up at once (a jet that never fires: nothing dies early).
+  // Riders: the d 364 four come in while the d 326 pair are still on screen, 6
+  s6_raider: { hp: 22, score: 1200, radius: 1.2, air: true, explode: 1.4, debris: 10, medal: 0.6, prewarm: 7 },
+  // loose rocks: the d 414 field of six while the d 388 three, the d 326 field and the rocks the d 326 / d 364
+  // riders kicked away still drift, 19 on a phone held upright (17 on a 480×800 window)
   s6_rock: { hp: 14, score: 250, radius: 0.95, air: true, explode: 1.2, debris: 9, noRevenge: true, prewarm: 20 },
   s6_sail: { hp: 40, score: 2000, radius: 1.4, air: true, explode: 1.6, debris: 12, medal: 1, prewarm: 5 },
   s6_comet: { hp: 64, score: 3000, radius: 1.2, air: true, explode: 1.9, debris: 14, medal: 1, prewarm: 4 },

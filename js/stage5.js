@@ -708,7 +708,9 @@ const SE_TEMPO = 0.7;                  // leftover guns' rate in p2 (p3: 0.5)
 // hardest of 4–6); the horn that fires next glows at its barrels for the last HORN_TELL s (and clicks as it
 // starts to charge)
 const HORN_GAP = 3.2, HORN_TELL = 0.5, CRES_N = 7, CRES_W = 0.58;
-const SE_REACH = 17;                   // the station's furthest reach up-screen of the jet's lowest row (see seleneAI)
+// the station's furthest reach up-screen of the jet's lowest row (see seleneAI): SE_REACH on the first loop,
+// SE_REACH_LATE from the second on
+const SE_REACH = 17, SE_REACH_LATE = 18;
 function seleneAI() {
   return (e, dt, g) => {
     const s = e.s, ud = e.mesh.userData, v = g.view;
@@ -725,8 +727,13 @@ function seleneAI() {
       // station: the crescent's back (≈ 7.4 up-screen of the unit on the plane) stays below the boss bar, and
       // the fortress stands no further than SE_REACH up-screen of the jet's lowest row. On a desktop view the
       // bar sets it (≈ 16.9 up); on a phone held upright the plane is a quarter deeper and the bar alone stood
-      // it ~3.6 further off, so its volleys had that much longer to open out before they reached the jet
-      const zs = Math.max(v.zTop + 10.5, zAtRow(v, BAR_ROW) + 7.8, (v.zPlayerMax ?? v.zBottom - 1.3) - SE_REACH);
+      // it ~3.6 further off, so its volleys had that much longer to open out before they reached the jet.
+      // From the second loop on it reaches only SE_REACH_LATE (the bar still sets it on a desktop view): with
+      // that loop's quicker, faster volleys, standing as near on a phone as on a desktop view made it the
+      // hardest fight of the second loop there (every other boss eases on a phone), and one unit further off
+      // halves the hits it lands (the crescents and the heart's breather fans no longer close round the jet)
+      const reach = g.loop > 1 ? SE_REACH_LATE : SE_REACH;
+      const zs = Math.max(v.zTop + 10.5, zAtRow(v, BAR_ROW) + 7.8, (v.zPlayerMax ?? v.zBottom - 1.3) - reach);
       s.stationGz = v.pToGz(zs); s.fromGz = v.gTop - 12;
       e.gx = 0;
       if (ud.reset) ud.reset();

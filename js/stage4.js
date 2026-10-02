@@ -29,11 +29,14 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 
 // Enemy definitions (see the field list at the top of stage.js).
 export const ENEMY = {
-  s4_drone: { hp: 5, score: 350, radius: 0.75, air: true, explode: 0.9, debris: 6, medal: 0.2, prewarm: 18 },
+  // pools: prewarm ≥ 1 + the most of each the timeline puts up at once (a jet that never fires: nothing dies early).
+  // Drones: the d 972 ring of eight comes in while the d 928 loops (two of six) still circle, 20 on a phone held
+  // upright (18 on a 480×800 window). Frigates: the d 532 pair while the d 468 one still crosses, 3
+  s4_drone: { hp: 5, score: 350, radius: 0.75, air: true, explode: 0.9, debris: 6, medal: 0.2, prewarm: 21 },
   // the laser satellite's circle reaches well out along its collector wings (shots used to pass through the
   // glowing blades); the frigate's covers its bow and stern engine block broadside-on
   s4_laser: { hp: 88, score: 2500, radius: 1.9, air: true, explode: 1.7, debris: 12, medal: 1, prewarm: 5 },
-  s4_frigate: { hp: 170, score: 5000, radius: 2.0, air: true, explode: 2.4, debris: 20, medal: 2, prewarm: 3 },
+  s4_frigate: { hp: 170, score: 5000, radius: 2.0, air: true, explode: 2.4, debris: 20, medal: 2, prewarm: 4 },
   s4_mine: { hp: 10, score: 250, radius: 0.7, air: true, explode: 0.8, debris: 5, noHpSeg: true, prewarm: 16 },
   // mid-boss: three heads on necks, then the core (armoured under its lid until two heads are gone or
   // 16 s have passed). The body is armour and never a target (bodyTarget: false), so shots, locks and

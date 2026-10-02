@@ -91,6 +91,20 @@ function zAtRow(v, py, y = 0) {
   return v.C.z + dz * (-v.C.y / dy) * (1 - y / v.C.y);
 }
 const live = (pt) => (pt && !pt.dead ? pt : null);
+// The skimmers and the landers hover at fractions zf of the screen's height. A phone held upright shows ~42 units
+// of the plane from top to bottom against a 480×800 window's ~33, with the jet's lowest row ~6.3 above the bottom
+// edge (2.3 there), so those rows hang ~3 units further from the jet: on the phone their aimed fans open into wide
+// gaps and the stage's units outside SELENE's fight landed 0.4× a 480×800 window's hits at loop 2 (stage 5 measured
+// below stages 3 and 4 there). From the second loop on a row is held no further above the jet's lowest row than on
+// that window: (1 − zf)·ROW_H − ROW_K. The first loop keeps its rows, and views no taller than a 480×800 window
+// (every desktop window) keep them on every loop: there the fraction is always the nearer of the two
+const ROW_H = 33.2, ROW_K = 2.3;
+/** the hover row z (at fraction zf of the screen), held near the jet as above */
+function tallRow(g, z, zf) {
+  if (g.loop < 2) return z;
+  const v = g.view;
+  return Math.max(z, Math.min(v.zBottom, (v.zPlayerMax ?? v.zBottom) + ROW_K) - (1 - zf) * ROW_H);
+}
 
 // --------------------------------------------------------------------------------
 // shared effects (constant colour / option tables: nothing is allocated per frame)
@@ -151,7 +165,8 @@ function arcAI(side, k, n, zf = 0.36, dur = 4.4) {
     const s = e.s, v = g.view;
     if (!s.P) {
       const T = v.zTop, H = v.zBottom - v.zTop;
-      s.P = [[side * 10.5, T - 3], [side * 4, T + zf * H * 1.33], [-side * 4, T + zf * H * 1.33], [-side * 10.5, T - 2]];
+      const zc = tallRow(g, T + zf * H * 1.33, zf * 1.33);
+      s.P = [[side * 10.5, T - 3], [side * 4, zc], [-side * 4, zc], [-side * 10.5, T - 2]];
       s.u = n > 1 ? (k / (n - 1)) * 2 - 1 : 0;
       s.fireAt = 0.42 + Math.abs(s.u) * 0.14;
     }
@@ -178,7 +193,7 @@ function diveAI(x0, zf = 0.3) {
     const s = e.s, v = g.view;
     if (s.mode === undefined) {
       s.mode = 0; s.vz = 17; s.side = x0 > 0.3 ? 1 : x0 < -0.3 ? -1 : (Math.random() < 0.5 ? -1 : 1);
-      s.zs = v.zTop + (v.zBottom - v.zTop) * zf; e.x = x0; e.z = v.zTop - 2.5;
+      s.zs = tallRow(g, v.zTop + (v.zBottom - v.zTop) * zf, zf); e.x = x0; e.z = v.zTop - 2.5;
     }
     if (s.mode === 0) {
       s.vz = Math.max(1.4, s.vz - dt * 15);
@@ -400,7 +415,7 @@ function landerAI(lane, zf = 0.24, carry = true) {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (!s.mode) {
       s.mode = 'in'; s.mt = 0; s.fixedYaw = true; s.yaw = Math.PI; s.x = LANES_X[lane]; s.carry = carry; s.shots = 0;
-      s.z0 = v.zTop - 3; s.z1 = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + 1.4);
+      s.z0 = v.zTop - 3; s.z1 = Math.max(tallRow(g, v.zTop + (v.zBottom - v.zTop) * zf, zf), zAtRow(v, HUD_ROW) + 1.4);
       e.x = s.x; e.z = s.z0;
       if (ud.reset) ud.reset();
       if (ud.setPod) ud.setPod(LD_POD_Y, carry);

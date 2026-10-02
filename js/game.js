@@ -381,8 +381,10 @@ export class Game {
     p.fireT = 0; p.subT = 0; p.optT = 0; p.bank = 0; p.slow = false; p.focus = false; p.mesh.visible = true;
     this.optLive = false;
     // difficulty by stage (defs STAGE_LEVEL: stages 1–3 a third of a loop apart, then flatter):
-    // loop 1 stage 1 = 1/1/1, loop 2 stage 1 = 1.22/1.35/1.3
-    const level = r9((loop - 1) + (STAGE_LEVEL[this.stageIdx] ?? STAGE_LEVEL[STAGE_LEVEL.length - 1]));
+    // loop 1 stage 1 = 1/1/1, loop 2 stage 1 = 1.22/1.35/1.3; from loop 2 on a stage's loopEase
+    // (STAGE_META) takes that much off its level
+    const ease = loop > 1 ? this.stage.loopEase || 0 : 0;
+    const level = r9((loop - 1) + (STAGE_LEVEL[this.stageIdx] ?? STAGE_LEVEL[STAGE_LEVEL.length - 1]) - ease);
     this.diff = { bs: r9(1 + 0.22 * level), fr: r9(1 + 0.35 * level), hp: r9(1 + 0.3 * level), level, part: r9(1 + 0.2 * level) };
     this.world.setStage(this.stage.world);
     this.world.reset(0);

@@ -123,7 +123,11 @@ export const MAX_SUB_LEVEL = 4; // sub-weapon levels 1..4
 // airless: out in space (stages 4–8) — no air for smoke to billow in: kills, damaged units and
 // missile / rocket exhausts leave a short dim glow and a few sparks instead of grey smoke (fx.js
 // setAirless); dust: there is ground under the fight (the Moon) — a ground blast also throws up
-// a brief low puff of regolith.
+// a brief low puff of regolith. loopEase: how much lower this stage's difficulty level sits from
+// loop 2 on (game.js resetRun; loop 1 untouched). Stage 3 has it: its dense air waves and SERAPH
+// feel the loop step far more than any other stage — the jet took ×3.4 the hits at loop 2 that it
+// took at loop 1 (the others ×1.7–2.1), and holding either the HP or the fire-rate step at loop 1's
+// value halved them — so at the full step it sat above stages 4 and 5.
 export const STAGE_META = [
   {
     n: 1, name: 'COASTAL FRONT', zh: '沿岸前線', world: 'coastal', theme: '海', themeE: 'SEA',
@@ -138,7 +142,7 @@ export const STAGE_META = [
     mission: '擊破陸上戰艦 BEHEMOTH',
   },
   {
-    n: 3, name: 'SKY CITADEL', zh: '天空要塞', world: 'skies', theme: '空', themeE: 'AIR',
+    n: 3, name: 'SKY CITADEL', zh: '天空要塞', world: 'skies', theme: '空', themeE: 'AIR', loopEase: 0.3,
     boss: 'SERAPH', bossZh: '空中母艦', music: 'stage3', bossMusic: 'boss3', startSfx: 'stageStart3',
     warn: { e: 'AERIAL MOTHERSHIP APPROACHING', s: '空中母艦 接近中' },
     mission: '擊破空中母艦 SERAPH',

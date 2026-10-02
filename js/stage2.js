@@ -263,6 +263,12 @@ function skiffBurst(e, dt, g, speed) {
 // once two parts are gone or after 18 s; the exposed reactor spins a twin spiral, and at half HP
 // a third arm and rings. Retreats after 40 s. Sets g.midbossDone on death and on retreat.
 const MORTAR_R = 1.3;                 // blast radius (+ the jet's hit radius)
+// From the second loop on the walker keeps the first loop's armour and the tail its beat. The mortar is the one
+// attack that kills wherever the jet stood 1.25 s before, and it fires for as long as the tail stands: with every
+// part a fifth tougher (diff.part 1.27) and the shells coming every 2.9 s instead of 3.7 s, the tail outlived
+// fights that ran longer (23 s vs 20 s), and the loop-2 fight landed 2.4× the first loop's hits
+const SC_PART_CAP = 1.07;             // part toughness (diff.part) at most this: the first loop's 1.07
+const SC_MORTAR_FR_CAP = 1.13;        // the mortar quickens with diff.fr only up to this (the first loop's 1.1225 is under it)
 const SHELL_A = [2.2, 0.8, 0.25, 1], SHELL_B = [2.6, 1.2, 0.4, 1], SHELL_C = [1.5, 0.45, 0.12, 0.85];
 const RET_A = [2.4, 0.3, 0.12, 0.2], RET_B = [2.6, 0.45, 0.15, 1];
 // the glow filling the reticle stays under the bloom threshold: a bloomed disc would hide the jet
@@ -303,6 +309,7 @@ export function scorpionAI() {
       s.clawL = g.partByKey(e, 'clawL'); s.clawR = g.partByKey(e, 'clawR'); s.tail = g.partByKey(e, 'tail'); s.core = g.partByKey(e, 'core');
       e.armored = true;
       if (ud.reset) ud.reset();
+      if (g.diff.part > SC_PART_CAP) for (const pt of e.parts) pt.hp = pt.maxHp = pt.maxHp * SC_PART_CAP / g.diff.part;
     }
     s.life += dt;
     if (e.dying) { scorpionDeath(e, dt, g); return; }
@@ -372,7 +379,7 @@ export function scorpionAI() {
     // tail mortar
     if (tail && !tail.dead) {
       s.mt -= dt;
-      if (s.mt <= 0) { s.mt = (rage ? 3.4 : 4.2) / fr; mortar(g, tail); if (ud.kick) ud.kick(); }
+      if (s.mt <= 0) { s.mt = (rage ? 3.4 : 4.2) / Math.min(fr, SC_MORTAR_FR_CAP); mortar(g, tail); if (ud.kick) ud.kick(); }
     }
     // the open reactor
     if (s.opened && core && !core.dead) {
@@ -437,8 +444,12 @@ function spawnScorpion(g) {
 //       swallow every shot aimed at it): shots pass over the closed dome like over the deck
 //   p2  every part down (or 46 s): the bridge's clamshell opens; the reactor spins a twin
 //       spiral and throws 7-way shell fans (surviving parts keep firing, a little slower)
-//   p3  reactor under 45 %: the spiral reverses with a third (hard: fourth) arm, rings join in
+//   p3  reactor under 45 %: the spiral reverses with a third arm (a fourth from the third loop on), rings join in
 // Death: chain blasts along the hull, the hull breaks its back and sinks into the salt flat.
+// The reactor's spiral, shell fans and rings quicken with diff.fr only up to BE_FR_CAP (the first loop's 1.1225 is
+// under it), and its fourth arm and denser rings wait for the third loop: on the second they came on top of the
+// loop's quicker, faster fire, and BEHEMOTH landed three times the first loop's hits (p3 alone ×4)
+const BE_FR_CAP = 1.3;
 const TREAD_X = [-3.94, 3.94];                  // track centre lines (ground units from the hull axis)
 /** the part record while it still stands, else null */
 function standing(pt) { return pt && !pt.dead ? pt : null; }
@@ -522,7 +533,7 @@ export function behemothAI() {
     if (T) aimPart(e, T, P, dt, 1.2);
     for (let i = 0; i < 4; i++) { const B = standing(s.B[i]); if (B) aimPart(e, B, P, dt, 2.4); }
     if (!g.canFire(e)) return;
-    const fr = g.diff.fr, hard = g.diff.level >= 1;
+    const fr = g.diff.fr, frc = Math.min(fr, BE_FR_CAP), hard = g.diff.level >= 2;
     const slow = s.mode === 'p1' ? 1 : 1.25;
     // main twin guns: shell fans and needle rails, alternately
     if (T) {
@@ -589,15 +600,15 @@ export function behemothAI() {
       const arms = p3 ? (hard ? 4 : 3) : 2;
       s.sp = (s.sp ?? 0.4) - dt;
       if (s.sp <= 0) {
-        s.sp = (p3 ? 0.13 : 0.11) / fr;
+        s.sp = (p3 ? 0.13 : 0.11) / frc;
         s.a += p3 ? -0.26 : 0.22;
         for (let i = 0; i < arms; i++) g.shoot(cx, cz, s.a + (i / arms) * TAU, p3 ? 6.0 : 5.6);
       }
       s.cf = (s.cf ?? 2.2) - dt;
-      if (s.cf <= 0) { s.cf = (p3 ? 2.8 : 3.4) / fr; g.fan(cx, cz, g.aim(cx, cz), 7, 1.0, 6.4, g.BK.BIG); }
+      if (s.cf <= 0) { s.cf = (p3 ? 2.8 : 3.4) / frc; g.fan(cx, cz, g.aim(cx, cz), 7, 1.0, 6.4, g.BK.BIG); }
       if (p3) {
         s.cr = (s.cr ?? 1.2) - dt;
-        if (s.cr <= 0) { s.cr = (hard ? 2.2 : 2.6) / fr; s.b += 0.13; g.ring(cx, cz, hard ? 20 : 16, 5.2, s.b); }
+        if (s.cr <= 0) { s.cr = (hard ? 2.2 : 2.6) / frc; s.b += 0.13; g.ring(cx, cz, hard ? 20 : 16, 5.2, s.b); }
       }
     }
   };

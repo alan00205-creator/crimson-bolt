@@ -385,10 +385,20 @@ body.sides #keys { display: none; } /* the side panel already lists the keys (ma
 .htab:hover { color: var(--ink); border-color: rgba(255,255,255,0.3); }
 .htab[aria-selected="true"] { background: var(--ink); border-color: var(--ink); color: #0b0d14; }
 .htab:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
-.hctx { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 4px; font: 700 12px var(--f-cjk); letter-spacing: 0.1em; }
-.hctx b { font: 700 13px var(--f-display), var(--f-cjk); letter-spacing: 0.14em; color: var(--ink); white-space: nowrap; }
-.hctx span { color: var(--lime); white-space: nowrap; }
-.hctx.locked span { color: #ff7a7a; }
+/* 塗裝: the aircraft picker (whose paints the list shows; ←→ on it with keys / d-pad), then that
+   aircraft's name and state */
+.hctx { display: grid; gap: 6px; }
+.hpick button { flex: 1 1 0; min-width: 0; padding: 0 4px; display: flex; align-items: center; justify-content: center; gap: 6px;
+  font: 700 13px var(--f-cjk); letter-spacing: 0.1em; white-space: nowrap; }
+.hpick button + button { border-left: 1px solid var(--panel-line); }
+.hpick .dot { flex: 0 0 auto; width: 9px; height: 9px; background: var(--ac); box-shadow: 0 0 6px var(--ac); }
+.hpick button.lock { color: #6f7789; }
+.hpick button.lock .dot { opacity: 0.45; box-shadow: none; }
+.hpick button[aria-pressed="true"] { color: #0b0d14; }
+.hline { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 4px; font: 700 12px var(--f-cjk); letter-spacing: 0.1em; }
+.hline b { font: 700 13px var(--f-display), var(--f-cjk); letter-spacing: 0.14em; color: var(--ink); white-space: nowrap; }
+.hline span { color: var(--lime); white-space: nowrap; }
+.hctx.locked .hline span { color: #ff7a7a; }
 .btn.hrow.paint .sh-top b, .btn.hrow.up .sh-top b { font: 700 14px var(--f-cjk); letter-spacing: 0.16em; }
 .btn.hrow.paint .sh-top b { color: var(--ac); }
 .swatch { flex: 0 0 auto; display: inline-block; width: 22px; height: 14px; align-self: center; border: 1px solid rgba(255,255,255,0.4); box-shadow: 0 0 6px var(--ac-dim, transparent); }
@@ -420,6 +430,8 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
   .btn.hrow { gap: 3px; padding: 5px 10px 6px 13px; }
   .hhelp { display: none; }
   .hpanel h2 { font-size: 17px; }
+  .hctx { gap: 5px; }
+  .hpick button { min-height: 38px; }
 }
 @media (max-height: 600px) {
   .screen.hangar { padding-top: calc(10px + var(--safe-t)); }
@@ -427,6 +439,7 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
   .ships { gap: 4px; }
   .btn.hrow { padding-block: 4px 5px; }
   .hpanel .panel-foot .btn { padding-block: 9px; }
+  .hpick button { min-height: 34px; }
 }
 /* ---------- ranking (排行榜) ---------- */
 .rpanel { gap: 10px; }
@@ -628,12 +641,15 @@ body.touch .hcap { bottom: calc(6px + var(--safe-b)); }
           <button class="htab" data-act="htab" data-tab="up" role="tab" aria-controls="ups">強化<small>UPGRADE</small></button>
           <kbd class="kbd-only" aria-hidden="true">E</kbd>
         </div>
-        <div class="hctx" id="hctx" hidden><b></b><span></span></div>
+        <div class="hctx" id="hctx" hidden>
+          <div class="seg hpick" id="hpick" role="group" aria-label="切換機型（看各架戰機的塗裝）"></div>
+          <div class="hline"><b></b><span></span></div>
+        </div>
         <div class="ships" id="ships" role="tabpanel"></div>
         <div class="ships" id="paints" role="tabpanel" hidden></div>
         <div class="ships" id="ups" role="tabpanel" hidden></div>
-        <div class="foot hhelp kbd-only">←→ 切換分頁・↑↓ 選擇・ENTER 購買／使用・ESC 返回</div>
-        <div class="foot hhelp touch-only">點選即可預覽・購買時需再點一次確認</div>
+        <div class="foot hhelp kbd-only" id="hhelp-kbd">←→ 切換分頁・↑↓ 選擇・ENTER 購買／使用・ESC 返回</div>
+        <div class="foot hhelp touch-only" id="hhelp-touch">點選即可預覽・購買時需再點一次確認</div>
         <div class="panel-foot"><button class="btn primary" data-act="back">OK<span>返回</span></button></div>
       </div>
       <div class="hcap" aria-hidden="true"><small>PREVIEW</small><b id="hangar-cap">CRIMSON BOLT<i>赤電</i></b></div>

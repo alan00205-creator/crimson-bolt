@@ -15,6 +15,10 @@ const STAT_ROWS = [['speed', '速度'], ['power', '火力'], ['bombs', '炸彈']
 // the shield bubble, CR)
 const UP_COL = { bombs: '#ff9a2a', power: '#ff6a4a', life: '#ff4a55', magnet: '#8cff5a', shield: '#8fe6ff', bonus: '#ffcf4a' };
 const HANGAR_SUB = { ship: '機庫・選擇出擊戰機', paint: '機庫・替戰機換上塗裝', up: '機庫・永久強化（全機共用）' };
+// the hangar's help line per tab (塗裝 points at its aircraft picker)
+const HELP_KBD = '←→ 切換分頁・↑↓ 選擇・ENTER 購買／使用・ESC 返回', HELP_TOUCH = '點選即可預覽・購買時需再點一次確認';
+const HANGAR_HELP_KBD = { ship: HELP_KBD, paint: '↑↓ 選擇・機型列上 ←→ 換飛機・Q E 切換分頁・ENTER 購買／使用', up: HELP_KBD };
+const HANGAR_HELP_TOUCH = { ship: HELP_TOUCH, paint: '點上方機型換飛機・購買需再點一次確認', up: HELP_TOUCH };
 const RANK_NOTE = '「2-3」＝第 2 輪第 3 關。紀錄只存在這台裝置。';
 // a board date: '09/30' this year, '2025/09/30' before
 const boardDate = (d) => { if (!d) return ''; const [y, m, day] = d.split('-'); return y === String(new Date().getFullYear()) ? `${m}/${day}` : `${y}/${m}/${day}`; };
@@ -302,7 +306,8 @@ export class UI {
   // Three tabs of .btn.hrow rows, each with a tag (price / owned / in use / MAX) and a description
   // box that also shows short messages: 機體 one row per aircraft (a two-line description and 4
   // stat bars), 塗裝 one row per paint slot (refilled with the picked aircraft's paints by
-  // renderHangar) and 強化 one row per upgrade (level pips, a one-line description).
+  // renderHangar; an aircraft picker above them switches whose) and 強化 one row per upgrade
+  // (level pips, a one-line description).
   buildHangar() {
     this.hrows = {}; this.ships = {};
     const add = (kind, id, b, desc, box) => {
@@ -330,6 +335,19 @@ export class UI {
       const r = add('ship', ac.id, b, ac.desc, ships);
       r.ac = ac;
       this.ships[ac.id] = r;
+    }
+    // 塗裝's aircraft picker: one switch per jet (a .seg: one focus stop, ←→ step it)
+    const pick = $('hpick');
+    pick.innerHTML = '';
+    this.picks = {};
+    for (const ac of AIRCRAFT) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.act = 'hpick'; b.dataset.ship = ac.id;
+      b.style.setProperty('--ac', ac.color);
+      b.innerHTML = `<i class="dot"></i>${esc(ac.zh)}`;
+      pick.appendChild(b);
+      this.picks[ac.id] = b;
     }
     const paints = $('paints');
     paints.innerHTML = '';
@@ -379,10 +397,18 @@ export class UI {
     }
     // paints of the picked aircraft (only an owned one can buy them)
     const list = PAINTS[sel] || [], acOwned = w.owned.includes(sel), have = w.paints[sel] || [DEFAULT_PAINT];
-    const ctx = $('hctx');
-    ctx.firstElementChild.textContent = `${sac.name} ${sac.zh}`;
-    ctx.lastElementChild.textContent = !acOwned ? '未擁有・先在「機體」購買' : w.equipped === sel ? '出擊機' : '已擁有';
+    const ctx = $('hctx'), line = ctx.querySelector('.hline');
+    line.firstElementChild.textContent = `${sac.name} ${sac.zh}`;
+    line.lastElementChild.textContent = !acOwned ? '未擁有・先在「機體」購買' : w.equipped === sel ? '出擊機' : '已擁有';
     ctx.classList.toggle('locked', !acOwned);
+    for (const id in this.picks) {
+      const b = this.picks[id], ac = AIRCRAFT_BY_ID[id], owned = w.owned.includes(id);
+      b.setAttribute('aria-pressed', String(id === sel));
+      b.classList.toggle('lock', !owned);
+      b.setAttribute('aria-label', `${ac.name} ${ac.zh}的塗裝${owned ? '' : '（未擁有）'}`);
+    }
+    $('hhelp-kbd').textContent = HANGAR_HELP_KBD[tab];
+    $('hhelp-touch').textContent = HANGAR_HELP_TOUCH[tab];
     for (const key in this.hrows) {
       const r = this.hrows[key];
       if (r.kind !== 'paint') continue;

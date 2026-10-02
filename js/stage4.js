@@ -286,12 +286,19 @@ function laserAI(side, x1, zf = 0.2, cycles = 2) {
 // sponsons ripple three rows of orbs, all on one heading swung toward the jet's side of the screen when
 // the volley starts (a slanted lattice to slip through or go round), and the bow sponson fires an aimed
 // 3-needle fan in between.
+// On a view held upright (the jet's lowest row more than FR_TALL below the top edge: a 390×844 phone 35.8, a
+// 480×800 window 30.8) its guns quicken with diff.fr only up to FR_FR_CAP from the second loop on (the first
+// loop's 1.2975 is under it): there the loop-2 lattices and needle fans landed 1.5× the hits they land on a
+// 480×800 window (0.53× on the first loop), and penned between them the jet ran into the drones' fire twice as
+// often — stage 4 stood well above stage 5 on a phone at loop 2
+const FR_TALL = 32, FR_FR_CAP = 1.3;
 function frigateAI(dir, zf = 0.22, hold = 0) {
   return (e, dt, g) => {
     const s = e.s, v = g.view, ud = e.mesh.userData;
     if (s.z0 === undefined) {
       s.fixedYaw = true; s.yaw = -dir * Math.PI / 2; s.z0 = Math.max(v.zTop + (v.zBottom - v.zTop) * zf, zAtRow(v, HUD_ROW) + 1.6);
       e.x = -dir * 15; e.z = s.z0; s.vx = hold ? 7.5 : 3.0; s.port = dir > 0 ? 0 : 3; s.ph = 'in'; s.pt = 0; s.rows = 0;
+      s.fr = g.loop > 1 && (v.zPlayerMax ?? v.zBottom) - v.zTop > FR_TALL ? Math.min(g.diff.fr, FR_FR_CAP) : g.diff.fr;
     }
     s.pt += dt;
     if (hold) {
@@ -305,7 +312,7 @@ function frigateAI(dir, zf = 0.22, hold = 0) {
     if (ud.setThrust) ud.setThrust(s.ph === 'hold' ? 0.25 : 0.9);
     if (Math.random() < 0.5) ionPuff(g, e.x - dir * 2.7, e.z + rnd(-0.35, 0.35), -dir, 0, 0.45);
     const on = Math.abs(e.x) < 7.5;
-    if (on && fireTimerS(s, 'bt', dt, g, 2.9, 1.2) && g.canFire(e)) { s.rows = 3; s.rt = 0; s.la = clamp(g.aim(e.x, e.z), -0.45, 0.45); }
+    if (on && fireTimerS(s, 'bt', dt, g, 2.9, 1.2, s.fr) && g.canFire(e)) { s.rows = 3; s.rt = 0; s.la = clamp(g.aim(e.x, e.z), -0.45, 0.45); }
     if (s.rows > 0) {
       s.rt -= dt;
       if (s.rt <= 0) {
@@ -313,18 +320,18 @@ function frigateAI(dir, zf = 0.22, hold = 0) {
         for (let k = 0; k < 3; k++) { const m = g.muzzlePos(e.mesh, s.port + k); g.shoot(m.x, m.z, s.la, 5.6); }
       }
     }
-    if (on && fireTimerS(s, 'nt', dt, g, 2.9, 2.6) && g.canFire(e)) {
+    if (on && fireTimerS(s, 'nt', dt, g, 2.9, 2.6, s.fr) && g.canFire(e)) {
       const m = g.muzzlePos(e.mesh, s.port + (dir > 0 ? 0 : 2)), mx = m.x, mz = m.z;
       g.fan(mx, mz, g.aim(mx, mz), 3, 0.24, 9, g.BK.NEEDLE);
     }
     if (e.hp < e.maxHp * 0.5 && Math.random() < 0.3) g.fx.smokePuff(e.x + rnd(-2, 2), 0.2, e.z + rnd(-0.4, 0.4), 0.5, 0.9);
   };
 }
-/** like stage.js fireTimer, on a named slot of s (a unit with two independent guns) */
-function fireTimerS(s, key, dt, g, interval, first) {
-  if (s[key] === undefined) s[key] = first / g.diff.fr;
+/** like stage.js fireTimer, on a named slot of s (a unit with two independent guns); fr: the rate (diff.fr) */
+function fireTimerS(s, key, dt, g, interval, first, fr = g.diff.fr) {
+  if (s[key] === undefined) s[key] = first / fr;
   s[key] -= dt;
-  if (s[key] <= 0) { s[key] += interval / g.diff.fr; return true; }
+  if (s[key] <= 0) { s[key] += interval / fr; return true; }
   return false;
 }
 

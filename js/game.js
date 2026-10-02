@@ -140,8 +140,25 @@ const TRAIL_COL = [2.6, 1.1, 0.35]; // engine exhaust sprite colour when the mod
 const SHIELD_R = 1.2, SHIELD_COL = [0.36, 0.95, 1.35];
 const SHIELD_INVULN = 1.5, SHIELD_CLEAR_R = 3.6;
 // score popups (popupAt): how far below the HUD's lowest row a popup's anchor must sit (CSS px:
-// ui.popup's 26 px rise + half a 17 px line + a 2 px gap), and the row step of popups held there
-const POP_CLEAR = 38, POP_STEP = 24;
+// ui.popup's 26 px rise + half a 17 px line + a 2 px gap), and the rows popups held there take (24 px
+// apart, up to 6). What popupAt mirrors of ui.js to keep held popups apart: the rise (26 px over
+// 0.36 s, updatePopups), the 16 px lift ui.popup gives a popup landing within 24 px of one placed
+// under 0.3 s before, its medal merge (an open "★×N" counter within 48 px), and the box of a popup
+// estimated from its text (index.html: 13 px, .big 17 px, .medal.many 16 px; popW's glyph widths
+// are in em with the letter spacing, measured on the display face), POP_GAP the clear space kept
+// between two boxes.
+const POP_CLEAR = 38, POP_STEP = 24, POP_ROWS = 6;
+const POP_RISE = 26, POP_RISE_T = 0.36, POP_LIFT = 16, POP_NEAR = 24, POP_NEAR_T = 0.3, POP_MERGE = 48;
+const POP_GAP = 6;
+const popPx = (cls) => (cls.indexOf('big') >= 0 ? 17 : cls.indexOf('many') >= 0 ? 16 : 13);
+function popW(text, px) {
+  let em = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    em += c >= 48 && c <= 57 ? 0.74 : c >= 65 && c <= 90 ? 0.84 : c === 44 || c === 46 || c === 32 ? 0.34 : 0.9;
+  }
+  return em * px;
+}
 // debris fallbacks for models without userData.debrisColor
 const DEATH_DEBRIS = new THREE.Color(0.9, 0.15, 0.18);
 const PART_DEBRIS = new THREE.Color(0.4, 0.4, 0.45);
@@ -183,7 +200,6 @@ export class Game {
     this.tmpV = new THREE.Vector3();
     this.tmpS = { x: 0, y: 0 };
     this.hudRows = { w: 0, h: 0, strip: -1, bar: -1 };   // hudFloor's DOM reads, per view size
-    this.popLow = { t: -9, x: 0, n: 0 };                // the last popup held under the HUD (popupAt)
     this.targets = [];
     for (let i = 0; i < 64; i++) this.targets.push({ x: 0, z: 0, r: 0, e: null, part: null, armored: false, uid: 0 });
     this.nTargets = 0;
@@ -1206,20 +1222,61 @@ export class Game {
   }
   // Score / pickup popups. One projected above the HUD's top strip (score, HI-SCORE + CR, the
   // pause button) — or the boss bar while it shows — is held just under it, its rise included, so
-  // it never prints over them; another held there within 0.3 s steps a row down instead of
-  // stacking up into the strip (medals merge into one counter in ui.popup, so they don't step).
-  popupAt(x, z, text, cls) {
+  // it never prints over them; so is one that ui.popup's same-spot lift would carry up there.
+  // popupAt owns the stacking of held popups: each takes the highest row under the strip where its
+  // box stays clear of every popup on screen for its whole rise, and that no popup placed in the
+  // last 0.3 s sits within 24 px of, so ui.popup never lifts it (popRow); a medal that ui.popup
+  // will count into an open "★×N" counter under the strip goes straight to that counter.
+  popupAt(x, z, text, cls = '') {
     const s = this.view.toScreen(x, 0, z, this.tmpS);
-    const top = this.hudFloor() + POP_CLEAR;
-    if (s.y < top) {
-      const q = this.popLow, dt = this.time - q.t;
-      if (cls !== 'medal') {
-        q.n = dt >= 0 && dt < 0.3 && Math.abs(q.x - s.x) < POP_STEP ? Math.min(q.n + 1, 3) : 0;
-        q.t = this.time; q.x = s.x;
-      }
-      s.y = top + POP_STEP * (cls !== 'medal' ? q.n : 0);
-    }
+    const top = this.hudFloor() + POP_CLEAR, pool = this.ui.popPool;
+    if (!pool) { if (s.y < top) s.y = top; }
+    else if (s.y < top || s.y - POP_LIFT * Math.min(this.popNear(pool, s.x, s.y), 3) < top) s.y = this.popRow(pool, s.x, top, text, cls);
     this.ui.popup(text, s.x, s.y, cls);
+  }
+  // How many popups ui.popup counts for its same-spot lift at (x, y): placed under 0.3 s ago,
+  // within 24 px both ways.
+  popNear(pool, x, y) {
+    let n = 0;
+    for (let i = 0; i < pool.length; i++) {
+      const q = pool[i];
+      if (q.active && q.t < POP_NEAR_T && Math.abs(q.x - x) < POP_NEAR && Math.abs(q.y - y) < POP_NEAR) n++;
+    }
+    return n;
+  }
+  // The anchor row for a popup held under the HUD (top: the highest one). Rows are tried from the
+  // top down. A row is clear of a popup on screen when the two boxes stay apart sideways, or the
+  // new one sits at least a line below it, or a line above where it has risen to so far (both rise
+  // the same 26 px, so the gap only closes from the second toward the first). The first clear row
+  // wins; with none clear, the row with the fewest overlaps — never one ui.popup would lift into
+  // the strip.
+  popRow(pool, x, top, text, cls) {
+    if (cls === 'medal') {
+      for (let i = 0; i < pool.length; i++) {
+        const q = pool[i];
+        if (q.active && q.medals && q.t - q.tLast <= POP_NEAR_T && q.y >= top && Math.abs(q.sx - x) <= POP_MERGE) return q.sy;
+      }
+    }
+    const px = popPx(cls), w = popW(String(text), px);
+    let best = top, bestC = Infinity;
+    for (let k = 0; k < POP_ROWS; k++) {
+      const y = top + POP_STEP * k;
+      let c = 0, near = 0;
+      for (let i = 0; i < pool.length; i++) {
+        const q = pool[i];
+        if (!q.active || q.t >= q.life) continue;
+        if (q.t < POP_NEAR_T && Math.abs(q.x - x) < POP_NEAR && Math.abs(q.y - y) < POP_NEAR) near++;
+        const dy = y - q.y, up = POP_RISE * Math.min(1, q.t / POP_RISE_T);
+        if (dy >= 20 || dy + up <= -20) continue;                // a line apart even for two 17 px popups
+        const qpx = popPx(q.el.className), h = (px + qpx) / 2 + 3;
+        if (dy >= h || dy + up <= -h) continue;
+        if (Math.abs(q.x - x) >= (w + popW(q.el.textContent, qpx)) / 2 + POP_GAP) continue;
+        c++;
+      }
+      c += near + (y - POP_LIFT * Math.min(near, 3) < top ? 100 : 0);
+      if (c < bestC) { bestC = c; best = y; if (!c) break; }
+    }
+    return best;
   }
   // The lowest CSS-px row of the HUD's top strip, or of the boss bar while it shows (popupAt). Read
   // from the DOM once per view size (and when the boss bar first shows), never per frame; 0 while

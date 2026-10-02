@@ -553,10 +553,11 @@ const AE_RAIL = 0.65;                          // the rail fires this long
 const AE_DUMP = [0.2, 0.34];                   // the banks' dumps: the first this long after the rail, the second after it
 const AE_TELL = 0.45;                          // amber charge glow before the hub's and the reactor's big-orb fans
 const AE_TRIO_TELL = 0.32;                     // the reactor orb flares this long before each aimed needle trio
-const AE_FR_CAP = 1.3;                         // the hub's big fans and the reactor's needle trios quicken with diff.fr
-                                               // only up to this (loop 1's 1.2975 is under it): with the turrets, the
-                                               // generators and the rest all quickening as well, a full loop-2 rate
-                                               // made AEGIS the hardest fight in the game
+const AE_FR_CAP = 1.3;                         // the hub's big fans and the reactor's woven rings and needle trios
+                                               // quicken with diff.fr only up to this (loop 1's 1.2975 is under it): with
+                                               // the turrets, the generators and the rest all quickening as well, a full
+                                               // loop-2 rate made AEGIS the hardest fight in the game (and the rings and
+                                               // the trios keep one beat, each trio half a step between two rings)
 const AE_REACH = 20;                           // the station's furthest reach up-screen of the jet's lowest row (a tall
                                                // phone: 17 from the jet's row, vs 15.2 on a desktop view; see aegisAI)
 function aegisAI() {
@@ -803,7 +804,7 @@ function aegisAI() {
       }
     } else if (seg === 1) {
       if (s.ct <= 0) {
-        s.ct = (rage ? 0.8 : 0.95) / fr;
+        s.ct = (rage ? 0.8 : 0.95) / frc;
         const n = hard ? 20 : rage ? 18 : 16;
         s.c = (s.c || 0) + 0.5;
         g.ring(cx, cz, n, 4.1, s.c * (TAU / n) + s.cyc * 0.05);

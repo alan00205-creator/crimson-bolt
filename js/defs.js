@@ -125,9 +125,10 @@ export const MAX_SUB_LEVEL = 4; // sub-weapon levels 1..4
 // setAirless); dust: there is ground under the fight (the Moon) — a ground blast also throws up
 // a brief low puff of regolith. loopEase: how much lower this stage's difficulty level sits from
 // loop 2 on (game.js resetRun; loop 1 untouched). Stage 3 has it: its dense air waves and SERAPH
-// feel the loop step far more than any other stage — the jet took ×3.4 the hits at loop 2 that it
-// took at loop 1 (the others ×1.7–2.1), and holding either the HP or the fire-rate step at loop 1's
-// value halved them — so at the full step it sat above stages 4 and 5.
+// feel the loop step far more than the stages after it — the jet took ×3.4 the hits at loop 2 that
+// it took at loop 1 (stages 4–8 ×1.7–2.1), and holding either the HP or the fire-rate step at loop
+// 1's value halved them — so at the full step it sat above stages 4 and 5. Its loop-2 level (1.4)
+// still clears 1, so revenge shots and SERAPH's loop-2 rings stay on.
 export const STAGE_META = [
   {
     n: 1, name: 'COASTAL FRONT', zh: '沿岸前線', world: 'coastal', theme: '海', themeE: 'SEA',

@@ -1231,13 +1231,34 @@ export class Game {
   // popupAt owns the stacking of held popups: each takes the highest row under the strip where its
   // box stays clear of every popup on screen for its whole rise, and that no popup placed in the
   // last 0.3 s sits within 24 px of, so ui.popup never lifts it (popRow); a medal that ui.popup
-  // will count into an open "★×N" counter under the strip goes straight to that counter.
+  // will count into an open "★×N" counter under the strip goes straight to that counter. One that
+  // would print over a held popup from its own spot (it lands among the held rows) is held too.
   popupAt(x, z, text, cls = '') {
     const s = this.view.toScreen(x, 0, z, this.tmpS);
     const top = this.hudFloor() + POP_CLEAR, pool = this.ui.popPool;
+    let held = false;
     if (!pool) { if (s.y < top) s.y = top; }
-    else if (s.y < top || s.y - POP_LIFT * Math.min(this.popNear(pool, s.x, s.y), 3) < top) s.y = this.popRow(pool, s.x, top, text, cls);
-    this.ui.popup(text, s.x, s.y, cls);
+    else if (s.y < top || s.y - POP_LIFT * Math.min(this.popNear(pool, s.x, s.y), 3) < top
+      || (s.y < top + POP_STEP * POP_ROWS && this.popOverHeld(pool, s.x, s.y, text, cls))) { s.y = this.popRow(pool, s.x, top, text, cls); held = true; }
+    const p = this.ui.popup(text, s.x, s.y, cls);
+    if (p) p.held = held;
+  }
+  // Whether a popup left at its own spot (x, y) would print over a held one at some point of its
+  // rise (ui.popup's same-spot lift included). A medal ui.popup will count into an open counter
+  // makes no new box.
+  popOverHeld(pool, x, y, text, cls) {
+    if (cls === 'medal') {
+      for (let i = 0; i < pool.length; i++) {
+        const q = pool[i];
+        if (q.active && q.medals && q.t - q.tLast <= POP_NEAR_T && Math.abs(q.sx - x) <= POP_MERGE && Math.abs(q.sy - y) <= POP_MERGE) return false;
+      }
+    }
+    const px = popPx(cls), w = popW(String(text), px), ya = y - POP_LIFT * Math.min(this.popNear(pool, x, y), 3);
+    for (let i = 0; i < pool.length; i++) {
+      const q = pool[i];
+      if (q.active && q.held && q.t < q.life && this.popHit(q, x, ya, w, px, 0)) return true;
+    }
+    return false;
   }
   // How many popups ui.popup counts for its same-spot lift at (x, y): placed under 0.3 s ago,
   // within 24 px both ways.
@@ -1272,18 +1293,22 @@ export class Game {
         const q = pool[i];
         if (!q.active || q.t >= q.life) continue;
         if (q.t < POP_NEAR_T && Math.abs(q.x - x) < POP_NEAR && Math.abs(q.y - y) < POP_NEAR) near++;
-        const dy = y - q.y, now = dy + POP_RISE * Math.min(1, q.t / POP_RISE_T) - r0;
-        const lo = now < dy ? now : dy, hi = now < dy ? dy : now;
-        if (lo >= 20 || hi <= -20) continue;                     // a line apart even for two 17 px popups
-        const qpx = popPx(q.el.className), h = (px + qpx) / 2 + 3;
-        if (lo >= h || hi <= -h) continue;
-        if (Math.abs(q.x - x) >= (w + popW(q.el.textContent, qpx)) / 2 + POP_GAP) continue;
-        c++;
+        if (this.popHit(q, x, y, w, px, r0)) c++;
       }
       c += near + (y - POP_LIFT * Math.min(near, 3) < top ? 100 : 0);
       if (c < bestC) { bestC = c; best = y; if (!c) break; }
     }
     return best;
+  }
+  // Whether a popup w px wide in a px-px font, anchored at (x, y) now and r0 px into its rise, ever
+  // overlaps popup q on screen while both rise (popRow).
+  popHit(q, x, y, w, px, r0) {
+    const dy = y - q.y, now = dy + POP_RISE * Math.min(1, q.t / POP_RISE_T) - r0;
+    const lo = now < dy ? now : dy, hi = now < dy ? dy : now;
+    if (lo >= 20 || hi <= -20) return false;                    // a line apart even for two 17 px popups
+    const qpx = popPx(q.el.className), h = (px + qpx) / 2 + 3;
+    if (lo >= h || hi <= -h) return false;
+    return Math.abs(q.x - x) < (w + popW(q.el.textContent, qpx)) / 2 + POP_GAP;
   }
   // The boss bar has just shown (ui.updatePopups calls this in that frame, before it draws): a popup
   // placed under the strip a moment before would rise into the bar for the rest of its life. Each one
@@ -1306,7 +1331,7 @@ export class Game {
     for (let i = 0; i < mv.length; i++) {
       const q = mv[i];
       q.y = q.sy = this.popRow(pool, q.x, top, q.el.textContent, q.el.className, q.t);
-      q.active = true;
+      q.active = true; q.held = true;
     }
     mv.length = 0;
   }

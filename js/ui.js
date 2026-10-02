@@ -48,7 +48,7 @@ export class UI {
       d.className = 'popup';
       d.style.opacity = '0';
       this.el.popups.appendChild(d);
-      this.popPool.push({ el: d, t: 0, life: 0, x: 0, y: 0, sx: 0, sy: 0, medals: 0, sum: 0, tLast: 0, active: false });
+      this.popPool.push({ el: d, t: 0, life: 0, x: 0, y: 0, sx: 0, sy: 0, medals: 0, sum: 0, tLast: 0, active: false, held: false });
     }
     // the boss bar's state as updatePopups last saw it, and who moves the popups under it when it shows
     // (game.popsUnderBar: game.js owns where popups sit under the HUD)
@@ -214,6 +214,8 @@ export class UI {
   }
 
   // --- floating score popups (projected from world by caller) ---------------------------------
+  // Returns the new popup's entry (its held flag is game.popupAt's: moved to a row under the HUD),
+  // or null for a medal counted into an open counter.
   popup(text, sx, sy, cls = '') {
     // medals picked up in a quick run on one spot (a boss kill's medal rush) count up in one
     // popup, "★×N total", instead of piling up into an unreadable smear
@@ -224,7 +226,7 @@ export class UI {
         q.medals++; q.sum += medal; q.tLast = q.t; q.life = q.t + 0.9;
         q.el.className = 'popup medal many';
         q.el.textContent = `★×${q.medals} ${fmt(q.sum)}`;
-        return;
+        return null;
       }
     }
     let p = null;
@@ -234,9 +236,10 @@ export class UI {
     let near = 0;
     for (const q of this.popPool) if (q.active && q.t < 0.3 && Math.abs(q.x - sx) < 24 && Math.abs(q.y - sy) < 24) near++;
     p.active = true; p.t = 0; p.life = 0.9; p.x = sx; p.y = sy - 16 * Math.min(near, 3);
-    p.sx = sx; p.sy = sy; p.medals = medal > 0 ? 1 : 0; p.sum = medal; p.tLast = 0;
+    p.sx = sx; p.sy = sy; p.medals = medal > 0 ? 1 : 0; p.sum = medal; p.tLast = 0; p.held = false;
     p.el.className = 'popup ' + cls;
     p.el.textContent = text;
+    return p;
   }
   // Rise for the first 0.36 s, fade over the last 0.27 s (a merged medal counter lives on). The frame
   // the boss bar shows, popups placed under the strip a moment before are moved under the bar first.

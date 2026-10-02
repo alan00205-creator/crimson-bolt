@@ -22,7 +22,9 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 
 // Enemy definitions (see the field list at the top of stage.js).
 export const ENEMY = {
-  interceptor: { hp: 8, score: 500, radius: 0.85, air: true, explode: 1.0, debris: 6, prewarm: 10 },
+  // pools: prewarm ≥ 1 + the most of each the timeline puts up at once (a jet that never fires: nothing dies early).
+  // Interceptors: the d 812 three pairs from the right and three from the left, 12
+  interceptor: { hp: 8, score: 500, radius: 0.85, air: true, explode: 1.0, debris: 6, prewarm: 13 },
   frigate: { hp: 150, score: 4000, radius: 1.8, air: true, explode: 2.3, debris: 18, medal: 2, prewarm: 3 },
   lancer: { hp: 26, score: 1200, radius: 0.95, air: true, explode: 1.3, debris: 9, medal: 0.5, prewarm: 5 },
   minelayer: { hp: 70, score: 2500, radius: 1.4, air: true, explode: 1.8, debris: 12, medal: 1, prewarm: 3 },

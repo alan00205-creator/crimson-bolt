@@ -36,7 +36,10 @@ const TAU = Math.PI * 2;
 //              hugged into silence (SCORPION)
 // A STAGE may also set bulletRim: 1 to give enemy bullets a hard dark rim over bright worlds (stage 3).
 export const ENEMY = {
-  dart:    { hp: 2,   score: 200,  radius: 0.75, air: true,  explode: 0.8, debris: 5, noHpSeg: true, prewarm: 14 },
+  // pools: prewarm ≥ 1 + the most of each the timeline puts up at once (a jet that never fires: nothing dies early).
+  // Darts: the d 826 snake of ten comes in while the two d 790 snakes of six still weave, 22 on a phone held
+  // upright (17 on a 480×800 window)
+  dart:    { hp: 2,   score: 200,  radius: 0.75, air: true,  explode: 0.8, debris: 5, noHpSeg: true, prewarm: 23 },
   hornet:  { hp: 20,  score: 700,  radius: 1.0,  air: true,  explode: 1.2, debris: 8, prewarm: 5 },
   carrier: { hp: 14,  score: 300,  radius: 1.15, air: true,  explode: 1.3, debris: 8, noHpSeg: true, noRevenge: true, prewarm: 2 },
   bomber:  { hp: 320, score: 6000, radius: 2.3,  air: true,  explode: 2.6, debris: 24, medal: 3, prewarm: 2 },

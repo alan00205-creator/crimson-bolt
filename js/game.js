@@ -251,8 +251,9 @@ export class Game {
     this.setAircraft(this.ac.id, this.paint); // the current jet (+ drones) come out of their pools first
     for (const [type, def] of Object.entries(ENEMY)) this.pools[type].prewarm(def.prewarm ?? (def.boss || def.midboss ? 1 : 4));
     // medals: the big kills shower them (OMEGA's supernova drops 24 at once, the other bosses 16-18,
-    // often onto a field still holding a destroyed part's few): none built mid-fight
-    const counts = { item_P: 4, item_S: 2, item_B: 2, item_medal: 30, item_1UP: 1 };
+    // often onto a field still holding a destroyed part's few): none built mid-fight. S items: three on the
+    // field at once round a mid-boss from loop 3 on (SENTINEL's)
+    const counts = { item_P: 4, item_S: 3, item_B: 2, item_medal: 30, item_1UP: 1 };
     for (const [k, n] of Object.entries(counts)) this.pools[k].prewarm(n);
     for (const ac of AIRCRAFT) {
       if (this.playerKey === 'player:' + ac.id) continue; // already built and in use

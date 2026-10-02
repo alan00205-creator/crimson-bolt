@@ -94,8 +94,10 @@ function zAtRow(v, py, y = 0) {
   return v.C.z + dz * (-v.C.y / dy) * (1 - y / v.C.y);
 }
 // The rows the void's units hover at are fractions zf of the screen's height, held at no more than a 480×800 window's
-// distance above the bottom edge (as in stage 7): a phone held upright shows ~42 units of the plane from top to bottom
-// against ~33, and the same fraction hung them a third further from the jet there. Shorter views are unchanged.
+// distance above the bottom edge: a phone held upright shows ~42 units of the plane from top to bottom against ~33,
+// and the same fraction hung them a third further from the jet there. Shorter views are unchanged. Counted from the
+// edge, the touch joystick strip (the jet's lowest row ~4 higher than on that window) brings them ~4 nearer the jet
+// on a phone: kept here, it holds the finale's waves above stage 7's there (stage 7 counts from the jet's row).
 const ROW_H = 33.2;
 const rowZ = (v, zf) => Math.max(v.zTop + (v.zBottom - v.zTop) * zf, v.zBottom - (1 - zf) * ROW_H);
 /** the fraction whose row is z (rowZ's inverse) */

@@ -90,12 +90,17 @@ function zAtRow(v, py, y = 0) {
   const dy = f.y - f.z * k, dz = f.z + f.y * k;             // the ray: forward + up·k (up = (0, −f.z, f.y))
   return v.C.z + dz * (-v.C.y / dy) * (1 - y / v.C.y);
 }
-// The rows the swarm hovers at are fractions zf of the screen's height, held at no more than a 480×800 window's
-// distance above the bottom edge: a phone held upright shows ~42 units of the plane from top to bottom against ~33,
-// and the same fraction hung the flocks, stingers, crystals and gates a third further from the jet there, their fans
-// opening into wide gaps on the way down (the phone measured stage 7 under stage 6). Shorter views are unchanged.
-const ROW_H = 33.2;
-const rowZ = (v, zf) => Math.max(v.zTop + (v.zBottom - v.zTop) * zf, v.zBottom - (1 - zf) * ROW_H);
+// The rows the swarm hovers at are fractions zf of the screen's height, held at no more than (1 − zf)·ROW_H − ROW_K
+// above the jet's lowest row (view.zPlayerMax): a phone held upright shows ~42 units of the plane from top to bottom
+// against ~33, and the same fraction hung the flocks, stingers, crystals and gates a third further from the jet there,
+// their fans opening into wide gaps on the way down (the phone measured stage 7 under stage 6). The cap counts from
+// the jet's row, not the bottom edge: the touch joystick strip holds the jet ~6.3 above the edge (2.3 on a 480×800
+// window), and counted from the edge the rows hung ~4 nearer the jet than on that window (the dust lanes landed
+// 2.7× its hits). ROW_K 3.8 hangs them ~1.5 nearer than there (2.26 would match it): the phone sees each unit
+// coming from further up. Views no taller than a 480×800 window (every desktop window) keep the old rows exactly:
+// the cap never reaches below the bottom edge, and there the fraction already sits at or below it.
+const ROW_H = 33.2, ROW_K = 3.8;
+const rowZ = (v, zf) => Math.max(v.zTop + (v.zBottom - v.zTop) * zf, Math.min(v.zBottom, (v.zPlayerMax ?? v.zBottom) + ROW_K) - (1 - zf) * ROW_H);
 const live = (pt) => (pt && !pt.dead ? pt : null);
 /** like stage.js fireTimer, on a named slot of s (a unit with several independent guns) */
 function fireTimerS(s, key, dt, g, interval, first) {

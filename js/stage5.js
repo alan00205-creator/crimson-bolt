@@ -105,6 +105,17 @@ function tallRow(g, z, zf) {
   const v = g.view;
   return Math.max(z, Math.min(v.zBottom, (v.zPlayerMax ?? v.zBottom) + ROW_K) - (1 - zf) * ROW_H);
 }
+// The ground guns (walkers, crater turrets) open fire once they are m below the top edge. On the phone that edge
+// stands ~5 units further up-screen of the jet, so at loop 2 their lance sweeps and bloom rings came from that much
+// further off and landed half (walkers) and a third (turrets) of a 480×800 window's hits. From the second loop on
+// they hold fire until m below where that window's top edge would stand; the first loop and views no taller than
+// a 480×800 window keep the screen's own edge (as tallRow)
+/** the furthest z up-screen a ground gun opens fire from: m below the top edge, held near the jet as above */
+function tallTop(g, m) {
+  const v = g.view, z = v.zTop + m;
+  if (g.loop < 2) return z;
+  return Math.max(z, Math.min(v.zBottom, (v.zPlayerMax ?? v.zBottom) + ROW_K) - ROW_H + m);
+}
 
 // --------------------------------------------------------------------------------
 // shared effects (constant colour / option tables: nothing is allocated per frame)
@@ -283,7 +294,7 @@ function roverCross(dir, speed = 5.6) {
 const WK_SWEEP = 1.1, WK_N = 9;
 function walkerAI(dir = 1, cross = false, speed = 1.5) {
   return (e, dt, g) => {
-    const s = e.s, ud = e.mesh.userData, T = ud.turret, v = g.view;
+    const s = e.s, ud = e.mesh.userData, T = ud.turret;
     if (!s.mode) {
       s.mode = 'walk'; s.mt = 0; s.ph = rnd(0, TAU); s.cd = rnd(0.6, 1.2) / g.diff.fr; s.sweeps = 0; s.sd = Math.random() < 0.5 ? -1 : 1;
       if (ud.reset) ud.reset();
@@ -299,7 +310,7 @@ function walkerAI(dir = 1, cross = false, speed = 1.5) {
       case 'walk':
         g.aimTurret(e, T, dt, 2.2);
         s.cd -= dt;
-        if (s.cd <= 0 && s.sweeps < 2 && e.z > v.zTop + 3.5 && e.z < P.z - 6.5 && g.canFire(e)) { s.mode = 'brace'; s.mt = 0; }
+        if (s.cd <= 0 && s.sweeps < 2 && e.z > tallTop(g, 3.5) && e.z < P.z - 6.5 && g.canFire(e)) { s.mode = 'brace'; s.mt = 0; }
         if (cross && Math.abs(e.gx) > 16 && e.t > 2) e.alive = false;
         break;
       case 'brace':
@@ -346,14 +357,14 @@ function walkerAI(dir = 1, cross = false, speed = 1.5) {
 // `cycles` pop-ups at most.
 function popAI(delay = 0, cycles = 2) {
   return (e, dt, g) => {
-    const s = e.s, ud = e.mesh.userData, T = ud.turret, v = g.view, P = g.player;
+    const s = e.s, ud = e.mesh.userData, T = ud.turret, P = g.player;
     if (!s.mode) { s.mode = 'hidden'; s.mt = 0; s.left = cycles; s.cd = delay; e.invuln = true; if (ud.reset) ud.reset(); }
     s.mt += dt;
     switch (s.mode) {
       case 'hidden':
         e.invuln = true;
         s.cd -= dt;
-        if (s.left > 0 && s.cd <= 0 && e.z > v.zTop + 2.5 && e.z < P.z - 7.5 && P.alive) {
+        if (s.left > 0 && s.cd <= 0 && e.z > tallTop(g, 2.5) && e.z < P.z - 7.5 && P.alive) {
           s.mode = 'open'; s.mt = 0; g.audio.play('lock', { vol: 0.22, pitch: -9 });
           if (T) T.rotation.y = wrapA(Math.atan2(-(P.x - e.x), -(P.z - e.z)) - e.yaw);
         }
